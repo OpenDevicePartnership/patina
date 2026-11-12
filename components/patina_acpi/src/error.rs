@@ -60,6 +60,8 @@ pub enum AcpiError {
     MemoryManagerAlreadyInitialized,
     /// The provider instance was not initialized.
     ProviderNotInitialized,
+    /// The provider's shared state is locked or its TPL controller is not initialized.
+    StateUnavailable,
     /// There was an attempt to index an invalid location in the XSDT.
     XsdtOverflow,
     /// There was an attempt to install an XSDT when one already exists.
@@ -84,6 +86,7 @@ pub enum AcpiError {
 impl From<AcpiError> for efi::Status {
     fn from(err: AcpiError) -> Self {
         match err {
+            AcpiError::StateUnavailable => efi::Status::NOT_READY,
             AcpiError::AllocationFailed | AcpiError::FreeFailed => efi::Status::OUT_OF_RESOURCES,
             AcpiError::ConfigTableServicesAlreadyInitialized
             | AcpiError::FadtAlreadyInstalled

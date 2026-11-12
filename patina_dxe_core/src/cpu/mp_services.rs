@@ -169,7 +169,9 @@ impl MpServicesComponent {
 
         events
             .on_event_group(BinaryGuid(efi::EVENT_GROUP_READY_TO_BOOT), Tpl::Callback, move || {
-                services.mark_ready_to_boot();
+                if let Err(err) = services.mark_ready_to_boot() {
+                    log::error!("MP ReadyToBoot could not finish pending work: {err:?}");
+                }
             })
             .inspect_err(|e| log::error!("Failed to register MP ReadyToBoot event: {e:?}"))?;
 

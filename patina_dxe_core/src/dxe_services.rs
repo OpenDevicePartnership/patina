@@ -209,8 +209,11 @@ extern "efiapi" fn get_memory_space_map(
 
     //allocate an empty vector with enough space for all the descriptors with some padding (in the event)
     //that extra descriptors come into being after creation but before usage.
-    let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
-        Vec::with_capacity(GCD.memory_descriptor_count() + 10);
+    let descriptor_count = match GCD.memory_descriptor_count() {
+        Ok(count) => count,
+        Err(err) => return err.into(),
+    };
+    let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(descriptor_count + 10);
     let result = GCD.get_memory_descriptors(&mut descriptors, |_, _| true);
 
     if let Err(err) = result {
@@ -329,7 +332,11 @@ extern "efiapi" fn get_io_space_descriptor(
 
     //allocate an empty vector with enough space for all the descriptors with some padding (in the event)
     //that extra descriptors come into being after creation but before usage.
-    let mut descriptors: Vec<dxe_services::IoSpaceDescriptor> = Vec::with_capacity(GCD.io_descriptor_count() + 10);
+    let descriptor_count = match GCD.io_descriptor_count() {
+        Ok(count) => count,
+        Err(err) => return err.into(),
+    };
+    let mut descriptors: Vec<dxe_services::IoSpaceDescriptor> = Vec::with_capacity(descriptor_count + 10);
     let result = GCD.get_io_descriptors(&mut descriptors);
 
     if let Err(err) = result {
@@ -357,7 +364,11 @@ extern "efiapi" fn get_io_space_map(
     }
     //allocate an empty vector with enough space for all the descriptors with some padding (in the event)
     //that extra descriptors come into being after creation but before usage.
-    let mut descriptors: Vec<dxe_services::IoSpaceDescriptor> = Vec::with_capacity(GCD.io_descriptor_count() + 10);
+    let descriptor_count = match GCD.io_descriptor_count() {
+        Ok(count) => count,
+        Err(err) => return err.into(),
+    };
+    let mut descriptors: Vec<dxe_services::IoSpaceDescriptor> = Vec::with_capacity(descriptor_count + 10);
     let result = GCD.get_io_descriptors(&mut descriptors);
 
     if let Err(err) = result {
@@ -1471,7 +1482,7 @@ mod tests {
                 crate::test_support::reset_allocators();
             }
 
-            let expected_count = GCD.memory_descriptor_count();
+            let expected_count = GCD.memory_descriptor_count().expect("GCD descriptor count available");
             let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
             GCD.get_memory_descriptors(&mut expected, |_, _| true).expect("get_memory_descriptors failed");
             assert!(!expected.is_empty());
@@ -1506,7 +1517,7 @@ mod tests {
             let _ = add_memory_space(GcdMemoryType::MemoryMappedIo, 0x2800000, 0x30000, efi::MEMORY_UC);
 
             // Fetch expected
-            let expected_count = GCD.memory_descriptor_count();
+            let expected_count = GCD.memory_descriptor_count().expect("GCD descriptor count available");
             let mut expected: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(expected_count + 10);
             GCD.get_memory_descriptors(&mut expected, |_, _| true).expect("get_memory_descriptors failed");
             assert!(expected.len() >= 3);
@@ -1564,7 +1575,7 @@ mod tests {
                 crate::test_support::reset_allocators();
             }
 
-            let expected_count = GCD.io_descriptor_count();
+            let expected_count = GCD.io_descriptor_count().expect("GCD descriptor count available");
             let mut expected: Vec<dxe_services::IoSpaceDescriptor> = Vec::with_capacity(expected_count + 10);
             GCD.get_io_descriptors(&mut expected).expect("get_io_descriptors failed");
             assert!(!expected.is_empty());
@@ -1597,7 +1608,7 @@ mod tests {
             assert_eq!(add_io_space(GcdIoType::Reserved, 0x2400, 0x80), efi::Status::SUCCESS);
             assert_eq!(add_io_space(GcdIoType::Io, 0x2600, 0x180), efi::Status::SUCCESS);
 
-            let expected_count = GCD.io_descriptor_count();
+            let expected_count = GCD.io_descriptor_count().expect("GCD descriptor count available");
             let mut expected: Vec<dxe_services::IoSpaceDescriptor> = Vec::with_capacity(expected_count + 10);
             GCD.get_io_descriptors(&mut expected).expect("get_io_descriptors failed");
             assert!(!expected.is_empty());
@@ -2297,7 +2308,7 @@ mod tests {
             crate::systemtables::init_system_table(patina::UefiSpecVersion::V2_11);
 
             // Get a mutable reference to the system table
-            let mut st_guard = crate::systemtables::SYSTEM_TABLE.lock();
+            let mut st_guard = crate::systemtables::SYSTEM_TABLE.try_lock().expect("System table lock available");
             let st = st_guard.as_mut().expect("System Table not initialized");
 
             // Before: no configuration tables are expected on a fresh init

@@ -1401,7 +1401,7 @@ pub struct SpinLockedGcd {
 impl SpinLockedGcd {
     /// Returns true if the underlying GCD is initialized and ready for use.
     pub fn is_ready(&self) -> bool {
-        self.memory.lock().is_ready()
+        self.memory.try_lock().is_some_and(|memory| memory.is_ready())
     }
 
     /// Creates a new uninitialized GCD. [`Self::init`] must be invoked before any other functions or they will return
@@ -1448,27 +1448,40 @@ impl SpinLockedGcd {
         capabilities: u64,
     ) -> Result<usize, EfiError> {
         // SAFETY: Caller must uphold the safety contract of init_memory_blocks
-        unsafe { self.memory.lock().init_memory_blocks(memory_type, base_address, len, attributes, capabilities) }
+        unsafe {
+            self.memory.try_lock().ok_or(EfiError::AccessDenied)?.init_memory_blocks(
+                memory_type,
+                base_address,
+                len,
+                attributes,
+                capabilities,
+            )
+        }
     }
 
     #[cfg_attr(coverage, coverage(off))]
-    pub fn prioritize_32_bit_memory(&self, value: bool) {
-        self.memory.lock().prioritize_32_bit_memory = value;
+    pub fn prioritize_32_bit_memory(&self, value: bool) -> Result<(), EfiError> {
+        self.memory.try_lock().ok_or(EfiError::AccessDenied)?.prioritize_32_bit_memory = value;
+        Ok(())
     }
 
-    pub fn lock_memory_space(&self) {
-        self.memory.lock().lock_memory_space();
+    pub fn lock_memory_space(&self) -> Result<(), EfiError> {
+        self.memory.try_lock().ok_or(EfiError::AccessDenied)?.lock_memory_space();
+        Ok(())
     }
 
     pub fn unlock_memory_space(&self) {
-        self.memory.lock().unlock_memory_space();
+        self.memory
+            .try_lock()
+            .expect("GCD memory-space cleanup must succeed or all subsequent memory operations remain disabled")
+            .unlock_memory_space();
     }
 
     /// Grows descriptor storage if we are running low on available capacity.
     fn ensure_memory_descriptor_capacity(&self) -> Result<(), EfiError> {
         let previous_tpl = raise_tpl(efi::TPL_HIGH_LEVEL);
         let result = (|| {
-            let mut memory = self.memory.lock();
+            let mut memory = self.memory.try_lock().ok_or(EfiError::AccessDenied)?;
             let capacity = memory.memory_blocks.capacity();
             if capacity == 0
                 || capacity.saturating_sub(memory.memory_blocks.len()) >= MEMORY_DESCRIPTOR_RESERVE
@@ -1514,14 +1527,18 @@ impl SpinLockedGcd {
 
                 // SAFETY: GCD exclusively owns this page-aligned, writable allocation. It is never freed, and the
                 // memory lock excludes readers while expand copies nodes and updates their internal pointers.
-                self.memory.lock().memory_blocks.expand(unsafe { slice::from_raw_parts_mut(base as *mut u8, size) });
+                self.memory
+                    .try_lock()
+                    .ok_or(EfiError::AccessDenied)?
+                    .memory_blocks
+                    .expand(unsafe { slice::from_raw_parts_mut(base as *mut u8, size) });
                 if let Some(callback) = self.memory_change_callback {
                     callback(MapChangeType::AllocateMemorySpace);
                 }
                 Ok(())
             })();
             if result.is_err() {
-                let memory = self.memory.lock();
+                let memory = self.memory.try_lock().ok_or(EfiError::AccessDenied)?;
                 if memory.memory_blocks.capacity().saturating_sub(memory.memory_blocks.len()) >= 2 {
                     return Ok(());
                 }
@@ -1541,14 +1558,17 @@ impl SpinLockedGcd {
     ///
     #[cfg(test)]
     pub unsafe fn reset(&self) {
-        let (mut mem, mut io) = (self.memory.lock(), self.io.lock());
+        let (mut mem, mut io) = (
+            self.memory.try_lock().expect("test memory GCD must be unlocked"),
+            self.io.try_lock().expect("test I/O GCD must be unlocked"),
+        );
         mem.memory_space_locked = false;
         mem.maximum_address = 0;
         mem.memory_blocks = Rbt::new();
         io.maximum_address = 0;
         io.io_blocks = Rbt::new();
-        self.page_table.lock().take();
-        self.aliased_mappings.lock().clear();
+        self.page_table.try_lock().expect("test page table must be unlocked").take();
+        self.aliased_mappings.try_lock().expect("test aliased mappings must be unlocked").clear();
         // Reset memory protection policy to default state
         self.memory_protection_policy.memory_allocation_default_attributes.set(efi::MEMORY_XP);
     }
@@ -1556,13 +1576,16 @@ impl SpinLockedGcd {
     /// Adds a page table for testing purposes
     #[cfg(test)]
     pub fn add_test_page_table(&self, page_table: Box<dyn PatinaPageTable>) {
-        *self.page_table.lock() = Some(page_table);
+        *self.page_table.try_lock().expect("test page table must be unlocked") = Some(page_table);
     }
 
     /// Initializes the underlying memory GCD and I/O GCD with the given address bits.
     pub fn init(&self, memory_address_bits: u32, io_address_bits: u32) {
-        self.memory.lock().init(memory_address_bits);
-        self.io.lock().init(io_address_bits);
+        self.memory
+            .try_lock()
+            .expect("Boot cannot initialize the GCD while its memory state is in use")
+            .init(memory_address_bits);
+        self.io.try_lock().expect("Boot cannot initialize the GCD while its I/O state is in use").init(io_address_bits);
     }
 
     /// Returns an iterator over GCD descriptors in the given range.
@@ -1598,7 +1621,14 @@ impl SpinLockedGcd {
     ) -> Result<usize, EfiError> {
         self.ensure_memory_descriptor_capacity()?;
         // SAFETY: caller upholds the contract for add_memory_space.
-        let result = unsafe { self.memory.lock().add_memory_space(memory_type, base_address, len, capabilities) };
+        let result = unsafe {
+            self.memory.try_lock().ok_or(EfiError::AccessDenied)?.add_memory_space(
+                memory_type,
+                base_address,
+                len,
+                capabilities,
+            )
+        };
         if result.is_ok()
             && let Some(callback) = self.memory_change_callback
         {
@@ -1614,9 +1644,9 @@ impl SpinLockedGcd {
     #[cfg_attr(coverage, coverage(off))]
     pub fn remove_memory_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
         self.ensure_memory_descriptor_capacity()?;
-        let result = self.memory.lock().remove_memory_space(base_address, len);
+        let result = self.memory.try_lock().ok_or(EfiError::AccessDenied)?.remove_memory_space(base_address, len);
         if result.is_ok() {
-            if let Some(page_table) = &mut *self.page_table.lock() {
+            if let Some(page_table) = &mut *self.page_table.try_lock().ok_or(EfiError::AccessDenied)? {
                 match page_table.unmap_memory_region(base_address as u64, len as u64) {
                     Ok(()) => {}
                     Err(status) => {
@@ -1649,7 +1679,7 @@ impl SpinLockedGcd {
         device_handle: Option<efi::Handle>,
     ) -> Result<usize, EfiError> {
         self.ensure_memory_descriptor_capacity()?;
-        let result = self.memory.lock().allocate_memory_space(
+        let result = self.memory.try_lock().ok_or(EfiError::AccessDenied)?.allocate_memory_space(
             allocate_type,
             memory_type,
             alignment,
@@ -1728,7 +1758,7 @@ impl SpinLockedGcd {
     ) -> Result<(), EfiError> {
         // check if this block is actually allocated by us and bail out if not, since we need to set the attributes
         // to coalesce the memory blocks before attempting to free them
-        self.memory.lock().get_memory_block_allocation_state(base_address, len)?;
+        self.memory.try_lock().ok_or(EfiError::AccessDenied)?.get_memory_block_allocation_state(base_address, len)?;
 
         let range = base_address as u64..base_address.checked_add(len).ok_or(EfiError::InvalidParameter)? as u64;
 
@@ -1738,16 +1768,22 @@ impl SpinLockedGcd {
         // will not be used again, we will return a failure to the caller and they can ignore this memory (which can
         // not be used after the failed free anyway).
         for desc_result in self.iter(base_address, len) {
-            let desc = desc_result?;
+            let desc = if matches!(desc_result, Err(EfiError::AccessDenied)) {
+                desc_result.expect("Free must retain descriptor access after pool headers may be unmapped")
+            } else {
+                desc_result?
+            };
             let current_range = desc.get_range_overlap_with_desc(&range);
             // we call the worker here because we want to ensure we are getting the caching attribute from the
             // correct descriptor. It is possible the caching attribute is different across descriptors.
-            if let Err(e) = self.set_memory_space_attributes_worker(
+            let result = self.set_memory_space_attributes_worker(
                 current_range.start as usize,
                 (current_range.end - current_range.start) as usize,
                 MemoryProtectionPolicy::apply_free_memory_policy(desc.attributes, desc.memory_type),
                 desc.attributes,
-            ) && e != EfiError::NotReady
+            );
+            if let Err(e) = result
+                && e != EfiError::NotReady
             {
                 // if we failed to set the attributes in the GCD, we want to catch it, but should still try to go
                 // down and free the memory space. NotReady is ignored here because the memory bucket code will
@@ -1763,7 +1799,12 @@ impl SpinLockedGcd {
             }
         }
 
-        match self.memory.lock().free_memory_space(base_address, len, transition) {
+        match self
+            .memory
+            .try_lock()
+            .ok_or(EfiError::Aborted)
+            .and_then(|mut lock| lock.free_memory_space(base_address, len, transition))
+        {
             Ok(()) => {
                 if let Some(callback) = self.memory_change_callback {
                     callback(MapChangeType::FreeMemorySpace);
@@ -1817,7 +1858,11 @@ impl SpinLockedGcd {
         // attributes per entry to ensure that we keep the GCD and page table in sync
         let attributes = MemoryProtectionPolicy::apply_nx_to_uc_policy(attributes);
 
-        match self.memory.lock().set_memory_space_attributes(base_address, len, attributes) {
+        match self.memory.try_lock().ok_or(EfiError::AccessDenied)?.set_memory_space_attributes(
+            base_address,
+            len,
+            attributes,
+        ) {
             Ok(()) => {}
             Err(e) => {
                 log::error!(
@@ -1847,14 +1892,16 @@ impl SpinLockedGcd {
                     log::error!(
                         "Failed to set page table memory attributes for memory region {base_address:#x?} of length {len:#x?} with attributes {attributes:#x?}. Status: {e:#x?}",
                     );
-                    debug_assert!(false);
+                    debug_assert_eq!(e, EfiError::AccessDenied);
 
                     // if we failed here, we shouldn't leave the GCD and the page table out of sync. Roll the GCD back
                     // to the previous attributes for this range. We may have partially updated this range in the GCD
                     // and the page table, but they will be in sync. We could attempt to continue here, but we need
                     // to return an error to the caller, so we might as well stop here.
                     if let Err(rollback_err) =
-                        self.memory.lock().set_memory_space_attributes(base_address, len, original_attributes)
+                        self.memory.try_lock().ok_or(EfiError::AccessDenied).and_then(|mut lock| {
+                            lock.set_memory_space_attributes(base_address, len, original_attributes)
+                        })
                     {
                         // well, we did our best. The GCD and page table are now out of sync, which is a critical error.
                         log::error!(
@@ -1909,7 +1956,7 @@ impl SpinLockedGcd {
                         current_range.start,
                         (current_range.end - current_range.start),
                     );
-                    debug_assert!(false);
+                    debug_assert_eq!(e, EfiError::AccessDenied);
                     return Err(e);
                 }
             }
@@ -1934,7 +1981,11 @@ impl SpinLockedGcd {
         capabilities: u64,
     ) -> Result<(), EfiError> {
         self.ensure_memory_descriptor_capacity()?;
-        let result = self.memory.lock().set_memory_space_capabilities(base_address, len, capabilities);
+        let result = self.memory.try_lock().ok_or(EfiError::AccessDenied)?.set_memory_space_capabilities(
+            base_address,
+            len,
+            capabilities,
+        );
         if result.is_ok()
             && let Some(callback) = self.memory_change_callback
         {
@@ -1954,7 +2005,7 @@ impl SpinLockedGcd {
         buffer: &mut Vec<dxe_services::MemorySpaceDescriptor>,
         filter: fn(&dxe_services::MemorySpaceDescriptor, bool) -> bool,
     ) -> Result<(), EfiError> {
-        self.memory.lock().get_memory_descriptors(buffer, filter)
+        self.memory.try_lock().ok_or(EfiError::AccessDenied)?.get_memory_descriptors(buffer, filter)
     }
 
     // returns the descriptor for the given physical address.
@@ -1963,17 +2014,17 @@ impl SpinLockedGcd {
         address: efi::PhysicalAddress,
         filter: fn(&dxe_services::MemorySpaceDescriptor, bool) -> bool,
     ) -> Result<dxe_services::MemorySpaceDescriptor, EfiError> {
-        self.memory.lock().get_memory_descriptor_for_address(address, filter)
+        self.memory.try_lock().ok_or(EfiError::AccessDenied)?.get_memory_descriptor_for_address(address, filter)
     }
 
     /// returns the current count of blocks in the list.
-    pub fn memory_descriptor_count(&self) -> usize {
-        self.memory.lock().memory_descriptor_count()
+    pub fn memory_descriptor_count(&self) -> Result<usize, EfiError> {
+        Ok(self.memory.try_lock().ok_or(EfiError::AccessDenied)?.memory_descriptor_count())
     }
 
     // returns the current count of efi memory map relevant blocks in the list.
-    pub fn memory_descriptor_count_for_efi_memory_map(&self) -> usize {
-        self.memory.lock().memory_descriptor_count_for_efi_memory_map()
+    pub fn memory_descriptor_count_for_efi_memory_map(&self) -> Result<usize, EfiError> {
+        Ok(self.memory.try_lock().ok_or(EfiError::AccessDenied)?.memory_descriptor_count_for_efi_memory_map())
     }
 
     /// Populates a caller-provided buffer with EFI memory map descriptors.
@@ -1994,24 +2045,27 @@ impl SpinLockedGcd {
         buffer: &mut [efi::MemoryDescriptor],
         active_attributes: bool,
     ) -> Result<usize, EfiError> {
-        self.memory.lock().populate_efi_memory_map(buffer, active_attributes)
+        self.memory.try_lock().ok_or(EfiError::AccessDenied)?.populate_efi_memory_map(buffer, active_attributes)
     }
 
     /// Gets the last EFI memory map key (CRC32 hash).
     ///
     /// Returns `None` if no memory map key has been set.
-    pub fn get_last_efi_memory_map_key(&self) -> Option<usize> {
-        *self.last_efi_memory_map_key.lock()
+    /// Returns [`EfiError::AccessDenied`] if the key is currently in use.
+    pub fn get_last_efi_memory_map_key(&self) -> Result<Option<usize>, EfiError> {
+        Ok(*self.last_efi_memory_map_key.try_lock().ok_or(EfiError::AccessDenied)?)
     }
 
     /// Sets the last EFI memory map key by computing the CRC32 hash of the provided memory map bytes.
+    /// Returns the committed key, or [`EfiError::AccessDenied`] on contention.
     ///
     /// # Arguments
     ///
     /// * `memory_map_bytes` - The byte slice representing the EFI memory map
-    pub fn set_last_efi_memory_map_key(&self, memory_map_bytes: &[u8]) {
+    pub fn set_last_efi_memory_map_key(&self, memory_map_bytes: &[u8]) -> Result<usize, EfiError> {
         let key = crc32::calculate_crc32(memory_map_bytes) as usize;
-        *self.last_efi_memory_map_key.lock() = Some(key);
+        *self.last_efi_memory_map_key.try_lock().ok_or(EfiError::AccessDenied)? = Some(key);
+        Ok(key)
     }
 }
 
@@ -2070,7 +2124,10 @@ impl Iterator for DescRangeIterator<'_> {
         let descriptor =
             match self.gcd.get_memory_descriptor_for_address(self.current_base as efi::PhysicalAddress, |_, _| true) {
                 Ok(desc) => desc,
-                Err(e) => return Some(Err(e)),
+                Err(e) => {
+                    self.current_base = self.range_end;
+                    return Some(Err(e));
+                }
             };
 
         let descriptor_end = descriptor.base_address + descriptor.length;

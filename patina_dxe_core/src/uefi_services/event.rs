@@ -45,7 +45,10 @@ extern "efiapi" fn notify_trampoline(event: efi::Event, context: *mut c_void) {
         return;
     };
 
-    UEFI_SERVICES_STATE.event_notify.enter(context);
+    if let Err(err) = UEFI_SERVICES_STATE.event_notify.enter(context) {
+        log::error!("Cannot track event notification dispatch: {err}");
+        return;
+    }
 
     // SAFETY: `context` was produced by `Box::into_raw` of a `ClosureHolder` in
     // `create_event_internal` and remains valid until freed below or by `close_event`. UEFI
@@ -53,7 +56,14 @@ extern "efiapi" fn notify_trampoline(event: efi::Event, context: *mut c_void) {
     let holder = unsafe { &mut *context.cast::<ClosureHolder>() };
     (holder.callback)(event);
 
-    if UEFI_SERVICES_STATE.event_notify.exit(context) {
+    let close_requested = match UEFI_SERVICES_STATE.event_notify.exit(context) {
+        Ok(close_requested) => close_requested,
+        Err(err) => {
+            log::error!("Cannot finish event notification dispatch: {err}");
+            return;
+        }
+    };
+    if close_requested {
         // The callback closed its own event above. Free the closure now that it has returned
         // instead of while it was still executing.
         // SAFETY: `context` has not been freed yet, `close_event` only recorded the request earlier.
@@ -142,7 +152,7 @@ impl EventServices for CoreEventServices {
             && !context.is_null()
             // The event is closing itself, or an ancestor event if closed from a nested
             // notification. The notify trampoline frees the closure once that callback returns.
-            && !UEFI_SERVICES_STATE.event_notify.request_close(context)
+            && !UEFI_SERVICES_STATE.event_notify.request_close(context).map_err(EventError::from)?
         {
             // SAFETY: `context` is the `ClosureHolder` pointer created in `create_event_internal`.
             // The event has just been closed and its callback (if any) is not on the call

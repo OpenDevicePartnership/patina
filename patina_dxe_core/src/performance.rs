@@ -86,6 +86,10 @@ impl CorePerformance {
     }
 
     /// Initializes the core performance service.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` when installing enabled HOB records.
     pub(crate) fn init(
         &self,
         frequency: u64,
@@ -105,8 +109,13 @@ impl CorePerformance {
 
         self.perf_measurement_mask.store(config.enabled_measurements, Ordering::Relaxed);
         if let Some((load_image_count, perf_records)) = hob_records {
+            let Some(mut table) = self.performance_table.try_lock() else {
+                self.enabled.store(false, Ordering::Relaxed);
+                log::error!("Performance initialization failed: table is locked");
+                return;
+            };
             self.loaded_image_count.store(load_image_count, Ordering::Relaxed);
-            self.performance_table.lock().set_perf_records(perf_records);
+            table.set_perf_records(perf_records);
         }
     }
 
@@ -695,7 +704,10 @@ mod tests {
             measure!(CallerIdentifier::Guid(caller_guid), None, Some("measurement_str"), PerfCrossModuleEnd);
             measure!(CallerIdentifier::Guid(caller_guid), None, Some("measurement_str"), PerfEvent);
 
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), EXPECTED_NUMBER_OF_RECORD);
+            assert_eq!(
+                perf.performance_table.try_lock().expect("test performance lock").perf_records().iter().count(),
+                EXPECTED_NUMBER_OF_RECORD
+            );
         })
         .unwrap();
     }
@@ -768,7 +780,7 @@ mod tests {
                 .unwrap();
             }
 
-            let table = perf.performance_table.lock();
+            let table = perf.performance_table.try_lock().expect("test performance lock");
             let mut record_count = 0;
             for record in table.perf_records().iter() {
                 // `DynamicStringEventRecordData` is progress_id(2) + apic_id(4) + timestamp(8) before the GUID.
@@ -801,7 +813,10 @@ mod tests {
             );
 
             assert_eq!(result.unwrap_err(), Error::Efi(EfiError::InvalidParameter));
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), 0);
+            assert_eq!(
+                perf.performance_table.try_lock().expect("test performance lock").perf_records().iter().count(),
+                0
+            );
         })
         .unwrap();
     }
@@ -888,7 +903,10 @@ mod tests {
             assert!(perf.enabled());
             assert_eq!(perf.timer.perf_frequency(), FREQ);
             assert_eq!(perf.loaded_image_count.load(Ordering::Relaxed), LOAD_IMAGE_COUNT);
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), 0);
+            assert_eq!(
+                perf.performance_table.try_lock().expect("test performance lock").perf_records().iter().count(),
+                0
+            );
         })
         .unwrap();
     }
@@ -967,7 +985,10 @@ mod tests {
             perf.perf_driver_binding_stop_begin(module, controller);
             perf.perf_driver_binding_stop_end(module, controller);
 
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), 10);
+            assert_eq!(
+                perf.performance_table.try_lock().expect("test performance lock").perf_records().iter().count(),
+                10
+            );
         })
         .unwrap();
     }
@@ -991,7 +1012,10 @@ mod tests {
             perf.perf_driver_binding_stop_begin(module, controller);
             perf.perf_driver_binding_stop_end(module, controller);
 
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), 0);
+            assert_eq!(
+                perf.performance_table.try_lock().expect("test performance lock").perf_records().iter().count(),
+                0
+            );
         })
         .unwrap();
     }
@@ -1026,7 +1050,10 @@ mod tests {
             let record = GenericPerformanceRecord::ref_from_bytes(&bytes).unwrap();
             perf.add_generic_record(record).unwrap();
 
-            assert_eq!(perf.performance_table.lock().perf_records().iter().count(), 2);
+            assert_eq!(
+                perf.performance_table.try_lock().expect("test performance lock").perf_records().iter().count(),
+                2
+            );
 
             // published_table_size reports a non-zero size, and publish_table writes into a large-enough buffer.
             let size = perf.published_table_size().unwrap();
@@ -1041,7 +1068,7 @@ mod tests {
     fn test_core_performance_manager_locked_table_returns_error() {
         with_global_lock(|| {
             let perf = test_core_performance();
-            let _guard = perf.performance_table.lock();
+            let _guard = perf.performance_table.try_lock().expect("test performance lock");
 
             assert_eq!(perf.published_table_size().unwrap_err(), Error::Efi(EfiError::AccessDenied));
 

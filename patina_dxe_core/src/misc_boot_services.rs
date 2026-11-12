@@ -203,6 +203,10 @@ extern "efiapi" fn watchdog_arch_available(event: efi::Event, _context: *mut c_v
 
 /// Terminates all boot services.
 ///
+/// # TPL
+///
+/// The UEFI specification requires this API to be called at `TPL == TPL_APPLICATION`.
+///
 /// # Safety Considerations
 ///
 /// This function is not marked `unsafe` because both parameters are safe to accept from unverified
@@ -238,7 +242,11 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     }
 
     // Lock the memory space to prevent edits to the memory map after this point.
-    GCD.lock_memory_space();
+    if let Err(err) = GCD.lock_memory_space() {
+        log::error!("Failed to lock memory space: {err}");
+        debug_assert!(false);
+        // we should try to catch this, but if we can't, we should still continue
+    }
 
     // Terminate the memory map
     // According to UEFI spec, in case of an incomplete or failed EBS call we must restore boot services memory allocation functionality
@@ -281,7 +289,8 @@ pub extern "efiapi" fn exit_boot_services(_handle: efi::Handle, map_key: usize) 
     // This is the exit_boot_services handler, so the invariant is upheld.
     unsafe {
         SYSTEM_TABLE
-            .lock()
+            .try_lock()
+            .expect("Cannot complete ExitBootServices without the system table lock")
             .as_mut()
             .expect("The System Table pointer is null. This is invalid.")
             .clear_boot_time_services();
@@ -361,7 +370,7 @@ mod tests {
             }
             crate::systemtables::init_system_table(patina::UefiSpecVersion::V2_11);
 
-            let mut st_guard = systemtables::SYSTEM_TABLE.lock();
+            let mut st_guard = systemtables::SYSTEM_TABLE.try_lock().expect("System table lock available");
             let st = st_guard.as_mut().expect("System Table not initialized!");
             f(st);
         })

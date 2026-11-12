@@ -437,6 +437,12 @@ impl From<EfiError> for ProtocolError {
 /// This service is implemented by the Patina DXE Core. Components consume it by adding a
 /// [`Service<dyn ProtocolServices>`](crate::component::service::Service) parameter to their entry
 /// point.
+///
+/// # TPL
+/// Methods that access the protocol database must be called at or below `TPL_NOTIFY`.
+/// The UEFI specification requires the corresponding Protocol Handler Services APIs to be called
+/// at or below `TPL_NOTIFY`. Patina's protocol-database lock also requires this ceiling.
+/// [`Self::image_handle`] does not access the protocol database and is exempt from this restriction.
 #[cfg_attr(any(test, feature = "mockall"), automock)]
 pub trait ProtocolServices {
     /// Installs a protocol interface identified by `protocol` on a handle.
@@ -687,6 +693,10 @@ impl<P> IntoStaticInterface<P> for Box<P> {
 ///     Ok(())
 /// }
 /// ```
+///
+/// # TPL
+/// All methods must be called at or below `TPL_NOTIFY`, matching [`ProtocolServices`].
+/// A returned [`ProtocolGuard`] must also be dropped at or below `TPL_NOTIFY` when it closes the protocol.
 pub trait ProtocolServicesExt: ProtocolServices {
     /// Locates the first interface for protocol `P` and returns a typed reference to it.
     ///

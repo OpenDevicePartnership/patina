@@ -89,6 +89,10 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// health status.
     ///
     /// Only callable from the BSP.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` to acquire the dispatch lock.
     pub(super) fn enable_disable_ap(
         &self,
         processor_index: usize,
@@ -100,7 +104,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
         if ap_index >= self.mp.ap_count() {
             return Err(MpError::NotFound);
         }
-        if self.notifications.with_dispatch_lock(|_| self.mp.set_ap_enabled(ap_index, enable, healthy)) {
+        if self.notifications.with_dispatch_lock(|_| Ok(self.mp.set_ap_enabled(ap_index, enable, healthy)))? {
             Ok(())
         } else {
             Err(MpError::NotSupported)
@@ -124,18 +128,31 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// Marks `ReadyToBoot` and waits for existing non-blocking requests to
     /// complete or reach their deadlines while allocation and event signaling
     /// are still available.
-    pub(super) fn mark_ready_to_boot(&self) {
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` to process pending notifications.
+    pub(super) fn mark_ready_to_boot(&self) -> Result<(), MpError> {
         self.ready_to_boot.store(true, Ordering::Release);
-        self.notifications.finish_pending(&self.mp, self.timer);
+        self.notifications.finish_pending(&self.mp, self.timer)
     }
 
     /// Replicates the BSP's dynamic state (MTRRs for x64) to every enabled AP.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` to acquire the dispatch lock.
     pub(super) fn synchronize(&self) {
-        self.notifications.finish_pending(&self.mp, self.timer);
-        let synchronized = self.notifications.with_dispatch_lock(|pending| {
-            debug_assert!(pending.is_empty());
-            self.mp.sync_aps()
-        });
+        self.notifications
+            .finish_pending(&self.mp, self.timer)
+            .expect("Cache attribute synchronization requires exclusive access to outstanding AP work");
+        let synchronized = self
+            .notifications
+            .with_dispatch_lock(|pending| {
+                debug_assert!(pending.is_empty());
+                Ok(self.mp.sync_aps())
+            })
+            .expect("Boot cannot continue with inconsistent BSP and AP cache attributes");
         assert!(synchronized, "failed to synchronize BSP MTRRs to every enabled AP");
     }
 
@@ -180,6 +197,10 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// `completion`) or registers the dispatch for the periodic poll. A single shared
     /// deadline bounds the whole operation, so a hung AP cannot extend the timeout
     /// for the others.
+    ///
+    /// # TPL
+    ///
+    /// The caller must be at or below `TPL_NOTIFY` to acquire the dispatch lock.
     fn dispatch(
         &self,
         targets: Targets,
@@ -326,6 +347,7 @@ fn topology_unknown(processor_id: u32) -> mp_services::ProcessorInformation {
 }
 
 /// Errors from the MP Services operations, mapped to `efi::Status` by the wrappers.
+#[derive(Debug)]
 pub(super) enum MpError {
     NotBsp,
     Busy,
@@ -600,7 +622,7 @@ mod tests {
             let completed = std::sync::Arc::new(AtomicBool::new(false));
             let completion_result = completed.clone();
 
-            service.mark_ready_to_boot();
+            service.mark_ready_to_boot().expect("test ready to boot completes");
             assert!(matches!(
                 service.startup_all_aps(
                     test_work(),

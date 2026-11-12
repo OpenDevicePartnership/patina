@@ -45,6 +45,7 @@ category has no issues, skip it silently. Apply the conventions from
 
 - Public items missing doc comments.
 - `unsafe` functions missing `# Safety`; fallible functions missing `# Errors`.
+- Functions that have TPL restrictions missing `# TPL` function documentation.
 
 ### 7. UEFI-Specific
 

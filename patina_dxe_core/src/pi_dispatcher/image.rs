@@ -741,13 +741,20 @@ mod dispatch {
     impl<P: super::super::PlatformInfo> super::super::PiDispatcher<P> {
         /// Starts execution of a previously loaded image.
         ///
+        ///
         /// The `image_handle` is validated against the protocol database and the
         /// private image data map; an error is returned if the handle is unknown or
         /// the image has already been started.
+        ///
+        /// # TPL
+        /// The UEFI specification requires this API to be called at `TPL == TPL_APPLICATION`.
+        /// This is stricter than the image and protocol-database locks' `TPL_NOTIFY` ceiling.
         pub fn start_image(&'static self, image_handle: efi::Handle) -> Result<(), efi::Status> {
             PROTOCOL_DB.validate_handle(image_handle)?;
 
-            if let Some(private_data) = self.image_data.lock().private_image_data.get_mut(&image_handle) {
+            if let Some(private_data) =
+                self.image_data.try_lock().ok_or(efi::Status::NOT_READY)?.private_image_data.get_mut(&image_handle)
+            {
                 if private_data.started {
                     Err(EfiError::InvalidParameter)?;
                 }
@@ -763,7 +770,9 @@ mod dispatch {
             // define a co-routine that wraps the entry point execution. this doesn't
             // run until the coroutine.resume() call below.
             let mut coroutine = Coroutine::with_stack(stack, move |yielder, image_handle| {
-                let mut private_data = self.image_data.lock();
+                let Some(mut private_data) = self.image_data.try_lock() else {
+                    return efi::Status::NOT_READY;
+                };
 
                 // mark the image as started and grab a copy of the private info.
                 let status;
@@ -802,7 +811,7 @@ mod dispatch {
             // running image to the one we are about to invoke. In the event of nested
             // calls to StartImage(), the chain of previously running images will
             // be preserved on the stack of the various StartImage() instances.
-            let mut private_data = self.image_data.lock();
+            let mut private_data = self.image_data.try_lock().ok_or(efi::Status::NOT_READY)?;
             let previous_image = private_data.current_running_image;
             private_data.current_running_image = Some(image_handle);
             drop(private_data);
@@ -827,7 +836,7 @@ mod dispatch {
             // SAFETY: force_reset prevents unwinding a suspended coroutine with a custom stack.
             unsafe { coroutine.force_reset() };
 
-            self.image_data.lock().current_running_image = previous_image;
+            self.image_data.try_lock().ok_or(efi::Status::NOT_READY)?.current_running_image = previous_image;
 
             self.performance.map_or_default(|perf| perf.perf_image_start_end(image_handle));
 
@@ -840,6 +849,7 @@ mod dispatch {
         /// Terminates a started image and returns control to the caller of
         /// `start_image`.
         ///
+        ///
         /// `image_handle` is validated against the private image data map; if not
         /// found, `INVALID_PARAMETER` is returned.
         ///
@@ -850,6 +860,10 @@ mod dispatch {
         /// to a valid buffer of at least `exit_data_size` bytes. This pointer is
         /// stored and later returned to the caller of `start_image` to retrieve the
         /// exit data.
+        ///
+        /// # TPL
+        /// The UEFI specification requires this API to be called at or below `TPL_CALLBACK`.
+        /// This is stricter than the image and protocol-database locks' `TPL_NOTIFY` ceiling.
         pub(super) unsafe fn exit(
             &self,
             image_handle: efi::Handle,
@@ -857,13 +871,17 @@ mod dispatch {
             exit_data_size: usize,
             exit_data: *mut efi::Char16,
         ) -> efi::Status {
-            let started = match self.image_data.lock().private_image_data.get(&image_handle) {
+            let Some(mut private_data) = self.image_data.try_lock() else {
+                return efi::Status::NOT_READY;
+            };
+            let started = match private_data.private_image_data.get(&image_handle) {
                 Some(image_data) => image_data.started,
                 None => return efi::Status::INVALID_PARAMETER,
             };
 
             // if not started, just unload the image.
             if !started {
+                drop(private_data);
                 return match self.unload_image(image_handle, true) {
                     Ok(()) => efi::Status::SUCCESS,
                     Err(_err) => efi::Status::INVALID_PARAMETER,
@@ -871,7 +889,6 @@ mod dispatch {
             }
 
             // image has been started - check the currently running image.
-            let mut private_data = self.image_data.lock();
             if Some(image_handle) != private_data.current_running_image {
                 return efi::Status::INVALID_PARAMETER;
             }
@@ -948,6 +965,7 @@ mod dispatch_stub {
 impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// Loads an image from an in-memory buffer for the [`ImageServices`] component service.
     ///
+    ///
     /// This resolves the platform-specific dispatcher instance and erases the platform generic
     /// `P`, so it can be stored as a plain function pointer by `CoreImageServices`.
     ///
@@ -957,27 +975,42 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// use [`service_load_image_from_device_path`] instead.
     ///
     /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION`, as required by [`Self::load_image`].
     pub(crate) fn service_load_image(parent: efi::Handle, source: &[u8]) -> Result<efi::Handle, ImageError> {
         Self::instance().load_image(false, parent, None, Some(source)).map_err(image_status_to_error)
     }
 
     /// Starts a loaded image for the [`ImageServices`] component service.
     ///
+    ///
     /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION`, as required by [`Self::start_image`].
     pub(crate) fn service_start_image(image: efi::Handle) -> Result<(), ImageError> {
         Self::instance().start_image(image).map_err(efi_status_to_image_error)
     }
 
     /// Unloads a loaded image for the [`ImageServices`] component service.
     ///
+    ///
     /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_CALLBACK`, as required by [`Self::unload_image`].
     pub(crate) fn service_unload_image(image: efi::Handle) -> Result<(), ImageError> {
         Self::instance().unload_image(image, false).map_err(efi_status_to_image_error)
     }
 
     /// Loads an image located by a device path for the [`ImageServices`] component service.
     ///
+    ///
     /// [`ImageServices`]: patina::component::service::uefi_services::image::ImageServices
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION`, as required by [`Self::load_image`].
     #[cfg(feature = "unstable-device-path")]
     pub(crate) fn service_load_image_from_device_path(
         parent: efi::Handle,
@@ -988,6 +1021,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     }
 
     /// Loads the image specified by the device path or slice.
+    ///
     /// * `parent_image_handle` - the handle of the image that is loading this one.
     /// * `file_path` - optional device path describing where to load the image from.
     /// * image - optional slice containing the image data.
@@ -998,6 +1032,10 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// Returns `Ok(efi::Handle)` if the image was loaded successfully.
     /// returns Err(ImageStatus) if there was an error loading the issue. The enum value determines if the image was loaded
     ///   with security violations, or not at all. See [`ImageStatus`] for details.
+    ///
+    /// # TPL
+    /// The UEFI specification requires this API to be called at `TPL == TPL_APPLICATION`.
+    /// This is stricter than the image and protocol-database locks' `TPL_NOTIFY` ceiling.
     pub fn load_image(
         &self,
         boot_policy: bool,
@@ -1041,7 +1079,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
 
         // load the image.
         let mut image_info = empty_image_info();
-        image_info.system_table = self.image_data.lock().system_table;
+        image_info.system_table = self.image_data.try_lock().ok_or(EfiError::NotReady)?.system_table;
         image_info.parent_handle = parent_image_handle;
         image_info.device_handle = device_handle;
 
@@ -1053,9 +1091,8 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
             private_info.set_file_path(fp)?;
         }
 
+        let mut private_image_data = self.image_data.try_lock().ok_or(EfiError::NotReady)?;
         let handle = private_info.install().map_err(|_| EfiError::LoadError)?;
-
-        let mut private_image_data = self.image_data.lock();
 
         // save the private image data for this image in the private image data map.
         private_image_data.private_image_data.insert(handle, private_info);
@@ -1100,6 +1137,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
 
     /// Loads the image specified by the `device_path` or `source_buffer` argument.
     ///
+    ///
     /// See the `EFI_BOOT_SERVICES::LoadImage()` API definition in the UEFI spec for parameter
     /// and usage details.
     ///
@@ -1111,6 +1149,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     ///   structure in readable memory for the duration of the call.
     /// - `image_handle` is null-checked and returns `INVALID_PARAMETER` if null; if non-null,
     ///   it must point to writable memory suitable for storing an `efi::Handle`.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION`, as required by [`Self::load_image`].
     #[cfg_attr(coverage, coverage(off))]
     pub(super) unsafe extern "efiapi" fn load_image_efiapi(
         boot_policy: efi::Boolean,
@@ -1154,6 +1195,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// `load_image`. See the `EFI_BOOT_SERVICES::StartImage()` API definition in
     /// the UEFI spec for usage details.
     ///
+    ///
     /// * `image_handle` - handle of the image to be started.
     /// * `exit_data_size` - pointer to receive the size, in bytes, of `exit_data`.
     ///   if `exit_data` is null, this is parameter is ignored.
@@ -1164,6 +1206,8 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// If `exit_data_size` and `exit_data` are non-null, they must point to
     /// valid writable memory. The caller owns the returned exit data buffer.
     ///
+    /// # TPL
+    /// The caller must be at `TPL == TPL_APPLICATION`, as required by [`Self::start_image`].
     #[cfg_attr(coverage, coverage(off))]
     pub(super) unsafe extern "efiapi" fn start_image_efiapi(
         image_handle: efi::Handle,
@@ -1171,25 +1215,25 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         exit_data: *mut *mut efi::Char16,
     ) -> efi::Status {
         let status = Self::instance().start_image(image_handle);
+        let Some(private_data) = Self::instance().image_data.try_lock() else {
+            return efi::Status::NOT_READY;
+        };
 
         // retrieve any exit data that was provided by the entry point.
-        if !exit_data_size.is_null() && !exit_data.is_null() {
-            let private_data = Self::instance().image_data.lock();
-            if let Some(image_data) = private_data.private_image_data.get(&image_handle)
-                && let Some(image_exit_data) = &image_data.exit_data
-                && !exit_data_size.is_null()
-                && !exit_data.is_null()
-            {
-                // SAFETY: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
-                unsafe {
-                    exit_data_size.write_unaligned(image_exit_data.0);
-                    exit_data.write_unaligned(image_exit_data.1);
-                }
+        if !exit_data_size.is_null()
+            && !exit_data.is_null()
+            && let Some(image_data) = private_data.private_image_data.get(&image_handle)
+            && let Some(image_exit_data) = &image_data.exit_data
+        {
+            // SAFETY: Caller must ensure that exit_data_size and exit_data are valid pointers if they are non-null.
+            unsafe {
+                exit_data_size.write_unaligned(image_exit_data.0);
+                exit_data.write_unaligned(image_exit_data.1);
             }
         }
 
-        let image_type =
-            Self::instance().image_data.lock().private_image_data.get(&image_handle).map(|x| x.pe_info.image_type);
+        let image_type = private_data.private_image_data.get(&image_handle).map(|image| image.pe_info.image_type);
+        drop(private_data);
 
         if status.is_err() || image_type == Some(pecoff::EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION) {
             let _result = Self::instance().unload_image(image_handle, true);
@@ -1203,6 +1247,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
 
     /// Unloads a previously loaded image.
     ///
+    ///
     /// # Safety Considerations
     ///
     /// This function is not marked `unsafe` because `image_handle` is safe to
@@ -1210,9 +1255,13 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// database via [`PROTOCOL_DB.validate_handle`] and looked up in the
     /// private image data map; if the handle is not found, an error status is
     /// returned rather than causing undefined behavior.
+    ///
+    /// # TPL
+    /// The UEFI specification requires this API to be called at or below `TPL_CALLBACK`.
+    /// This is stricter than the image and protocol-database locks' `TPL_NOTIFY` ceiling.
     pub fn unload_image(&self, image_handle: efi::Handle, force_unload: bool) -> Result<(), efi::Status> {
         PROTOCOL_DB.validate_handle(image_handle)?;
-        let private_data = self.image_data.lock();
+        let private_data = self.image_data.try_lock().ok_or(efi::Status::NOT_READY)?;
         let private_image_data =
             private_data.private_image_data.get(&image_handle).ok_or(efi::Status::INVALID_PARAMETER)?;
         let unload_function = private_image_data.image_info.unload;
@@ -1240,6 +1289,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
             }
         }
         let handles = PROTOCOL_DB.locate_handles(None).unwrap_or_default();
+        let mut image_data = self.image_data.try_lock().ok_or(efi::Status::NOT_READY)?;
 
         // Remove the debug image info table entry for this image.
         if let Some(mut table) = self.debug_image_data.try_write() {
@@ -1279,12 +1329,13 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         // remove the private data for this image from the private_image_data map.
         // it will get dropped when it goes out of scope at the end of the function and the pages allocated for it
         // and the image_info box along with it.
-        let private_image_data = self.image_data.lock().private_image_data.remove(&image_handle).unwrap();
+        let private_image_data =
+            image_data.private_image_data.remove(&image_handle).ok_or(efi::Status::INVALID_PARAMETER)?;
 
         // If something fails to uninstall, then re-insert the private image data back into the map so the protocols
         // are not deallocated.
         if private_image_data.uninstall(image_handle).is_err() {
-            self.image_data.lock().private_image_data.insert(image_handle, private_image_data);
+            image_data.private_image_data.insert(image_handle, private_image_data);
         }
 
         Ok(())
@@ -1293,6 +1344,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     #[cfg_attr(coverage, coverage(off))]
     /// Unloads a previously loaded image.
     ///
+    ///
     /// # Safety Considerations
     ///
     /// This function is not marked `unsafe` because `image_handle` is safe to
@@ -1300,6 +1352,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// database via [`PROTOCOL_DB.validate_handle`] and looked up in the
     /// private image data map; if the handle is not found, an error status is
     /// returned rather than causing undefined behavior.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_CALLBACK`, as required by [`Self::unload_image`].
     pub(super) extern "efiapi" fn unload_image_efiapi(image_handle: efi::Handle) -> efi::Status {
         match Self::instance().unload_image(image_handle, false) {
             Ok(()) => efi::Status::SUCCESS,
@@ -1310,6 +1365,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// Terminates a loaded EFI image and returns control to boot services. See
     /// the `EFI_BOOT_SERVICES::Exit()` API definition in the UEFI spec for usage
     /// details.
+    ///
     ///
     /// `image_handle` is validated against the private image data map; if not
     /// found, `INVALID_PARAMETER` is returned.
@@ -1326,6 +1382,9 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
     /// to a valid buffer of at least `exit_data_size` bytes. This pointer is
     /// stored and later returned to the caller of `start_image` to retrieve the
     /// exit data.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_CALLBACK`, as required by [`Self::exit`].
     #[cfg_attr(coverage, coverage(off))]
     pub(super) unsafe extern "efiapi" fn exit_efiapi(
         image_handle: efi::Handle,
@@ -1338,8 +1397,15 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         unsafe { Self::instance().exit(image_handle, status, exit_data_size, exit_data) }
     }
 
+    /// Fixes runtime image protections at `ExitBootServices`.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the image lock.
+    /// The event invokes this callback at `TPL_CALLBACK`.
     pub(super) extern "efiapi" fn runtime_image_protection_fixup_ebs(event: efi::Event, _context: *mut c_void) {
-        let mut private_data = Self::instance().image_data.lock();
+        let mut private_data = Self::instance().image_data.try_lock().expect(
+            "Cannot complete ExitBootServices safely: image state is busy and runtime image memory protections cannot be fixed up",
+        );
 
         for image in private_data.private_image_data.values_mut() {
             // If the image was successfully added to the private_image_data map, then it must have a valid image buffer.
@@ -1837,13 +1903,38 @@ mod tests {
     }
 
     #[test]
+    fn test_image_contention_returns_not_ready() {
+        with_locked_state(|| {
+            static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
+                PiDispatcher::new(patina_ffs_extractors::NullSectionExtractor::new());
+            let private_image = create_test_private_image_data();
+            let handle = install_test_loaded_image_protocol(&private_image);
+            let mut guard = PI_DISPATCHER.image_data.try_lock().expect("test image state should be available");
+            guard.private_image_data.insert(handle, private_image);
+            assert_eq!(PI_DISPATCHER.unload_image(handle, true), Err(efi::Status::NOT_READY));
+            #[cfg(not(all(target_arch = "aarch64", target_os = "windows")))]
+            assert_eq!(PI_DISPATCHER.start_image(handle), Err(efi::Status::NOT_READY));
+            assert_eq!(
+                // SAFETY: No exit data is provided, and the handle belongs to the test image.
+                unsafe { PI_DISPATCHER.exit(handle, efi::Status::SUCCESS, 0, core::ptr::null_mut()) },
+                efi::Status::NOT_READY
+            );
+            assert!(guard.private_image_data.contains_key(&handle));
+            drop(guard);
+            PI_DISPATCHER.unload_image(handle, true).expect("test image should unload after releasing its state lock");
+        });
+    }
+
+    #[test]
     fn test_simple_init() {
         with_locked_state(|| {
             static IMAGE_DATA: ImageData = ImageData::new();
             assert!(IMAGE_DATA.private_image_data.is_empty());
 
             static IMAGE_DATA2: tpl_mutex::TplMutex<ImageData> = ImageData::new_locked();
-            assert!(IMAGE_DATA2.lock().private_image_data.is_empty());
+            assert!(
+                IMAGE_DATA2.try_lock().expect("test image state should be available").private_image_data.is_empty()
+            );
         });
     }
 
@@ -1852,7 +1943,10 @@ mod tests {
         with_locked_state(|| {
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             // Per the UEFI Specification (EFI_BOOT_SERVICES.LoadImage()), when both
             // SourceBuffer and DevicePath are NULL, EFI_NOT_FOUND must be returned.
@@ -1871,12 +1965,15 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             let image_handle =
                 PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice())).unwrap();
 
-            let private_data = PI_DISPATCHER.image_data.lock();
+            let private_data = PI_DISPATCHER.image_data.try_lock().expect("test image state should be available");
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
             let image_buf_len = image_data.image_buffer.as_ref().len();
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
@@ -1897,7 +1994,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
             assert!(status.is_ok());
@@ -1913,7 +2013,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
 
@@ -1931,7 +2034,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             let result = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
 
@@ -1955,7 +2061,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             let result = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
 
@@ -1973,7 +2082,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
             assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))));
         });
@@ -1994,7 +2106,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
             assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))), "{status:?}");
         });
@@ -2014,11 +2129,19 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             let handles_before =
                 PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len();
-            let images_before = PI_DISPATCHER.image_data.lock().private_image_data.len();
+            let images_before = PI_DISPATCHER
+                .image_data
+                .try_lock()
+                .expect("test image state should be available")
+                .private_image_data
+                .len();
 
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
             assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::Unsupported))), "{status:?}");
@@ -2027,7 +2150,15 @@ mod tests {
             let handles_after =
                 PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len();
             assert_eq!(handles_before, handles_after);
-            assert_eq!(images_before, PI_DISPATCHER.image_data.lock().private_image_data.len());
+            assert_eq!(
+                images_before,
+                PI_DISPATCHER
+                    .image_data
+                    .try_lock()
+                    .expect("test image state should be available")
+                    .private_image_data
+                    .len()
+            );
         });
     }
 
@@ -2041,7 +2172,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
             assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))));
@@ -2058,7 +2192,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
             // Check for either load error or unsupported. On aarch64, goblin will parse
@@ -2079,7 +2216,10 @@ mod tests {
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
 
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(&image));
             assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))));
         });
@@ -2094,7 +2234,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             // Mock Security Arch protocol
             static SECURITY_CALL_EXECUTED: AtomicBool = AtomicBool::new(false);
@@ -2126,7 +2269,7 @@ mod tests {
 
             assert!(SECURITY_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
 
-            let private_data = PI_DISPATCHER.image_data.lock();
+            let private_data = PI_DISPATCHER.image_data.try_lock().expect("test image state should be available");
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
             let image_buf_len = image_data.image_buffer.as_ref().len();
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
@@ -2147,7 +2290,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             // Mock Security Arch protocol
             extern "efiapi" fn mock_file_authentication_state(
@@ -2205,7 +2351,7 @@ mod tests {
 
             assert!(SECURITY2_CALL_EXECUTED.load(core::sync::atomic::Ordering::SeqCst));
 
-            let private_data = PI_DISPATCHER.image_data.lock();
+            let private_data = PI_DISPATCHER.image_data.try_lock().expect("test image state should be available");
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
             let image_buf_len = image_data.image_buffer.as_ref().len();
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
@@ -2226,7 +2372,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             // Mock Security2 Arch protocol
             extern "efiapi" fn mock_file_authentication(
@@ -2252,7 +2401,15 @@ mod tests {
 
             // The handle / private data count should be 1, which is the dxe core image.
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
-            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 1);
+            assert_eq!(
+                PI_DISPATCHER
+                    .image_data
+                    .try_lock()
+                    .expect("test image state should be available")
+                    .private_image_data
+                    .len(),
+                1
+            );
             // In this result, we expect to get SECURITY_VIOLATION, but the image_handle is successfully populated.
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(&image));
 
@@ -2265,7 +2422,15 @@ mod tests {
 
             // Load successful, we should have one more now.
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 2);
-            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 2);
+            assert_eq!(
+                PI_DISPATCHER
+                    .image_data
+                    .try_lock()
+                    .expect("test image state should be available")
+                    .private_image_data
+                    .len(),
+                2
+            );
         });
     }
 
@@ -2278,7 +2443,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             // Mock Security2 Arch protocol
             extern "efiapi" fn mock_file_authentication(
@@ -2304,13 +2472,29 @@ mod tests {
 
             // The handle / private data count should be 1, which is the dxe core image.
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
-            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 1);
+            assert_eq!(
+                PI_DISPATCHER
+                    .image_data
+                    .try_lock()
+                    .expect("test image state should be available")
+                    .private_image_data
+                    .len(),
+                1
+            );
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(&image));
             assert!(matches!(status, Err(ImageStatus::AccessDenied)));
 
             // There should still be only 1 handle
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
-            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 1);
+            assert_eq!(
+                PI_DISPATCHER
+                    .image_data
+                    .try_lock()
+                    .expect("test image state should be available")
+                    .private_image_data
+                    .len(),
+                1
+            );
         });
     }
 
@@ -2323,7 +2507,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             // Mock Security2 Arch protocol
             extern "efiapi" fn mock_file_authentication(
@@ -2349,14 +2536,30 @@ mod tests {
 
             // There should be 1 handle prior to this
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
-            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 1);
+            assert_eq!(
+                PI_DISPATCHER
+                    .image_data
+                    .try_lock()
+                    .expect("test image state should be available")
+                    .private_image_data
+                    .len(),
+                1
+            );
 
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(&image));
             assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::InvalidParameter))));
 
             // There should still be only 1 handle
             assert_eq!(PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)).unwrap().len(), 1);
-            assert_eq!(PI_DISPATCHER.image_data.lock().private_image_data.len(), 1);
+            assert_eq!(
+                PI_DISPATCHER
+                    .image_data
+                    .try_lock()
+                    .expect("test image state should be available")
+                    .private_image_data
+                    .len(),
+                1
+            );
         });
     }
 
@@ -2372,7 +2575,10 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             let image_handle =
                 PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(&image)).unwrap();
@@ -2390,7 +2596,7 @@ mod tests {
                 ENTRY_POINT_RAN.store(true, core::sync::atomic::Ordering::Relaxed);
                 efi::Status::SUCCESS
             }
-            let mut private_data = PI_DISPATCHER.image_data.lock();
+            let mut private_data = PI_DISPATCHER.image_data.try_lock().expect("test image state should be available");
             let image_data = private_data.private_image_data.get_mut(&image_handle).unwrap();
             image_data.entry_point = test_entry_point;
             drop(private_data);
@@ -2398,7 +2604,7 @@ mod tests {
             PI_DISPATCHER.start_image(image_handle).unwrap();
             assert!(ENTRY_POINT_RAN.load(core::sync::atomic::Ordering::Relaxed));
 
-            let mut private_data = PI_DISPATCHER.image_data.lock();
+            let mut private_data = PI_DISPATCHER.image_data.try_lock().expect("test image state should be available");
             let image_data = private_data.private_image_data.get_mut(&image_handle).unwrap();
             assert!(image_data.started);
             drop(private_data);
@@ -2417,7 +2623,10 @@ mod tests {
 
             static CORE: Core<MockPlatformInfo> =
                 Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            CORE.pi_dispatcher.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            CORE.pi_dispatcher.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
             CORE.override_instance();
 
             let image_handle =
@@ -2439,7 +2648,8 @@ mod tests {
                 ENTRY_POINT_RAN.store(true, core::sync::atomic::Ordering::Relaxed);
                 efi::Status::UNSUPPORTED
             }
-            let mut private_data = CORE.pi_dispatcher.image_data.lock();
+            let mut private_data =
+                CORE.pi_dispatcher.image_data.try_lock().expect("test image state should be available");
             let image_data = private_data.private_image_data.get_mut(&image_handle).unwrap();
             image_data.entry_point = test_entry_point;
             drop(private_data);
@@ -2459,7 +2669,7 @@ mod tests {
             assert_eq!(status, efi::Status::UNSUPPORTED);
             assert!(ENTRY_POINT_RAN.load(core::sync::atomic::Ordering::Relaxed));
 
-            let private_data = CORE.pi_dispatcher.image_data.lock();
+            let private_data = CORE.pi_dispatcher.image_data.try_lock().expect("test image state should be available");
             assert!(!private_data.private_image_data.contains_key(&image_handle));
             drop(private_data);
         });
@@ -2474,14 +2684,17 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             let image_handle =
                 PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(&image)).unwrap();
 
             PI_DISPATCHER.unload_image(image_handle, false).unwrap();
 
-            let private_data = PI_DISPATCHER.image_data.lock();
+            let private_data = PI_DISPATCHER.image_data.try_lock().expect("test image state should be available");
             assert!(!private_data.private_image_data.contains_key(&image_handle));
         });
     }
@@ -2812,14 +3025,17 @@ mod tests {
 
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
             // Test 1: Full load_image flow
             let image_handle =
                 PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(&image)).unwrap();
 
             // Verify the image was loaded successfully with correct properties
-            let private_data = PI_DISPATCHER.image_data.lock();
+            let private_data = PI_DISPATCHER.image_data.try_lock().expect("test image state should be available");
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
             assert_ne!(image_data.entry_point as usize, 0);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
@@ -3796,9 +4012,19 @@ mod tests {
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
 
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
-            assert!(PI_DISPATCHER.image_data.lock().private_image_data.contains_key(&DXE_CORE_HANDLE));
+            assert!(
+                PI_DISPATCHER
+                    .image_data
+                    .try_lock()
+                    .expect("test image state should be available")
+                    .private_image_data
+                    .contains_key(&DXE_CORE_HANDLE)
+            );
         })
         .unwrap();
     }
@@ -3819,9 +4045,16 @@ mod tests {
             CORE.override_instance();
             let pi_dispatcher = &CORE.pi_dispatcher;
 
-            pi_dispatcher.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            pi_dispatcher.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
             assert!(
-                pi_dispatcher.image_data.lock().private_image_data[&DXE_CORE_HANDLE].image_info.file_path.is_null()
+                pi_dispatcher.image_data.try_lock().expect("test image state should be available").private_image_data
+                    [&DXE_CORE_HANDLE]
+                    .image_info
+                    .file_path
+                    .is_null()
             );
 
             let mut fv_file = File::open(test_collateral!("DXEFV.Fv")).expect("failed to open test FV.");
@@ -3834,7 +4067,7 @@ mod tests {
             let fv_handle = unsafe { pi_dispatcher.install_firmware_volume(fv.as_ptr() as u64, None) }.unwrap();
             let file_name = patina::guid::DXE_CORE_ID.into_inner();
 
-            let mut image_data = pi_dispatcher.image_data.lock();
+            let mut image_data = pi_dispatcher.image_data.try_lock().expect("test image state should be available");
             let info = &image_data.private_image_data[&DXE_CORE_HANDLE].image_info;
             assert_eq!(info.device_handle, fv_handle);
             assert!(!info.file_path.is_null());
@@ -3872,9 +4105,12 @@ mod tests {
             static PI_DISPATCHER: PiDispatcher<MockPlatformInfo> =
                 PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
 
-            PI_DISPATCHER.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            PI_DISPATCHER.init(
+                &create_dxe_core_hob(),
+                SYSTEM_TABLE.try_lock().expect("test system table should be available").as_mut().unwrap(),
+            );
 
-            let mut image_data = PI_DISPATCHER.image_data.lock();
+            let mut image_data = PI_DISPATCHER.image_data.try_lock().expect("test image state should be available");
             let file_name = patina::guid::DXE_CORE_ID.into_inner();
 
             assert!(image_data.set_dxe_core_file(0x9999 as efi::Handle, file_name).is_err());

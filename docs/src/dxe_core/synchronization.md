@@ -22,8 +22,12 @@ the [UEFI Specification Section 7.1](https://uefi.org/specs/UEFI/2.11/07_Service
 `TplMutex` implements mutual exclusion for the Patina DXE Core using semantics
 very similar to the Rust [sync::Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html).
 Each `TplMutex` has a type parameter which represents the data that it is
-protecting. The data can only be accessed through the `TplGuard` objects
-returned from `lock()` and `try_lock()` methods on the TplMutex.
+protecting. The data can only be accessed through the guards returned by
+`try_lock()`: `TplMutexGuard` in the SDK and `TplGuard` in the DXE Core adapter.
+The DXE Core adapter exposes only `try_lock()`. The SDK retains a deprecated
+`lock()` method for compatibility, but it panics on acquisition failure. Callers
+should use `try_lock()` and explicitly handle failure, normally by returning an
+appropriate domain error.
 
 There are two mutual exclusion mechanisms that protect the data guarded by
 `TplMutex`:
@@ -54,11 +58,13 @@ The second mutual exclusion mechanism used by `TplMutex` is a flag to control
 access to the lock. To acquire the `TplMutex`, the flag must be clear to
 indicate that the lock is not owned by any other agent. There is a significant
 difference between the `TplMutex` and `sync::Mutex` - while `sync::Mutex` will
-simply block on a call to `lock()` when the lock is owned, `TplMutex` will panic
-if an attempt is made to call `lock()` when it is already owned.
+simply block on a call to `lock()` when the lock is owned, `TplMutex::try_lock()`
+returns `Err(())` immediately if it is already owned. The SDK also returns
+`Err(())` if its deferred TPL controller has not been initialized.
 
 ```admonish warning
-Reentrant calls to `lock()` are not permitted for `TplMutex`.
+Reentrant acquisition fails. Do not retry in a loop: the interrupted owner
+cannot release its guard until the current callback returns.
 ```
 
 This is by design: `sync:Mutex` presumes the existence of a multi-threaded
@@ -67,12 +73,10 @@ eventually complete work and release the lock. In the `sync:Mutex` context a
 blocking `lock()` call makes sense since it is reasonable to expect that the
 lock will be released by another thread. In the UEFI `TplMutex` context,
 however, there is no multi-threading, only interrupts on the same thread at
-higher TPL. For a re-entrant call to `lock()` to occur, an attempt to call
-`lock()` must have been made from the same or higher TPL level than the original
-call to `lock()`. This means that if the re-entrant call to `lock()` were to
-block, control would never return to the original caller of `lock()` at the same
-or lower TPL. So in the UEFI context, all reentrant calls to `lock()` are
-guaranteed to deadlock. Note that [`sync::Mutex` behavior](https://doc.rust-lang.org/std/sync/struct.Mutex.html#method.lock)
+higher TPL. A reentrant acquisition attempt runs at the same or higher TPL as
+the original acquisition. If that attempt blocked, control would never return
+to the original caller at the same or lower TPL. Blocking reentrant acquisition
+would therefore deadlock. Note that [`sync::Mutex` behavior](https://doc.rust-lang.org/std/sync/struct.Mutex.html#method.lock)
 is similar if `lock()` is attempted on the same thread that already holds the
 mutex.
 
@@ -92,30 +96,33 @@ implements `TplController`, but other environments may implement
 direct internal TPL operations, allowing the shared `TplMutex` implementation
 to be instantiated independently of Boot Services availability.
 
+`TplController::raise_tpl` remains infallible. `try_lock()` does not convert
+controller assertions or an invalid attempt to lower TPL into `Err(())`.
+
 ## TplGuard
 
-When `lock()` is called on `TplMutex` a `TplGuard` structure is returned that
+When `try_lock()` succeeds on `TplMutex` a guard is returned that
 provides access to the locked data. The `TplGuard` structure implements `Deref`
-and `DerefMut`, which allows access to the underlying data:
+and `DerefMut`, which allows access to the underlying data. These examples
+assume an initialized `boot_services` controller and a function returning
+`Result<_, ()>`:
 
 ```rust,ignore
-use crate::tpl_mutex::TplMutex;
-use patina::standard::efi;
-let tpl_mutex = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
+use patina::uefi::{boot_services::tpl::Tpl, tpl_mutex::TplMutex};
+let tpl_mutex = TplMutex::new(boot_services, Tpl::HIGH_LEVEL, 1_usize);
 
-*tpl_mutex.lock() = 2_usize; //deref to set
-assert_eq!(2_usize, *tpl_mutex.lock()); //deref to read.
+*tpl_mutex.try_lock()? = 2_usize; //deref to set
+assert_eq!(2_usize, *tpl_mutex.try_lock()?); //deref to read.
 ```
 
-In addition, the when the `TplGuard` structure returned by `lock()` goes out of
+In addition, when the guard returned by `try_lock()` goes out of
 scope or is dropped, the lock is automatically released:
 
 ```rust,ignore
-use crate::tpl_mutex::TplMutex;
-use patina::standard::efi;
-let tpl_mutex1 = TplMutex::new(efi::TPL_HIGH_LEVEL, 1_usize, "test_lock");
+use patina::uefi::{boot_services::tpl::Tpl, tpl_mutex::TplMutex};
+let tpl_mutex1 = TplMutex::new(boot_services, Tpl::HIGH_LEVEL, 1_usize);
 
-let mut guard1 = tpl_mutex1.lock(); //mutex1 locked.
+let mut guard1 = tpl_mutex1.try_lock()?; //mutex1 locked.
 *guard1 = 2_usize; //set data behind guard1
 assert_eq!(2_usize, *guard1); //deref to read.
 assert!(tpl_mutex1.try_lock().is_err()); //mutex1 still locked.
@@ -144,9 +151,9 @@ will not block execution of the context currently holding the lock. But as
 described in the previous section of this chapter, that is not the case for
 UEFI: if code running at a low TPL holds a lock and is interrupted by code in an
 event callback at a higher TPL that tries to acquire the lock, deadlock will
-occur. `TplMutex` helps to ensure this doesn't happen by panicking on an attempt
-to acquire the lock in this case, helping the developer identify and resolve the
-design issues that would otherwise lead to deadlock.
+occur. `TplMutex` avoids blocking by returning an error on contention. Callers
+must propagate or otherwise handle that failure without spinning or silently
+reporting success.
 
 3. When designing a `TplMutex` to guard shared data, select the highest TPL that
 the shared state will possibly be accessed at as the TPL level associated with
@@ -183,20 +190,20 @@ guard is active.
 
    ```rust,ignore
    {
-       let guard = my_tpl_mutex.lock();
+      let guard = my_tpl_mutex.try_lock()?;
        // TPL raised to level associated with my_tpl_mutex
        guard.mutation();
    }
    // mutex dropped, TPL restored to the base TPL level for the event callback.
    long_running_computation();
    // re-acquire mutex
-   my_tpl_mutex.lock().mutation2();
+   my_tpl_mutex.try_lock()?.mutation2();
    ```
 
    instead of:
 
    ```rust,ignore
-   let guard = my_tpl_mutex.lock();
+   let guard = my_tpl_mutex.try_lock()?;
    guard.mutation();
    //mutex held and TPL stays high during long_running_computation
    long_running_computation();
@@ -231,8 +238,8 @@ of the UEFI spec. For example, the following usage of `TplMutex` would be an
 error:
 
    ```rust,ignore
-   let my_tpl_mutex = TplMutex::<Data>::new(efi::TPL_NOTIFY, Data::new(), "my lock");
-   let _guard = my_tpl_mutex.lock(); //TPL raised to NOTIFY while _guard is in scope.
+   let my_tpl_mutex = TplMutex::new(boot_services, Tpl::NOTIFY, Data::new());
+   let _guard = my_tpl_mutex.try_lock()?; //TPL raised to NOTIFY while _guard is in scope.
    let acpi_services = locate_acpi_table_protocol();
    acpi_services.install_acpi_table(); //BUG: UEFI spec requires invocation at < TPL_NOTIFY
    ```
@@ -242,3 +249,23 @@ specific cases; these should include design rationale for the departure from
 these rules of thumb. For example, it might be possible to use a non-TPL
 synchronization primitive that only uses `try_lock` to avoid deadlock and is
 designed to handle failure to acquire the lock in a non-fatal manner.
+
+## TPL Documentation
+
+Functions with caller TPL restrictions must include a `# TPL` section in their
+function documentation. State the allowed caller TPL explicitly, including restrictions
+inherited from called services or locks acquired by the function. Document trait
+contracts on the trait methods so every implementation and caller shares the same
+requirements.
+
+```rust,ignore
+/// My fun function
+///
+/// # TPL
+/// This API must be called at TPL <= TPL_NOTIFY because memory allocation services are
+/// used which the UEFI spec requires to be called with this TPL restriction. In addition,
+/// a TPL_NOTIFY level `TplMutex` is acquired by this function.
+fn my_fun_function() -> Result<(), EfiError> {
+   // ...
+}
+```

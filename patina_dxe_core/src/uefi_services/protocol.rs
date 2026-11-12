@@ -48,23 +48,45 @@ struct NotifyHolder {
 ///
 /// Drains the handles that the registration has flagged as installed and invokes the
 /// component-supplied closure for each.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY` to access the protocol database.
 extern "efiapi" fn notify_install_trampoline(_event: efi::Event, context: *mut c_void) {
     if context.is_null() {
         return;
     }
 
-    UEFI_SERVICES_STATE.protocol_install_notify.enter(context);
+    if let Err(err) = UEFI_SERVICES_STATE.protocol_install_notify.enter(context) {
+        log::error!("Cannot track protocol notification dispatch: {err}");
+        return;
+    }
 
     // SAFETY: `context` is the `NotifyHolder` created in `register_install_notify`, valid until
     // freed below or by `cancel_install_notify`. Notifications dispatch serially at the event's TPL.
     let holder = unsafe { &mut *context.cast::<NotifyHolder>() };
-    while let Some(handle) = PROTOCOL_DB.next_handle_for_registration(holder.registration) {
+    loop {
+        let handle = match PROTOCOL_DB.next_handle_for_registration(holder.registration) {
+            Ok(Some(handle)) => handle,
+            Ok(None) => break,
+            Err(err) => {
+                log::error!("Cannot drain protocol notification registration: {err}");
+                break;
+            }
+        };
         if let Some(handle) = Handle::from_raw(handle) {
             (holder.callback)(handle);
         }
     }
 
-    if UEFI_SERVICES_STATE.protocol_install_notify.exit(context) {
+    let close_requested = match UEFI_SERVICES_STATE.protocol_install_notify.exit(context) {
+        Ok(close_requested) => close_requested,
+        Err(err) => {
+            log::error!("Cannot finish protocol notification dispatch: {err}");
+            return;
+        }
+    };
+    if close_requested {
         // The dispatch cancelled its own registration above, so free the holder now.
         // SAFETY: `context` has not been freed yet, `cancel_install_notify` only recorded the request.
         drop(unsafe { Box::from_raw(context.cast::<NotifyHolder>()) });
@@ -256,14 +278,16 @@ impl ProtocolServices for CoreProtocolServices {
         let event = registration.event();
         let context = registration.context();
 
-        PROTOCOL_DB.unregister_protocol_notify_events(vec![event]);
+        PROTOCOL_DB.unregister_protocol_notify_events(vec![event]).map_err(ProtocolError::from)?;
 
         EVENT_DB.close_event(event).map_err(ProtocolError::from)?;
 
         // This registration is cancelling itself, or an ancestor registration if cancelled from a
         // nested notification. The notify install trampoline frees the holder when the dispatch
         // loop returns.
-        if !context.is_null() && !UEFI_SERVICES_STATE.protocol_install_notify.request_close(context) {
+        if !context.is_null()
+            && !UEFI_SERVICES_STATE.protocol_install_notify.request_close(context).map_err(ProtocolError::from)?
+        {
             // SAFETY: `context` is the `NotifyHolder` created in `register_install_notify`. The
             // event is now closed and unregistered, and its dispatch (if any) is not on the
             // call stack, so nothing can reference it any further.
@@ -822,7 +846,7 @@ mod tests {
                 .open_interface(parent, guid, agent, OpenAttributes::ByChildController { controller: child })
                 .unwrap();
 
-            let children = PROTOCOL_DB.get_child_handles(parent.as_raw());
+            let children = PROTOCOL_DB.get_child_handles(parent.as_raw()).expect("test child handle lookup");
             assert_eq!(children, alloc::vec![child.as_raw()]);
         });
     }

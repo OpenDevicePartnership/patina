@@ -479,17 +479,15 @@ mod tests {
     }
 
     #[test]
-    fn test_reentrant_lock_correctly_displays_name() {
-        assert!(
-            with_global_lock(|| {
-                let dispatcher = ComponentDispatcher::new_locked();
-                let _lock = dispatcher.lock();
-                let _reentrant_lock = dispatcher.lock();
-            })
-            .is_err_and(|e| {
-                e.downcast::<String>().unwrap().contains("Re-entrant locks for \"ComponentDispatcher\" not permitted.")
-            })
-        );
+    fn test_reentrant_lock_returns_none() {
+        with_global_lock(|| {
+            let dispatcher = ComponentDispatcher::new_locked();
+            let guard = dispatcher.try_lock().expect("test component dispatcher should be available");
+            assert!(dispatcher.try_lock().is_none());
+            drop(guard);
+            assert!(dispatcher.try_lock().is_some());
+        })
+        .expect("component dispatcher contention test should not panic");
     }
 
     #[test]

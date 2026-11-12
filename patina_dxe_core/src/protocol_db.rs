@@ -636,6 +636,8 @@ impl ProtocolDb {
 /// The protocol database is intended to be used as a global singleton, so access
 /// is only allowed through this structure which ensures that the event database
 /// is properly guarded against race conditions.
+///
+/// Fallible operations return [`EfiError::NotReady`] if the database is locked.
 pub struct SpinLockedProtocolDb {
     inner: tpl_mutex::TplMutex<ProtocolDb>,
 }
@@ -660,7 +662,7 @@ impl SpinLockedProtocolDb {
     ///
     #[cfg(test)]
     pub unsafe fn reset(&self) {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.try_lock().expect("protocol database must be unlocked during test reset");
         inner.handles.clear();
         inner.notifications.clear();
         inner.hash_new_handles = false;
@@ -668,17 +670,30 @@ impl SpinLockedProtocolDb {
         inner.next_registration = 1;
     }
 
+    #[cfg(test)]
     fn lock(&self) -> tpl_mutex::TplGuard<'_, ProtocolDb> {
-        self.inner.lock()
+        self.try_lock().expect("test protocol database must be unlocked")
+    }
+
+    fn try_lock(&self) -> Option<tpl_mutex::TplGuard<'_, ProtocolDb>> {
+        self.inner.try_lock()
     }
 
     /// Returns a list of all the protocols that have been registered with the protocol database.
-    pub fn registered_protocols(&self) -> Vec<efi::Guid> {
-        self.lock().registered_protocols()
+    ///
+    /// Returns [`EfiError::NotReady`] if the database is locked.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    pub fn registered_protocols(&self) -> Result<Vec<efi::Guid>, EfiError> {
+        Ok(self.try_lock().ok_or(EfiError::NotReady)?.registered_protocols())
     }
 
     /// Initialize the protocol database. Installs well-known handles, and then enables hashing to ensure handles are
     /// opaque.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn init_protocol_db(&self) {
         let well_known_handle_guid = efi::Guid::from_bytes(WELL_KNOWN_HANDLE_PROTOCOL_GUID.as_bytes());
 
@@ -706,10 +721,11 @@ impl SpinLockedProtocolDb {
                  Expected handle {target_handle:#x?}, got {handle:#x?}"
             );
         }
-        self.lock().enable_handle_hashing();
+        self.try_lock().expect("protocol database must be unlocked during initialization").enable_handle_hashing();
     }
 
     /// Installs a protocol interface on the given handle.
+    ///
     ///
     /// This function closely matches the semantics of the `EFI_BOOT_SERVICES.InstallProtocolInterface()` API in
     /// UEFI spec 2.10 section 7.3.2. Please refer to the spec for details on the input parameters.
@@ -721,16 +737,21 @@ impl SpinLockedProtocolDb {
     /// ## Errors
     ///
     /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `InstallProtocolInterface()` to be called at or below `TPL_NOTIFY`.
     pub fn install_protocol_interface(
         &self,
         handle: Option<efi::Handle>,
         guid: efi::Guid,
         interface: *mut c_void,
     ) -> Result<(efi::Handle, Vec<ProtocolNotify>), EfiError> {
-        self.lock().install_protocol_interface(handle, guid, interface)
+        self.try_lock().ok_or(EfiError::NotReady)?.install_protocol_interface(handle, guid, interface)
     }
 
     /// Removes a protocol interface from the given handle.
+    ///
     ///
     /// This function closely matches the semantics of the `EFI_BOOT_SERVICES.UninstallProtocolInterface()` API in
     /// UEFI spec 2.10 section 7.3.3. Please refer to the spec for details on the input parameters.
@@ -738,16 +759,21 @@ impl SpinLockedProtocolDb {
     /// ## Errors
     ///
     /// Returns `efi::Status::INVALID_PARAMETER` if incorrect parameters are given.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `UninstallProtocolInterface()` to be called at or below `TPL_NOTIFY`.
     pub fn uninstall_protocol_interface(
         &self,
         handle: efi::Handle,
         guid: efi::Guid,
         interface: *mut c_void,
     ) -> Result<(), EfiError> {
-        self.lock().uninstall_protocol_interface(handle, guid, interface)
+        self.try_lock().ok_or(EfiError::NotReady)?.uninstall_protocol_interface(handle, guid, interface)
     }
 
     /// Returns a vector of handles that have the specified protocol installed on them.
+    ///
     ///
     /// On success, this function returns a vector of [`efi::Handle`] that have this protocol installed on them.
     ///
@@ -757,11 +783,16 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if no matching handles are found.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `LocateHandle()` and `LocateHandleBuffer()` to be called at or below `TPL_NOTIFY`.
     pub fn locate_handles(&self, protocol: Option<efi::Guid>) -> Result<Vec<efi::Handle>, EfiError> {
-        self.lock().locate_handles(protocol)
+        self.try_lock().ok_or(EfiError::NotReady)?.locate_handles(protocol)
     }
 
     /// Returns an instance of the specified protocol interface from any handle.
+    ///
     ///
     /// On success, this function returns the protocol interface pointer for the given protocol from any handle. If
     /// multiple handles exist with this protocol installed on them, no guarantees are made about which handle the
@@ -771,11 +802,16 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if no matching interfaces are found.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `LocateProtocol()` to be called at or below `TPL_NOTIFY`.
     pub fn locate_protocol(&self, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
-        self.lock().locate_protocol(protocol)
+        self.try_lock().ok_or(EfiError::NotReady)?.locate_protocol(protocol)
     }
 
     /// Returns the interface for the specified protocol on the given handle if it exists
+    ///
     ///
     /// On success, this function returns the protocol interface pointer for the given protocol on the specified handle.
     ///
@@ -783,16 +819,23 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if no matching interfaces are found on the given handle.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn get_interface_for_handle(&self, handle: efi::Handle, protocol: efi::Guid) -> Result<*mut c_void, EfiError> {
-        self.lock().get_interface_for_handle(handle, protocol)
+        self.try_lock().ok_or(EfiError::NotReady)?.get_interface_for_handle(handle, protocol)
     }
 
     /// Returns Ok(()) if the handle is a valid handle, `Err(Status::INVALID_PARAMETER)` otherwise.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn validate_handle(&self, handle: efi::Handle) -> Result<(), EfiError> {
-        self.lock().validate_handle(handle)
+        self.try_lock().ok_or(EfiError::NotReady)?.validate_handle(handle)
     }
 
     /// Adds a protocol usage on the specified handle/protocol.
+    ///
     ///
     /// This function generally matches the behavior of `EFI_BOOT_SERVICES.OpenProtocol()` API in the UEFI spec 2.10 section
     /// 7.3.9, with the exception that operations requiring interactions with the UEFI driver model are not supported and
@@ -810,6 +853,10 @@ impl SpinLockedProtocolDb {
     ///     `driver::OPEN_PROTOCOL_EXCLUSIVE` | `driver::OPEN_PROTOCOL_BY_DRIVER_EXCLUSIVE` and there is an existing
     ///     usage that conflicts with those attributes.
     /// Returns [`UNSUPPORTED`](efi::Status::UNSUPPORTED) if the handle does not support the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `OpenProtocol()` to be called at or below `TPL_NOTIFY`.
     pub fn add_protocol_usage(
         &self,
         handle: efi::Handle,
@@ -818,10 +865,17 @@ impl SpinLockedProtocolDb {
         controller_handle: Option<efi::Handle>,
         attributes: u32,
     ) -> Result<(), EfiError> {
-        self.lock().add_protocol_usage(handle, protocol, agent_handle, controller_handle, attributes)
+        self.try_lock().ok_or(EfiError::NotReady)?.add_protocol_usage(
+            handle,
+            protocol,
+            agent_handle,
+            controller_handle,
+            attributes,
+        )
     }
 
     /// Validates the handles and attributes of an `EFI_BOOT_SERVICES.OpenProtocol()` request without recording a usage.
+    ///
     ///
     /// This lets callers reject invalid requests before performing side effects (such as disconnecting drivers).
     ///
@@ -829,6 +883,9 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if a handle is invalid, `attributes` is not an
     /// allowed value, or a handle that `attributes` requires is missing.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn validate_open_protocol_parameters(
         &self,
         handle: efi::Handle,
@@ -836,10 +893,14 @@ impl SpinLockedProtocolDb {
         controller_handle: Option<efi::Handle>,
         attributes: u32,
     ) -> Result<(), EfiError> {
-        self.lock().new_open_protocol_info(handle, agent_handle, controller_handle, attributes).map(|_| ())
+        self.try_lock()
+            .ok_or(EfiError::NotReady)?
+            .new_open_protocol_info(handle, agent_handle, controller_handle, attributes)
+            .map(|_| ())
     }
 
     /// Removes a protocol usage from the specified handle/protocol.
+    ///
     ///
     /// This function generally matches the behavior of `EFI_BOOT_SERVICES.CloseProtocol()` API in the UEFI spec 2.10
     /// section 7.3.10. Refer to the UEFI spec description for details on input parameters.
@@ -850,6 +911,10 @@ impl SpinLockedProtocolDb {
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the protocol interface specified by handle and protocol are not
     ///   opened by the specified agent and controller handle.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `CloseProtocol()` to be called at or below `TPL_NOTIFY`.
     pub fn remove_protocol_usage(
         &self,
         handle: efi::Handle,
@@ -858,10 +923,17 @@ impl SpinLockedProtocolDb {
         controller_handle: Option<efi::Handle>,
         attributes: Option<u32>,
     ) -> Result<(), EfiError> {
-        self.lock().remove_protocol_usage(handle, protocol, agent_handle, controller_handle, attributes)
+        self.try_lock().ok_or(EfiError::NotReady)?.remove_protocol_usage(
+            handle,
+            protocol,
+            agent_handle,
+            controller_handle,
+            attributes,
+        )
     }
 
     /// Returns whether the specified protocol is marked non-removable.
+    ///
     ///
     /// See [`Self::set_protocol_non_removable`].
     ///
@@ -869,11 +941,15 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the handle does not support the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn is_protocol_non_removable(&self, handle: efi::Handle, protocol: efi::Guid) -> Result<bool, EfiError> {
-        self.lock().is_protocol_non_removable(handle, protocol)
+        self.try_lock().ok_or(EfiError::NotReady)?.is_protocol_non_removable(handle, protocol)
     }
 
     /// Sets or clears the non-removable flag on the specified protocol.
+    ///
     ///
     /// Patina extension, not a UEFI API: `core_uninstall_protocol_interface` (and also `ReinstallProtocolInterface`)
     /// refuses a non-removable instance with `ACCESS_DENIED`.
@@ -883,16 +959,20 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the handle does not support the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn set_protocol_non_removable(
         &self,
         handle: efi::Handle,
         protocol: efi::Guid,
         non_removable: bool,
     ) -> Result<(), EfiError> {
-        self.lock().set_protocol_non_removable(handle, protocol, non_removable)
+        self.try_lock().ok_or(EfiError::NotReady)?.set_protocol_non_removable(handle, protocol, non_removable)
     }
 
     /// Returns open protocol information for the given handle/protocol.
+    ///
     ///
     /// This function generally matches the behavior of `EFI_BOOT_SERVICES.OpenProtocolInformation()` API in the UEFI spec
     /// 2.10 section 7.3.11. Refer to the UEFI spec description for details on input parameters.
@@ -901,12 +981,16 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `OpenProtocolInformation()` to be called at or below `TPL_NOTIFY`.
     pub fn get_open_protocol_information_by_protocol(
         &self,
         handle: efi::Handle,
         protocol: efi::Guid,
     ) -> Result<Vec<OpenProtocolInformation>, EfiError> {
-        self.lock().get_open_protocol_information_by_protocol(handle, protocol)
+        self.try_lock().ok_or(EfiError::NotReady)?.get_open_protocol_information_by_protocol(handle, protocol)
     }
 
     /// Returns open protocol information for the given handle.
@@ -916,22 +1000,31 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns [`INVALID_PARAMETER`](efi::Status::INVALID_PARAMETER) if incorrect parameters are given.
     /// Returns [`NOT_FOUND`](efi::Status::NOT_FOUND) if the specified handle does not support the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
     pub fn get_open_protocol_information(
         &self,
         handle: efi::Handle,
     ) -> Result<Vec<(efi::Guid, Vec<OpenProtocolInformation>)>, EfiError> {
-        self.lock().get_open_protocol_information(handle)
+        self.try_lock().ok_or(EfiError::NotReady)?.get_open_protocol_information(handle)
     }
 
     /// Returns a vector of protocol GUIDs that are installed on the given handle.
     ///
+    ///
     /// This function generally matches the behavior of `EFI_BOOT_SERVICES.ProtocolsPerHandle()` API in the UEFI spec
     /// 2.10 section 7.3.14. Refer to the UEFI spec description for details on input parameters.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `ProtocolsPerHandle()` to be called at or below `TPL_NOTIFY`.
     pub fn get_protocols_on_handle(&self, handle: efi::Handle) -> Result<Vec<efi::Guid>, EfiError> {
-        self.lock().get_protocols_on_handle(handle)
+        self.try_lock().ok_or(EfiError::NotReady)?.get_protocols_on_handle(handle)
     }
 
     /// Registers a notification event to be returned on protocol installation.
+    ///
     ///
     /// This function generally matches the behavior of `EFI_BOOT_SERVICES.RegisterProtocolNotify()` API in the UEFI spec
     /// 2.10 section 7.3.5. Refer to the UEFI spec description for details on input parameters. This implementation does
@@ -940,25 +1033,46 @@ impl SpinLockedProtocolDb {
     ///
     /// Returns a registration token that can be used with [`next_handle_for_registration`](SpinLockedProtocolDb::next_handle_for_registration)
     /// to iterate over handles that have fresh installations of the specified protocol.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `RegisterProtocolNotify()` to be called at or below `TPL_NOTIFY`.
     pub fn register_protocol_notify(&self, protocol: efi::Guid, event: efi::Event) -> Result<*mut c_void, EfiError> {
-        self.lock().register_protocol_notify(protocol, event)
+        self.try_lock().ok_or(EfiError::NotReady)?.register_protocol_notify(protocol, event)
     }
 
     /// De-registers a list of previously installed protocol notifies.
     ///
+    ///
     /// This can be used by the caller to remove previously registered event notifications.
-    pub fn unregister_protocol_notify_events(&self, events: Vec<efi::Event>) {
-        self.lock().unregister_protocol_notify_events(events);
+    /// Returns [`EfiError::NotReady`] if the database is locked.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    pub fn unregister_protocol_notify_events(&self, events: Vec<efi::Event>) -> Result<(), EfiError> {
+        self.try_lock().ok_or(EfiError::NotReady)?.unregister_protocol_notify_events(events);
+        Ok(())
     }
 
     /// Returns the next handle for which a protocol has been installed that matches the registration.
-    pub fn next_handle_for_registration(&self, registration: *mut c_void) -> Option<efi::Handle> {
-        self.lock().next_handle_for_registration(registration)
+    ///
+    /// Returns [`EfiError::NotReady`] if the database is locked.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    /// The UEFI specification also requires `LocateHandle()` with `ByRegisterNotify` to be called at or below `TPL_NOTIFY`.
+    pub fn next_handle_for_registration(&self, registration: *mut c_void) -> Result<Option<efi::Handle>, EfiError> {
+        Ok(self.try_lock().ok_or(EfiError::NotReady)?.next_handle_for_registration(registration))
     }
 
     /// Returns a vector of controller handles that have `parent_handle` open `BY_CHILD_CONTROLLER`.
-    pub fn get_child_handles(&self, parent_handle: efi::Handle) -> Vec<efi::Handle> {
-        self.lock().get_child_handles(parent_handle)
+    ///
+    /// Returns [`EfiError::NotReady`] if the database is locked.
+    ///
+    /// # TPL
+    /// The caller must be at `TPL <= TPL_NOTIFY` to acquire the database lock.
+    pub fn get_child_handles(&self, parent_handle: efi::Handle) -> Result<Vec<efi::Handle>, EfiError> {
+        Ok(self.try_lock().ok_or(EfiError::NotReady)?.get_child_handles(parent_handle))
     }
 }
 
@@ -994,6 +1108,60 @@ mod tests {
         with_locked_state(|| {
             static SPIN_LOCKED_PROTOCOL_DB: SpinLockedProtocolDb = SpinLockedProtocolDb::new();
             assert_eq!(SPIN_LOCKED_PROTOCOL_DB.lock().handles.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_protocol_db_contention_returns_not_ready_without_mutation() {
+        with_locked_state(|| {
+            let db = SpinLockedProtocolDb::new();
+            let protocol = efi::protocols::device_path::PROTOCOL_GUID;
+            let interface = core::ptr::null_mut();
+            let (handle, _) = db.install_protocol_interface(None, protocol, interface).unwrap();
+            let registration = db.register_protocol_notify(protocol, core::ptr::null_mut()).unwrap();
+            let guard = db.try_lock().expect("test database must be unlocked");
+
+            assert_eq!(db.registered_protocols(), Err(EfiError::NotReady));
+            assert_eq!(db.install_protocol_interface(None, protocol, interface).err(), Some(EfiError::NotReady));
+            assert_eq!(db.uninstall_protocol_interface(handle, protocol, interface), Err(EfiError::NotReady));
+            assert_eq!(db.locate_handles(None), Err(EfiError::NotReady));
+            assert_eq!(db.locate_protocol(protocol), Err(EfiError::NotReady));
+            assert_eq!(db.get_interface_for_handle(handle, protocol), Err(EfiError::NotReady));
+            assert_eq!(db.validate_handle(handle), Err(EfiError::NotReady));
+            assert_eq!(db.add_protocol_usage(handle, protocol, None, None, 0), Err(EfiError::NotReady));
+            assert_eq!(db.validate_open_protocol_parameters(handle, None, None, 0), Err(EfiError::NotReady));
+            assert_eq!(db.remove_protocol_usage(handle, protocol, None, None, None), Err(EfiError::NotReady));
+            assert_eq!(db.is_protocol_non_removable(handle, protocol), Err(EfiError::NotReady));
+            assert_eq!(db.set_protocol_non_removable(handle, protocol, true), Err(EfiError::NotReady));
+            assert_eq!(db.get_open_protocol_information_by_protocol(handle, protocol).err(), Some(EfiError::NotReady));
+            assert_eq!(db.get_open_protocol_information(handle).err(), Some(EfiError::NotReady));
+            assert_eq!(db.get_protocols_on_handle(handle), Err(EfiError::NotReady));
+            assert_eq!(db.register_protocol_notify(protocol, core::ptr::null_mut()), Err(EfiError::NotReady));
+            assert_eq!(db.unregister_protocol_notify_events(Vec::new()), Err(EfiError::NotReady));
+            assert_eq!(db.next_handle_for_registration(registration), Err(EfiError::NotReady));
+            assert_eq!(db.get_child_handles(handle), Err(EfiError::NotReady));
+
+            assert_eq!(guard.handles.len(), 1);
+            drop(guard);
+            assert_eq!(db.get_interface_for_handle(handle, protocol), Ok(interface));
+            assert_eq!(db.next_handle_for_registration(registration), Ok(Some(handle)));
+            assert_eq!(db.is_protocol_non_removable(handle, protocol), Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_protocol_db_contention_propagates_through_handle_protocol() {
+        with_locked_state(|| {
+            let db = &crate::protocols::PROTOCOL_DB;
+            let guard = db.try_lock().expect("global test protocol database must be unlocked");
+            let mut protocol = efi::protocols::device_path::PROTOCOL_GUID;
+            let mut interface = core::ptr::null_mut();
+            let status =
+                // SAFETY: protocol and interface are valid, aligned pointers to writable local values.
+                unsafe { crate::protocols::handle_protocol(DXE_CORE_HANDLE, &raw mut protocol, &raw mut interface) };
+            assert_eq!(status, efi::Status::NOT_READY);
+            assert!(interface.is_null());
+            drop(guard);
         });
     }
 
@@ -2157,11 +2325,11 @@ mod tests {
             let reg = SPIN_LOCKED_PROTOCOL_DB.register_protocol_notify(guid1, event).unwrap();
 
             // First call after register should return handle to existing protocol
-            let next = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg);
+            let next = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg).unwrap();
             assert_eq!(next, Some(existing_handle));
 
             // Second call should return no more protocols
-            let next = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg);
+            let next = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg).unwrap();
             assert_eq!(next, None);
         });
     }
@@ -2184,7 +2352,7 @@ mod tests {
 
             let events = notifies.iter().map(|x| x.event).collect();
 
-            SPIN_LOCKED_PROTOCOL_DB.unregister_protocol_notify_events(events);
+            SPIN_LOCKED_PROTOCOL_DB.unregister_protocol_notify_events(events).unwrap();
 
             let (_, notifies) = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap();
             assert_eq!(notifies.len(), 0);
@@ -2209,27 +2377,27 @@ mod tests {
             let hnd2 = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap().0;
             let hnd3 = SPIN_LOCKED_PROTOCOL_DB.install_protocol_interface(None, guid1, interface1).unwrap().0;
 
-            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg1);
+            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg1).unwrap();
             assert!(result.is_some());
             assert_eq!(result.unwrap(), hnd1);
 
-            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg1);
+            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg1).unwrap();
             assert!(result.is_some());
             assert_eq!(result.unwrap(), hnd2);
 
-            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg1);
+            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg1).unwrap();
             assert!(result.is_some());
             assert_eq!(result.unwrap(), hnd3);
 
-            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg2);
+            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg2).unwrap();
             assert!(result.is_some());
             assert_eq!(result.unwrap(), hnd1);
 
-            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg2);
+            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg2).unwrap();
             assert!(result.is_some());
             assert_eq!(result.unwrap(), hnd2);
 
-            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg2);
+            let result = SPIN_LOCKED_PROTOCOL_DB.next_handle_for_registration(reg2).unwrap();
             assert!(result.is_some());
             assert_eq!(result.unwrap(), hnd3);
         });
@@ -2278,7 +2446,7 @@ mod tests {
                     .unwrap();
             }
 
-            let child_list = SPIN_LOCKED_PROTOCOL_DB.get_child_handles(controller);
+            let child_list = SPIN_LOCKED_PROTOCOL_DB.get_child_handles(controller).unwrap();
             assert_eq!(child_list, vec![child1, child2, child3]);
         });
     }

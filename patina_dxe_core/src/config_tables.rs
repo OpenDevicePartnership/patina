@@ -39,6 +39,11 @@ pub(crate) static CONFIG_TABLE_TYPES: TplMutex<BTreeMap<BinaryGuid, TypeId>> =
 
 /// Installs a configuration table entry identified by `table_guid` into the system table.
 ///
+/// # TPL
+///
+/// The UEFI specification requires `InstallConfigurationTable` to be called at or below `TPL_NOTIFY`.
+/// The system table and type metadata locks also require this ceiling.
+///
 /// # Safety
 ///
 /// The caller is responsible for ensuring that `table_guid` points to valid, readable memory
@@ -53,7 +58,9 @@ unsafe extern "efiapi" fn install_configuration_table(table_guid: *mut efi::Guid
     // SAFETY: caller must ensure that table_guid is a valid pointer. It is null-checked above.
     let table_guid = unsafe { table_guid.read_unaligned() };
 
-    let mut st_guard = SYSTEM_TABLE.lock();
+    let Some(mut st_guard) = SYSTEM_TABLE.try_lock() else {
+        return efi::Status::ACCESS_DENIED;
+    };
     let st = match st_guard.as_mut() {
         Some(st) => st,
         None => return efi::Status::NOT_FOUND,
@@ -157,13 +164,20 @@ fn install_configuration_table_entry(
 /// under `vendor_guid` after this call is no longer vouched for by the type-tracking map, since
 /// neither the raw `extern "efiapi"` boot service nor this untyped API knows what Rust type (if any)
 /// backs it.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY`, matching the `InstallConfigurationTable` service
+/// limit documented on [`install_configuration_table`]. This internal implementation also acquires
+/// the type metadata lock at `TPL_NOTIFY`; the caller supplies the system table reference.
 pub fn core_install_configuration_table(
     vendor_guid: efi::Guid,
     vendor_table: *mut c_void,
     efi_system_table: &mut EfiSystemTable,
 ) -> Result<Option<NonNull<c_void>>, EfiError> {
+    let mut types = CONFIG_TABLE_TYPES.try_lock().ok_or(EfiError::AccessDenied)?;
     let old_vendor_table_ptr = install_configuration_table_entry(vendor_guid, vendor_table, efi_system_table)?;
-    CONFIG_TABLE_TYPES.lock().remove(&BinaryGuid::from(vendor_guid));
+    types.remove(&BinaryGuid::from(vendor_guid));
     Ok(old_vendor_table_ptr)
 }
 
@@ -185,6 +199,12 @@ fn configuration_table_has_entry(efi_system_table: &mut EfiSystemTable, vendor_g
 /// `vendor_guid`'s table, atomically with the install, so a later typed lookup can verify it before
 /// casting the pointer. If `fail_if_exists` is set, fails with `EfiError::AlreadyStarted` rather than
 /// replacing a table (typed or not) that exists under `vendor_guid`.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY`, inheriting the configuration table installation
+/// requirement of [`core_install_configuration_table`]. This Rust-specific helper also acquires the
+/// type metadata lock; it is not a separate UEFI service.
 pub(crate) fn core_install_typed_configuration_table(
     vendor_guid: efi::Guid,
     vendor_table: *mut c_void,
@@ -195,8 +215,9 @@ pub(crate) fn core_install_typed_configuration_table(
     if fail_if_exists && configuration_table_has_entry(efi_system_table, vendor_guid) {
         return Err(EfiError::AlreadyStarted);
     }
+    let mut types = CONFIG_TABLE_TYPES.try_lock().ok_or(EfiError::AccessDenied)?;
     let old_vendor_table_ptr = install_configuration_table_entry(vendor_guid, vendor_table, efi_system_table)?;
-    CONFIG_TABLE_TYPES.lock().insert(BinaryGuid::from(vendor_guid), type_id);
+    types.insert(BinaryGuid::from(vendor_guid), type_id);
     Ok(old_vendor_table_ptr)
 }
 
@@ -213,8 +234,13 @@ pub(crate) fn configuration_table_entry_ptr(st: &EfiSystemTable, vendor_guid: &e
 }
 
 /// Returns the pointer to a configuration table for the specified guid, if it exists.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY` to acquire the system table lock. This internal
+/// lookup is not the UEFI `InstallConfigurationTable` service; its ceiling is lock-derived.
 pub fn get_configuration_table(table_guid: &efi::Guid) -> Option<NonNull<c_void>> {
-    let st_guard = SYSTEM_TABLE.lock();
+    let st_guard = SYSTEM_TABLE.try_lock()?;
     let st = st_guard.as_ref()?;
     configuration_table_entry_ptr(st, table_guid)
 }
@@ -246,6 +272,46 @@ mod tests {
             f();
         })
         .unwrap();
+    }
+
+    #[test]
+    fn test_config_tables_system_table_contention_returns_access_denied() {
+        with_locked_state(|| {
+            let mut guid = efi::Guid::from_bytes(&[0x91; 16]);
+            let _guard = SYSTEM_TABLE.try_lock().expect("test system table lock");
+            assert!(get_configuration_table(&guid).is_none());
+            assert_eq!(
+                // SAFETY: guid is valid and writable; the null table requests removal.
+                unsafe { install_configuration_table(&raw mut guid, core::ptr::null_mut()) },
+                efi::Status::ACCESS_DENIED
+            );
+        });
+    }
+
+    #[test]
+    fn test_config_tables_type_map_contention_does_not_mutate_table() {
+        with_locked_state(|| {
+            let guid = efi::Guid::from_bytes(&[0x92; 16]);
+            let table = 0x1000usize as *mut c_void;
+            let mut st_guard = SYSTEM_TABLE.try_lock().expect("test system table lock");
+            let st = st_guard.as_mut().expect("test system table initialized");
+            core_install_typed_configuration_table(guid, table, TypeId::of::<u32>(), true, st)
+                .expect("install test table");
+            let types = CONFIG_TABLE_TYPES.try_lock().expect("test type map lock");
+            assert_eq!(core_install_configuration_table(guid, core::ptr::null_mut(), st), Err(EfiError::AccessDenied));
+            assert_eq!(
+                core_install_typed_configuration_table(
+                    guid,
+                    0x2000usize as *mut c_void,
+                    TypeId::of::<u64>(),
+                    false,
+                    st
+                ),
+                Err(EfiError::AccessDenied)
+            );
+            assert_eq!(configuration_table_entry_ptr(st, &guid).expect("original table retained").as_ptr(), table);
+            assert_eq!(types.get(&BinaryGuid::from(guid)), Some(&TypeId::of::<u32>()));
+        });
     }
 
     #[test]
@@ -283,7 +349,7 @@ mod tests {
                 core_install_configuration_table(
                     guid,
                     core::ptr::null_mut(),
-                    &mut *SYSTEM_TABLE.lock().as_mut().unwrap()
+                    &mut *SYSTEM_TABLE.try_lock().expect("test system table lock").as_mut().unwrap()
                 ),
                 Ok(Some(NonNull::new(table).unwrap()))
             );
@@ -304,11 +370,14 @@ mod tests {
                     table,
                     TypeId::of::<u32>(),
                     true,
-                    &mut *SYSTEM_TABLE.lock().as_mut().unwrap()
+                    &mut *SYSTEM_TABLE.try_lock().expect("test system table lock").as_mut().unwrap()
                 ),
                 Ok(None)
             );
-            assert_eq!(CONFIG_TABLE_TYPES.lock().get(&BinaryGuid::from(guid)), Some(&TypeId::of::<u32>()));
+            assert_eq!(
+                CONFIG_TABLE_TYPES.try_lock().expect("test type map lock").get(&BinaryGuid::from(guid)),
+                Some(&TypeId::of::<u32>())
+            );
         });
     }
 
@@ -319,7 +388,12 @@ mod tests {
             let table = 0x2000u32 as *mut c_void;
 
             // Installed with the untyped path first, so a type is not recorded but the entry is active.
-            core_install_configuration_table(guid, table, &mut *SYSTEM_TABLE.lock().as_mut().unwrap()).unwrap();
+            core_install_configuration_table(
+                guid,
+                table,
+                &mut *SYSTEM_TABLE.try_lock().expect("test system table lock").as_mut().unwrap(),
+            )
+            .unwrap();
 
             // A typed install should not clobber it.
             assert_eq!(
@@ -328,7 +402,7 @@ mod tests {
                     table,
                     TypeId::of::<u32>(),
                     true,
-                    &mut *SYSTEM_TABLE.lock().as_mut().unwrap()
+                    &mut *SYSTEM_TABLE.try_lock().expect("test system table lock").as_mut().unwrap()
                 ),
                 Err(EfiError::AlreadyStarted)
             );
@@ -347,16 +421,21 @@ mod tests {
                 typed_table,
                 TypeId::of::<u32>(),
                 true,
-                &mut *SYSTEM_TABLE.lock().as_mut().unwrap(),
+                &mut *SYSTEM_TABLE.try_lock().expect("test system table lock").as_mut().unwrap(),
             )
             .unwrap();
 
             // Something bypasses the typed API entirely (e.g. the raw `extern "efiapi"` boot service
             // and replaces the entry directly, without removing it first.
-            core_install_configuration_table(guid, raw_table, &mut *SYSTEM_TABLE.lock().as_mut().unwrap()).unwrap();
+            core_install_configuration_table(
+                guid,
+                raw_table,
+                &mut *SYSTEM_TABLE.try_lock().expect("test system table lock").as_mut().unwrap(),
+            )
+            .unwrap();
 
             // The stale type record must not be allowed to vouch for the replacement pointer.
-            assert_eq!(CONFIG_TABLE_TYPES.lock().get(&BinaryGuid::from(guid)), None);
+            assert_eq!(CONFIG_TABLE_TYPES.try_lock().expect("test type map lock").get(&BinaryGuid::from(guid)), None);
             assert_eq!(get_configuration_table(&guid).unwrap().as_ptr(), raw_table);
         });
     }

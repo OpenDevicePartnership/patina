@@ -172,6 +172,18 @@ pub trait PageAllocator {
     /// Caller must ensure the address corresponds to a valid block allocated with [`Self::allocate_pages`].
     unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError>;
 
+    /// Frees a pool allocation, returning an error if allocator state is unavailable.
+    /// Calls `invalidate` only after acquiring exclusive access and before releasing the allocation.
+    ///
+    /// # Safety
+    /// The pointer and layout must describe a live allocation from this allocator.
+    unsafe fn deallocate_pool(
+        &self,
+        pointer: NonNull<u8>,
+        layout: core::alloc::Layout,
+        invalidate: impl FnOnce(),
+    ) -> Result<(), EfiError>;
+
     /// Sets the reserved memory range (bin range) for this allocator.
     ///
     /// ## Errors
@@ -180,16 +192,19 @@ pub trait PageAllocator {
     fn set_reserved_range(&self, range: Range<efi::PhysicalAddress>) -> Result<(), EfiError>;
 
     /// Returns an iterator over the memory ranges managed by this allocator.
-    fn get_memory_ranges(&self) -> alloc::vec::IntoIter<Range<usize>>;
+    /// Returns [`EfiError::AccessDenied`] on contention.
+    fn get_memory_ranges(&self) -> Result<alloc::vec::IntoIter<Range<usize>>, EfiError>;
 
     /// Returns the allocator handle associated with this allocator.
     fn handle(&self) -> efi::Handle;
 
     /// Returns the reserved memory range, if any.
-    fn reserved_range(&self) -> Option<Range<efi::PhysicalAddress>>;
+    /// Returns [`EfiError::AccessDenied`] on contention.
+    fn reserved_range(&self) -> Result<Option<Range<efi::PhysicalAddress>>, EfiError>;
 
     /// Returns allocation statistics for this allocator.
-    fn stats(&self) -> AllocationStatistics;
+    /// Returns [`EfiError::AccessDenied`] on contention.
+    fn stats(&self) -> Result<AllocationStatistics, EfiError>;
 
     /// Resets allocator state for testing purposes.
     #[cfg(test)]
@@ -409,16 +424,18 @@ impl Debug for MemoryDescriptorSlice<'_> {
 /// but it is not specific to compatibility mode, which is why it is marked as `allow(dead_code)` as opposed to behind
 /// the `compatibility_mode_allowed` feature flag. It is valid for other code to use this API in the absence of
 /// compatibility mode.
-pub(crate) fn get_memory_ranges_for_memory_type(memory_type: efi::MemoryType) -> Vec<Range<efi::PhysicalAddress>> {
+pub(crate) fn get_memory_ranges_for_memory_type(
+    memory_type: efi::MemoryType,
+) -> Result<Vec<Range<efi::PhysicalAddress>>, EfiError> {
     // Check static allocators first, then dynamic allocators
-    match_static_allocator!(memory_type, alloc => alloc.get_memory_ranges().collect(), {
+    match_static_allocator!(memory_type, alloc => Ok(alloc.get_memory_ranges()?.collect()), {
         // Check dynamic allocators
-        for allocator in ALLOCATORS.lock().iter_dynamic() {
+        for allocator in ALLOCATORS.try_lock().ok_or(EfiError::AccessDenied)?.iter_dynamic() {
             if allocator.memory_type() == memory_type {
-                return allocator.get_memory_ranges().collect();
+                return Ok(allocator.get_memory_ranges()?.collect());
             }
         }
-        Vec::new()
+        Ok(Vec::new())
     })
 }
 
@@ -545,6 +562,9 @@ impl AllocatorMap {
     // Note: this routine is used to generate new handles for the creation of allocators as needed; this means that an
     // Ok() result from this routine doesn't necessarily guarantee that an allocator associated with this handle exists or
     // memory type exists.
+    /// # TPL
+    ///
+    /// Must be called at or below `TPL_NOTIFY` because creating a handle locks the protocol database.
     fn handle_for_memory_type(memory_type: efi::MemoryType) -> Result<efi::Handle, EfiError> {
         match memory_type {
             efi::RESERVED_MEMORY_TYPE => Ok(protocol_db::RESERVED_MEMORY_ALLOCATOR_HANDLE),
@@ -562,7 +582,8 @@ impl AllocatorMap {
             // already exist.
             _ => {
                 if let Some(handle) = ALLOCATORS
-                    .lock()
+                    .try_lock()
+                    .ok_or(EfiError::AccessDenied)?
                     .iter_dynamic()
                     .find_map(|x| if x.memory_type() == memory_type { Some(x.handle()) } else { None })
                 {
@@ -598,6 +619,11 @@ impl AllocatorMap {
 
 /// Allocates pool memory of the specified type.
 ///
+/// # TPL
+///
+/// The UEFI specification requires `AllocatePool` to be called at or below `TPL_NOTIFY`.
+/// Allocator handle creation also locks the protocol database at `TPL_NOTIFY`.
+///
 /// # Safety
 ///
 /// `buffer` must be a pointer pointing to valid, writable memory for a `*mut c_void`.
@@ -625,6 +651,11 @@ unsafe extern "efiapi" fn allocate_pool(
 ///
 /// This function is safe because all input parameters are value types and any internal unsafe
 /// operations are fully encapsulated with validated preconditions.
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY`, matching the UEFI Memory Allocation Services limit
+/// documented on [`allocate_pool`]. Allocator handle creation also locks the protocol database.
 pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mut c_void, EfiError> {
     // It is not valid to attempt to allocate these memory types
     if matches!(pool_type, efi::CONVENTIONAL_MEMORY | efi::PERSISTENT_MEMORY | efi::UNACCEPTED_MEMORY_TYPE) {
@@ -632,7 +663,7 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
     }
 
     let handle = AllocatorMap::handle_for_memory_type(pool_type)?;
-    match ALLOCATORS.lock().get_or_create_allocator(pool_type, handle) {
+    match ALLOCATORS.try_lock().ok_or(EfiError::AccessDenied)?.get_or_create_allocator(pool_type, handle) {
         Ok(allocator) => {
             let mut buffer: *mut c_void = core::ptr::null_mut();
             // SAFETY: buffer is declared above, we pass the address which guarantees it is a valid pointer.
@@ -643,6 +674,11 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
 }
 
 /// Frees pool memory previously allocated with [`allocate_pool`].
+///
+/// # TPL
+///
+/// The UEFI specification requires `FreePool` to be called at or below `TPL_NOTIFY`.
+/// The allocator map's `TPL_HIGH_LEVEL` lock does not relax this service limit.
 ///
 /// # Safety
 ///
@@ -660,6 +696,11 @@ unsafe extern "efiapi" fn free_pool(buffer: *mut c_void) -> efi::Status {
 
 /// Frees pool memory previously allocated with [`core_allocate_pool`].
 ///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY`, matching the UEFI Memory Allocation Services limit
+/// documented on [`free_pool`], even though the allocator map lock permits `TPL_HIGH_LEVEL`.
+///
 /// # Safety
 ///
 /// `buffer` must be a pointer pointing to valid, previously allocated memory
@@ -670,21 +711,28 @@ pub unsafe fn core_free_pool(buffer: *mut c_void) -> Result<(), EfiError> {
     if buffer.is_null() {
         return Err(EfiError::InvalidParameter);
     }
-    let allocators = ALLOCATORS.lock();
+    let allocators = ALLOCATORS.try_lock().ok_or(EfiError::AccessDenied)?;
     // SAFETY: caller must ensure that buffer is a valid pointer and that it was
     // originally allocated via allocate_pool(). It is null-checked above.
     unsafe {
-        if for_each_static_allocator!(alloc => alloc.free_pool(buffer).is_ok())
-            || allocators.iter_dynamic().any(|allocator| allocator.free_pool(buffer).is_ok())
-        {
-            Ok(())
-        } else {
-            Err(EfiError::InvalidParameter)
+        for allocator in STATIC_ALLOCATORS.iter().map(|(allocator, _)| *allocator).chain(allocators.iter_dynamic()) {
+            match allocator.free_pool(buffer) {
+                Ok(()) => return Ok(()),
+                Err(EfiError::NotFound) => continue,
+                Err(err) => return Err(err),
+            }
         }
+        Err(EfiError::InvalidParameter)
     }
 }
 
 /// Allocates pages of the specified type and returns the address through the `memory` pointer.
+///
+/// # TPL
+///
+/// The UEFI specification requires `AllocatePages` to be called at or below `TPL_NOTIFY`.
+/// Allocator handle creation and runtime MAT installation also acquire protocol database and
+/// system table locks, respectively.
 ///
 /// # Safety
 ///
@@ -724,6 +772,12 @@ unsafe extern "efiapi" fn allocate_pages(
 }
 
 /// Allocates pages of the specified type and returns the address through the `memory` pointer.
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY`, matching the UEFI Memory Allocation Services limit
+/// documented on [`allocate_pages`]. Allocator handle creation and runtime MAT installation also
+/// acquire protocol database and system table locks, respectively.
 pub fn core_allocate_pages(
     allocation_type: efi::AllocateType,
     memory_type: efi::MemoryType,
@@ -739,7 +793,7 @@ pub fn core_allocate_pages(
     let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
     let alignment = alignment.unwrap_or(UEFI_PAGE_SIZE);
 
-    let res = match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
+    let res = match ALLOCATORS.try_lock().ok_or(EfiError::AccessDenied)?.get_or_create_allocator(memory_type, handle) {
         Ok(allocator) => {
             let result = match allocation_type {
                 efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, alignment),
@@ -768,23 +822,31 @@ pub fn core_allocate_pages(
 
     // Record the allocation in the memory bin manager for bin statistics tracking.
     if res.is_ok() {
-        MEMORY_BIN_MANAGER.lock().record_allocation(memory_type, pages as u64);
+        MEMORY_BIN_MANAGER.try_lock().ok_or(EfiError::AccessDenied)?.record_allocation(memory_type, pages as u64);
     }
 
     res
 }
 
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY` because allocator handle creation locks the protocol database.
 pub fn core_get_allocator(memory_type: efi::MemoryType) -> Result<&'static UefiAllocatorWithFsb, EfiError> {
     let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
-    ALLOCATORS.lock().get_or_create_allocator(memory_type, handle)
+    ALLOCATORS.try_lock().ok_or(EfiError::AccessDenied)?.get_or_create_allocator(memory_type, handle)
 }
 
 /// Returns the memory type for the given handle, or None if the handle is not found.
 pub fn memory_type_for_handle(handle: efi::Handle) -> Option<efi::MemoryType> {
-    ALLOCATORS.lock().memory_type_for_handle(handle)
+    ALLOCATORS.try_lock()?.memory_type_for_handle(handle)
 }
 
 /// Frees pages previously allocated with [`allocate_pages`].
+///
+/// # TPL
+///
+/// The UEFI specification requires `FreePages` to be called at or below `TPL_NOTIFY`.
+/// Runtime MAT installation also locks the system table.
 ///
 /// # Safety
 ///
@@ -799,6 +861,11 @@ unsafe extern "efiapi" fn free_pages(memory: efi::PhysicalAddress, pages: usize)
 }
 
 /// Frees pages previously allocated with [`core_allocate_pages`].
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY`, matching the UEFI Memory Allocation Services limit
+/// documented on [`free_pages`]. Runtime MAT installation also locks the system table.
 ///
 /// # Safety
 ///
@@ -818,23 +885,26 @@ pub unsafe fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Res
         return Err(EfiError::InvalidParameter);
     }
 
-    let allocators = ALLOCATORS.lock();
+    let allocators = ALLOCATORS.try_lock().ok_or(EfiError::AccessDenied)?;
 
     let mut memory_type = efi::CONVENTIONAL_MEMORY;
 
     // SAFETY: caller must ensure that memory is a valid address and that they have
     // exclusive ownership of this memory. It is validated above.
     let res = unsafe {
-        if try_each_static_allocator!(memory_type, alloc => {
-            alloc.free_pages(memory as usize, pages)
-        }) || allocators.iter_dynamic().any(|allocator| {
+        let mut result = Err(EfiError::NotFound);
+        for allocator in STATIC_ALLOCATORS.iter().map(|(allocator, _)| *allocator).chain(allocators.iter_dynamic()) {
             memory_type = allocator.memory_type();
-            allocator.free_pages(memory as usize, pages).is_ok()
-        }) {
-            Ok(())
-        } else {
-            Err(EfiError::NotFound)
+            match allocator.free_pages(memory as usize, pages) {
+                Ok(()) => {
+                    result = Ok(());
+                    break;
+                }
+                Err(EfiError::AccessDenied) => return Err(EfiError::AccessDenied),
+                Err(_) => continue,
+            }
         }
+        result
     };
 
     // Release the lock on allocators, as it raises the TPL to TPL_HIGH_LEVEL. During the MAT install, it will attempt
@@ -853,7 +923,7 @@ pub unsafe fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Res
 
     // Record the free in the memory bin manager for bin statistics tracking.
     if res.is_ok() {
-        MEMORY_BIN_MANAGER.lock().record_free(memory_type, pages as u64);
+        MEMORY_BIN_MANAGER.try_lock().ok_or(EfiError::AccessDenied)?.record_free(memory_type, pages as u64);
     }
 
     res
@@ -929,8 +999,15 @@ unsafe extern "efiapi" fn get_memory_map(
     let map_size = unsafe { memory_map_size.read_unaligned() };
 
     // Account for additional descriptors that may be produced during bin splitting.
-    let bin_extra_descriptors = MEMORY_BIN_MANAGER.lock().max_additional_descriptors();
-    let base_descriptor_count = GCD.memory_descriptor_count_for_efi_memory_map();
+    let Some(bin_manager) = MEMORY_BIN_MANAGER.try_lock() else {
+        return efi::Status::ACCESS_DENIED;
+    };
+    let bin_extra_descriptors = bin_manager.max_additional_descriptors();
+    drop(bin_manager);
+    let base_descriptor_count = match GCD.memory_descriptor_count_for_efi_memory_map() {
+        Ok(count) => count,
+        Err(err) => return err.into(),
+    };
     let total_descriptor_count = base_descriptor_count + bin_extra_descriptors;
     let required_map_size = total_descriptor_count * mem::size_of::<efi::MemoryDescriptor>();
     debug_assert!(required_map_size != 0);
@@ -959,7 +1036,11 @@ unsafe extern "efiapi" fn get_memory_map(
     };
 
     // Apply memory bin descriptors: convert free memory within bin regions to the bin's type.
-    let actual_count = MEMORY_BIN_MANAGER.lock().apply_bin_descriptors(buffer, actual_count);
+    let Some(bin_manager) = MEMORY_BIN_MANAGER.try_lock() else {
+        return efi::Status::ACCESS_DENIED;
+    };
+    let actual_count = bin_manager.apply_bin_descriptors(buffer, actual_count);
+    drop(bin_manager);
 
     let actual_map_size = actual_count * mem::size_of::<efi::MemoryDescriptor>();
 
@@ -971,11 +1052,12 @@ unsafe extern "efiapi" fn get_memory_map(
     unsafe {
         if !map_key.is_null() {
             let memory_map_as_bytes = slice::from_raw_parts(memory_map.cast::<u8>(), actual_map_size);
-            GCD.set_last_efi_memory_map_key(memory_map_as_bytes);
-            if let Some(key) = GCD.get_last_efi_memory_map_key() {
-                log::debug!(target: "efi_memory_map", "Calculated EFI memory map key: {key:#X}");
-                map_key.write_unaligned(key);
-            }
+            let key = match GCD.set_last_efi_memory_map_key(memory_map_as_bytes) {
+                Ok(key) => key,
+                Err(err) => return err.into(),
+            };
+            log::debug!(target: "efi_memory_map", "Calculated EFI memory map key: {key:#X}");
+            map_key.write_unaligned(key);
         }
     }
 
@@ -997,7 +1079,9 @@ unsafe extern "efiapi" fn get_memory_map(
 /// Dumps bin manager peak tracking data at debug level.
 #[cfg_attr(coverage, coverage(off))]
 fn dump_memory_bin_stats() {
-    let bin_manager = MEMORY_BIN_MANAGER.lock();
+    let Some(bin_manager) = MEMORY_BIN_MANAGER.try_lock() else {
+        return;
+    };
     if bin_manager.is_initialized() {
         log::debug!(target: "memory_bin", "Bin manager table (peak tracking for BDS):");
         for entry in bin_manager.memory_type_information() {
@@ -1016,7 +1100,9 @@ fn dump_memory_bin_stats() {
 fn dump_allocator_details() {
     log::trace!(target: "allocations", "Allocator page counts:");
     for (alloc, _) in &STATIC_ALLOCATORS {
-        let stats = alloc.stats();
+        let Ok(stats) = alloc.stats() else {
+            continue;
+        };
         let reserved_free = uefi_size_to_pages!(stats.reserved_size - stats.reserved_used);
         let net_pages = stats.claimed_pages.saturating_sub(reserved_free);
         if net_pages > 0 {
@@ -1033,15 +1119,20 @@ fn dump_allocator_details() {
 }
 
 pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
-    match GCD.get_last_efi_memory_map_key() {
+    match GCD.get_last_efi_memory_map_key()? {
         Some(key) if key == map_key => Ok(()),
         _ => Err(EfiError::InvalidParameter),
     }
 }
 
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY` because configuration table installation locks type metadata.
+/// This helper inherits the configuration table installation requirement documented on
+/// [`config_tables::core_install_configuration_table`]; it is not itself a UEFI service.
 #[cfg_attr(coverage, coverage(off))]
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
-    let bin_manager = MEMORY_BIN_MANAGER.lock();
+    let bin_manager = MEMORY_BIN_MANAGER.try_lock().ok_or(EfiError::AccessDenied)?;
     if !bin_manager.is_initialized() || bin_manager.memory_type_information().is_empty() {
         log::warn!(target: "memory_bin", "No bin manager data available. Memory type information config table not installed.");
         return Ok(());
@@ -1234,6 +1325,9 @@ fn process_hob_allocations(hob_list: &HobList) {
 /// memory map reported to the OS can be stable even in the face of small variations in memory from boot-to-boot, which
 /// helps to avoid S4 failure due to memory map change.
 ///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY` because memory bin reservation can create allocator handles.
 pub fn init_memory_support(hob_list: &HobList) {
     // Add the rest of the system resources to the GCD.
     // Caution: care must be taken to ensure no allocations occur after this call but before the allocation hobs are
@@ -1268,11 +1362,20 @@ pub fn init_memory_support(hob_list: &HobList) {
 /// Note: A local `MemoryBinManager` is used during initialization to avoid holding the global lock
 /// during GCD allocations (which would cause re-entrant lock panics since allocation recording also
 /// acquires the lock).
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY` because bin reservation can create allocator handles.
 #[cfg_attr(coverage, coverage(off))]
 fn initialize_memory_bins(hob_list: &HobList, memory_type_info: &[EFiMemoryTypeInformation]) {
-    if MEMORY_BIN_MANAGER.lock().is_initialized() {
+    let Some(bin_manager) = MEMORY_BIN_MANAGER.try_lock() else {
+        log::warn!(target: "memory_bin", "Memory bin initialization skipped: bin manager is in use");
+        return;
+    };
+    if bin_manager.is_initialized() {
         return;
     }
+    drop(bin_manager);
 
     // Resolve the overall bin block to either PEI-provided or DXE-allocated.
     let bin_range =
@@ -1289,7 +1392,12 @@ fn initialize_memory_bins(hob_list: &HobList, memory_type_info: &[EFiMemoryTypeI
         return;
     }
 
-    *MEMORY_BIN_MANAGER.lock() = local_manager;
+    let Some(mut bin_manager) = MEMORY_BIN_MANAGER.try_lock() else {
+        log::warn!(target: "memory_bin", "Memory bin initialization skipped: bin manager is in use");
+        return;
+    };
+    *bin_manager = local_manager;
+    drop(bin_manager);
     reserve_bin_ranges();
 }
 
@@ -1348,7 +1456,10 @@ fn allocate_contiguous_bin_range(memory_type_info: &[EFiMemoryTypeInformation]) 
 /// These HOBs indicate allocations made by PEI's bin-aware allocator and need to be accounted
 /// for in the bin statistics.
 fn seed_bin_statistics_from_hobs(hob_list: &HobList) {
-    let mut bin_manager = MEMORY_BIN_MANAGER.lock();
+    let Some(mut bin_manager) = MEMORY_BIN_MANAGER.try_lock() else {
+        log::warn!(target: "memory_bin", "Memory bin statistics unavailable: bin manager is in use");
+        return;
+    };
     let mut seeded_count = 0u32;
 
     for hob_entry in hob_list.iter() {
@@ -1385,8 +1496,15 @@ fn seed_bin_statistics_from_hobs(hob_list: &HobList) {
 /// - Different-type allocated blocks are logged as an error with `debug_assert` (should not happen, but
 ///   the allocation is left in place).
 /// - Partial overlaps at bin boundaries are logged as an error with `debug_assert`.
+///
+/// # TPL
+///
+/// Must be called at or below `TPL_NOTIFY` because allocator handle creation locks the protocol database.
 fn reserve_bin_ranges() {
-    let bin_manager = MEMORY_BIN_MANAGER.lock();
+    let Some(bin_manager) = MEMORY_BIN_MANAGER.try_lock() else {
+        log::warn!(target: "memory_bin", "Cannot reserve memory bins: bin manager is in use");
+        return;
+    };
     let bins: Vec<(efi::MemoryType, efi::PhysicalAddress, efi::PhysicalAddress, u64)> =
         bin_manager.active_bins().collect();
     drop(bin_manager);
@@ -1540,7 +1658,11 @@ fn reserve_bin_ranges() {
         );
 
         // Set the reserved range so allocations prefer the bin and frees preserve ownership.
-        match ALLOCATORS.lock().get_or_create_allocator(memory_type, handle) {
+        match ALLOCATORS
+            .try_lock()
+            .ok_or(EfiError::AccessDenied)
+            .and_then(|mut allocators| allocators.get_or_create_allocator(memory_type, handle))
+        {
             Ok(allocator) => {
                 if let Err(err) = allocator.set_reserved_range(bin_base..bin_end) {
                     log::error!(
@@ -1587,8 +1709,8 @@ pub(crate) unsafe fn reset_allocators() {
     // SAFETY: call resets global allocator state. Should only be called when no
     // allocations are active. A lock is used to ensure exclusive access preventing
     // use while reset occurs.
-    unsafe { ALLOCATORS.lock().reset() };
-    MEMORY_BIN_MANAGER.lock().reset();
+    unsafe { ALLOCATORS.try_lock().expect("test allocator map unlocked").reset() };
+    MEMORY_BIN_MANAGER.try_lock().expect("test bin manager unlocked").reset();
 }
 
 #[cfg(test)]
@@ -1724,7 +1846,7 @@ mod tests {
 
             init_memory_support(&hob_list);
 
-            let bin_manager = MEMORY_BIN_MANAGER.lock();
+            let bin_manager = MEMORY_BIN_MANAGER.try_lock().expect("test bin manager unlocked");
             assert!(bin_manager.is_initialized(), "Bin manager should be initialized");
 
             // Verify bin manager has the expected bin ranges.
@@ -1785,7 +1907,10 @@ mod tests {
             hob_list.push(stack_hob);
 
             init_memory_support(&hob_list);
-            assert!(MEMORY_BIN_MANAGER.lock().is_initialized(), "bin manager must be initialized");
+            assert!(
+                MEMORY_BIN_MANAGER.try_lock().expect("test bin manager unlocked").is_initialized(),
+                "bin manager must be initialized"
+            );
 
             // Build an isolated HOB list to pass to seed_bin_statistics_from_hobs().
             let mut seed_list = HobList::default();
@@ -1911,7 +2036,7 @@ mod tests {
 
             // Snapshot statistics before invoking seed_bin_statistics_from_hobs().
             let (nvs_before, pal_before, bsdata_before, rt_data_before) = {
-                let bm = MEMORY_BIN_MANAGER.lock();
+                let bm = MEMORY_BIN_MANAGER.try_lock().expect("test bin manager unlocked");
                 (
                     bm.current_pages_for_type(efi::ACPI_MEMORY_NVS),
                     bm.current_pages_for_type(efi::PAL_CODE),
@@ -1922,7 +2047,7 @@ mod tests {
 
             seed_bin_statistics_from_hobs(&seed_list);
 
-            let bm = MEMORY_BIN_MANAGER.lock();
+            let bm = MEMORY_BIN_MANAGER.try_lock().expect("test bin manager unlocked");
             // Bin types with matching HOB entries should have their statistics seeded with the HOB values.
             assert_eq!(
                 bm.current_pages_for_type(efi::ACPI_MEMORY_NVS),
@@ -1955,7 +2080,7 @@ mod tests {
         // so the outer function should iterate the HOB list without panicking and leave
         // statistics at zero.
         with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
-            assert!(!MEMORY_BIN_MANAGER.lock().is_initialized());
+            assert!(!MEMORY_BIN_MANAGER.try_lock().expect("test bin manager unlocked").is_initialized());
 
             let mut seed_list = HobList::default();
             let alloc = patina::pi::hob::MemoryAllocation {
@@ -1976,7 +2101,7 @@ mod tests {
 
             seed_bin_statistics_from_hobs(&seed_list);
 
-            let bm = MEMORY_BIN_MANAGER.lock();
+            let bm = MEMORY_BIN_MANAGER.try_lock().expect("test bin manager unlocked");
             assert_eq!(bm.current_pages_for_type(efi::ACPI_MEMORY_NVS), 0);
         });
     }
@@ -2102,7 +2227,7 @@ mod tests {
 
             init_memory_support(&hob_list);
 
-            let allocators = ALLOCATORS.lock();
+            let allocators = ALLOCATORS.try_lock().expect("test allocator map unlocked");
 
             // Verify that the memory allocation HOBs resulted in claimed pages in the allocator.
             for memory_type in &[
@@ -2134,7 +2259,7 @@ mod tests {
                     _ => granularity / patina::SIZE_4KB,
                 };
 
-                let claimed = allocator.stats().claimed_pages;
+                let claimed = allocator.stats().expect("test stats available").claimed_pages;
                 assert_eq!(
                     claimed, expected_pages,
                     "For memory type {memory_type:?}: expected {expected_pages}, got {claimed}"
@@ -2169,7 +2294,7 @@ mod tests {
     #[test]
     fn well_known_allocators_should_be_retrievable() {
         with_locked_state(GcdInit::WithSize(0x4000000), |_physical_hob_list| {
-            let allocators = ALLOCATORS.lock();
+            let allocators = ALLOCATORS.try_lock().expect("test allocator map unlocked");
 
             for (mem_type, handle) in [
                 (efi::LOADER_CODE, protocol_db::EFI_LOADER_CODE_ALLOCATOR_HANDLE),
@@ -2202,7 +2327,7 @@ mod tests {
                 let ptr = core_allocate_pool(mem_type, 0x1000).unwrap();
                 assert!(!ptr.is_null());
 
-                let allocators = ALLOCATORS.lock();
+                let allocators = ALLOCATORS.try_lock().expect("test allocator map unlocked");
 
                 let allocator = allocators.get_allocator(mem_type).unwrap();
                 assert_eq!(allocator.handle(), handle);
@@ -2222,14 +2347,14 @@ mod tests {
             let ptr = core_allocate_pool(0x81234567, 0x1000).unwrap();
             assert!(!ptr.is_null());
 
-            let allocators = ALLOCATORS.lock();
+            let allocators = ALLOCATORS.try_lock().expect("test allocator map unlocked");
             let allocator = allocators.get_allocator(0x71234567).unwrap();
             let handle = allocator.handle();
             assert_eq!(allocators.memory_type_for_handle(handle), Some(0x71234567));
             drop(allocators);
             assert_eq!(AllocatorMap::handle_for_memory_type(0x71234567).unwrap(), handle);
 
-            let allocators = ALLOCATORS.lock();
+            let allocators = ALLOCATORS.try_lock().expect("test allocator map unlocked");
             let allocator = allocators.get_allocator(0x81234567).unwrap();
             let handle = allocator.handle();
             assert_eq!(allocators.memory_type_for_handle(handle), Some(0x81234567));
@@ -2314,9 +2439,9 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().expect("test ranges available").next().is_some());
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().expect("test ranges available").next().is_some());
             }
         });
     }
@@ -2332,13 +2457,13 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().expect("test ranges available").next().is_some());
 
                 #[allow(clippy::no_effect_underscore_binding)]
                 let _alloc_trait: &dyn core::alloc::Allocator = allocator;
 
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().expect("test ranges available").next().is_some());
             }
         });
     }
@@ -2354,13 +2479,13 @@ mod tests {
             unsafe {
                 assert!(allocator.allocate_pool(0x1000, core::ptr::addr_of_mut!(buffer_ptr)).is_ok());
                 assert!(!buffer_ptr.is_null());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().expect("test ranges available").next().is_some());
 
                 #[allow(clippy::no_effect_underscore_binding)]
                 let _alloc_trait: &dyn core::alloc::Allocator = allocator;
 
                 assert!(allocator.free_pool(buffer_ptr).is_ok());
-                assert!(allocator.get_memory_ranges().next().is_some());
+                assert!(allocator.get_memory_ranges().expect("test ranges available").next().is_some());
             }
         });
     }
@@ -2514,7 +2639,7 @@ mod tests {
             );
             // SAFETY: `buffer_ptr` was successfully allocated above and points to a valid page range of 0x10 pages.
             unsafe { free_pages(buffer_ptr as u64, 0x10) };
-            let allocators = ALLOCATORS.lock();
+            let allocators = ALLOCATORS.try_lock().expect("test allocator map unlocked");
             let allocator = allocators.get_allocator(0x71234567).unwrap();
             let handle = allocator.handle();
             assert_eq!(allocators.memory_type_for_handle(handle), Some(0x71234567));

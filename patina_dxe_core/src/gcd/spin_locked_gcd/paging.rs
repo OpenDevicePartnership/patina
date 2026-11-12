@@ -34,7 +34,7 @@ impl<'a> PagingAllocator<'a> {
     fn allocate_root_page(&self, allocate_type: AllocateType) -> Result<u64, EfiError> {
         let attributes =
             self.gcd.memory_protection_policy.apply_allocated_memory_protection_policy(0, GcdMemoryType::SystemMemory);
-        let mut gcd = self.gcd.memory.lock();
+        let mut gcd = self.gcd.memory.try_lock().ok_or(EfiError::AccessDenied)?;
         let root_page = gcd.allocate_memory_space(
             allocate_type,
             GcdMemoryType::SystemMemory,
@@ -76,6 +76,7 @@ impl PageAllocator for PagingAllocator<'_> {
 
                 match self.allocate_root_page(DEFAULT_ALLOCATION_STRATEGY) {
                     Ok(root_page) => Ok(root_page),
+                    Err(EfiError::AccessDenied) => Err(PtError::OutOfResources),
                     Err(e) => {
                         // okay we are good and dead now
                         panic!("Failed to allocate root page for the page table page pool: {e}");
@@ -90,7 +91,7 @@ impl PageAllocator for PagingAllocator<'_> {
 
             // we only allocate here, not map. The page table is self-mapped, so we don't have to identity
             // map them. This function is called with the page table lock held, so we cannot do that
-            match self.gcd.memory.lock().allocate_memory_space(
+            match self.gcd.memory.try_lock().ok_or(PtError::OutOfResources)?.allocate_memory_space(
                 DEFAULT_ALLOCATION_STRATEGY,
                 GcdMemoryType::SystemMemory,
                 UEFI_PAGE_SHIFT,
@@ -127,7 +128,7 @@ impl SpinLockedGcd {
         len: usize,
         attributes: u64,
     ) -> Result<(), EfiError> {
-        if let Some(page_table) = &mut *self.page_table.lock() {
+        if let Some(page_table) = &mut *self.page_table.try_lock().ok_or(EfiError::AccessDenied)? {
             // only apply page table attributes to the page table, not our virtual GCD attributes
             let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
                 & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
@@ -272,8 +273,9 @@ impl SpinLockedGcd {
         let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
             & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
 
-        let mut page_table_guard = self.page_table.lock();
-        self.aliased_mappings.lock().try_reserve(1).map_err(|_| EfiError::OutOfResources)?;
+        let mut page_table_guard = self.page_table.try_lock().ok_or(EfiError::AccessDenied)?;
+        let mut aliased_mappings_guard = self.aliased_mappings.try_lock().ok_or(EfiError::AccessDenied)?;
+        aliased_mappings_guard.try_reserve(1).map_err(|_| EfiError::OutOfResources)?;
         let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
 
         page_table.map_aliased_memory_region(virtual_address, physical_address, len, paging_attrs).map_err(|err| {
@@ -284,26 +286,20 @@ impl SpinLockedGcd {
             }
         })?;
 
-        self.aliased_mappings.lock().push(AliasedMapping {
-            virtual_address,
-            physical_address,
-            length: len,
-            attributes,
-        });
+        aliased_mappings_guard.push(AliasedMapping { virtual_address, physical_address, length: len, attributes });
         Ok(())
     }
 
     pub(crate) fn unmap_aliased_memory_region(&self, virtual_address: u64, len: u64) -> Result<(), EfiError> {
-        if !self
-            .aliased_mappings
-            .lock()
+        let mut aliased_mappings_guard = self.aliased_mappings.try_lock().ok_or(EfiError::AccessDenied)?;
+        if !aliased_mappings_guard
             .iter()
             .any(|mapping| mapping.virtual_address == virtual_address && mapping.length == len)
         {
             return Err(EfiError::NotFound);
         }
 
-        let mut page_table_guard = self.page_table.lock();
+        let mut page_table_guard = self.page_table.try_lock().ok_or(EfiError::AccessDenied)?;
         let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
         page_table.unmap_memory_region(virtual_address, len).map_err(|err| match err {
             PagingError::OutOfResources => EfiError::OutOfResources,
@@ -311,15 +307,13 @@ impl SpinLockedGcd {
             _ => EfiError::InvalidParameter,
         })?;
 
-        self.aliased_mappings
-            .lock()
-            .retain(|mapping| mapping.virtual_address != virtual_address || mapping.length != len);
+        aliased_mappings_guard.retain(|mapping| mapping.virtual_address != virtual_address || mapping.length != len);
         Ok(())
     }
 
     #[cfg(test)]
     pub(super) fn get_aliased_mappings(&self) -> Vec<AliasedMapping> {
-        self.aliased_mappings.lock().clone()
+        self.aliased_mappings.try_lock().expect("test aliased mappings must be unlocked").clone()
     }
 
     // Take control of our own destiny and create a page table that the GCD controls
@@ -333,15 +327,19 @@ impl SpinLockedGcd {
         // Do all memory allocation before we put the page table reference in the GCD. This ensures that when we
         // grab the descriptors, any allocator expansion and setting unused pages as RP has already occurred. The
         // GCD can change after this point, but not before we map the initial set of memory regions.
-        let mut mmio_res_descs: Vec<dxe_services::MemorySpaceDescriptor> =
-            Vec::with_capacity(self.memory_descriptor_count() + 10);
-        let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> =
-            Vec::with_capacity(self.memory_descriptor_count() + 10);
+        let mut mmio_res_descs: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(
+            self.memory_descriptor_count().expect("Paging requires an accessible GCD descriptor count") + 10,
+        );
+        let mut descriptors: Vec<dxe_services::MemorySpaceDescriptor> = Vec::with_capacity(
+            self.memory_descriptor_count().expect("Paging requires an accessible GCD descriptor count") + 10,
+        );
 
-        *self.page_table.lock() = Some(page_table);
+        *self.page_table.try_lock().expect("Cannot replace an in-use page table while initializing paging") =
+            Some(page_table);
 
         self.memory
-            .lock()
+            .try_lock()
+            .expect("Must read MMIO mappings before installing its page table")
             .get_memory_descriptors(mmio_res_descs.as_mut(), |d, _| {
                 matches!(d.memory_type, GcdMemoryType::MemoryMappedIo | GcdMemoryType::Reserved)
             })
@@ -353,7 +351,8 @@ impl SpinLockedGcd {
         // memory attrs. We also need to preallocate memory here so that we do not allocate memory after getting the
         // descriptors
         self.memory
-            .lock()
+            .try_lock()
+            .expect("Must read allocated memory mappings before installing its page table")
             .get_memory_descriptors(&mut descriptors, |d, allocated| {
                 if d.memory_type == GcdMemoryType::MemoryMappedIo || d.memory_type == GcdMemoryType::Reserved {
                     // we've already handled MMIO and reserved memory, so skip these
@@ -581,7 +580,13 @@ impl SpinLockedGcd {
             debug_assert!(false);
         }
 
-        self.page_table.lock().as_mut().unwrap().install_page_table().expect("Failed to install the page table");
+        self.page_table
+            .try_lock()
+            .expect("Cannot install an in-use page table")
+            .as_mut()
+            .expect("Must initialize a page table before installation")
+            .install_page_table()
+            .expect("Failed to install the page table");
 
         log::info!("Paging initialized for the GCD");
     }

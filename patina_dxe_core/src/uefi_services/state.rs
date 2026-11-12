@@ -10,7 +10,7 @@
 use alloc::vec::Vec;
 use core::ffi::c_void;
 
-use patina::standard::efi;
+use patina::{error::EfiError, standard::efi};
 
 use crate::tpl_mutex::TplMutex;
 
@@ -38,21 +38,22 @@ impl ActiveDispatchStack {
     }
 
     /// Records that `context`'s dispatch is now executing.
-    pub(crate) fn enter(&self, context: *mut c_void) {
-        self.entries.lock().push(ActiveDispatch { context, close_requested: false });
+    pub(crate) fn enter(&self, context: *mut c_void) -> Result<(), EfiError> {
+        self.entries.try_lock().ok_or(EfiError::AccessDenied)?.push(ActiveDispatch { context, close_requested: false });
+        Ok(())
     }
 
     /// Records that `context`'s dispatch has returned, and reports whether it (or a nested dispatch
     /// acting on its behalf) requested its own context be freed.
-    pub(crate) fn exit(&self, context: *mut c_void) -> bool {
+    pub(crate) fn exit(&self, context: *mut c_void) -> Result<bool, EfiError> {
         // This is the entry pushed by the matching `enter` call since entries are pushed and popped
         // in call order, so nothing pushed after it would still be on the stack.
-        match self.entries.lock().pop() {
+        match self.entries.try_lock().ok_or(EfiError::AccessDenied)?.pop() {
             Some(active) => {
                 debug_assert_eq!(active.context, context, "active dispatch stack popped out of order");
-                active.close_requested
+                Ok(active.close_requested)
             }
-            None => false,
+            None => Ok(false),
         }
     }
 
@@ -60,14 +61,14 @@ impl ActiveDispatchStack {
     /// executing, then this requests to defer freeing its context until its dispatch returns, and
     /// returns `true`. Returns `false` if no matching dispatch is active, so the caller can free the
     /// context immediately instead.
-    pub(crate) fn request_close(&self, context: *mut c_void) -> bool {
-        let mut entries = self.entries.lock();
+    pub(crate) fn request_close(&self, context: *mut c_void) -> Result<bool, EfiError> {
+        let mut entries = self.entries.try_lock().ok_or(EfiError::AccessDenied)?;
         match entries.iter_mut().rev().find(|entry| entry.context == context) {
             Some(active) => {
                 active.close_requested = true;
-                true
+                Ok(true)
             }
-            None => false,
+            None => Ok(false),
         }
     }
 }
@@ -107,14 +108,32 @@ mod tests {
     }
 
     #[test]
+    fn test_active_dispatch_stack_contention_preserves_active_context() {
+        with_locked_state(|| {
+            let stack = ActiveDispatchStack::new(efi::TPL_HIGH_LEVEL, "test stack");
+            let context = core::ptr::null_mut();
+            stack.enter(context).expect("record active context");
+            let guard = stack.entries.try_lock().expect("test dispatch stack lock");
+            assert_eq!(stack.enter(context), Err(EfiError::AccessDenied));
+            assert_eq!(stack.exit(context), Err(EfiError::AccessDenied));
+            assert_eq!(stack.request_close(context), Err(EfiError::AccessDenied));
+            assert_eq!(guard.len(), 1);
+            assert!(!guard[0].close_requested);
+            drop(guard);
+            assert_eq!(stack.request_close(context), Ok(true));
+            assert_eq!(stack.exit(context), Ok(true));
+        });
+    }
+
+    #[test]
     fn test_active_dispatch_stack_new_starts_with_no_active_entries() {
         with_locked_state(|| {
             let stack = ActiveDispatchStack::new(efi::TPL_NOTIFY, "test stack");
             let context = core::ptr::null_mut();
 
             // A newly constructed stack has nothing to pop or flag as closing.
-            assert!(!stack.exit(context));
-            assert!(!stack.request_close(context));
+            assert!(!stack.exit(context).expect("test dispatch stack lock"));
+            assert!(!stack.request_close(context).expect("test dispatch stack lock"));
         });
     }
 
@@ -124,8 +143,8 @@ mod tests {
             let state = UefiServicesState::new();
             let context = core::ptr::null_mut();
 
-            assert!(!state.event_notify.exit(context));
-            assert!(!state.protocol_install_notify.exit(context));
+            assert!(!state.event_notify.exit(context).expect("test dispatch stack lock"));
+            assert!(!state.protocol_install_notify.exit(context).expect("test dispatch stack lock"));
         });
     }
 }

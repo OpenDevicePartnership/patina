@@ -26,8 +26,14 @@ use crate::systemtables::{EfiSystemTable, SYSTEM_TABLE};
 /// Looks up the pointer for `guid`'s table given an already-locked system table reference,
 /// and verifies it was recorded with `type_id` in [`CONFIG_TABLE_TYPES`]. Returns `None` if either
 /// check fails.
+///
+/// # TPL
+///
+/// The caller must be at or below `TPL_NOTIFY` to acquire the type metadata lock.
+/// This internal lookup does not invoke UEFI `InstallConfigurationTable`; its ceiling is
+/// lock-derived, not a separate specification limit on reading a configuration table.
 fn typed_table_ptr(st: &EfiSystemTable, guid: BinaryGuid, type_id: TypeId) -> Option<ConfigTablePtr> {
-    if CONFIG_TABLE_TYPES.lock().get(&guid) != Some(&type_id) {
+    if CONFIG_TABLE_TYPES.try_lock()?.get(&guid) != Some(&type_id) {
         return None;
     }
     let ptr = configuration_table_entry_ptr(st, &guid.into_inner())?;
@@ -42,7 +48,8 @@ pub(crate) struct CoreConfigurationTableServices;
 
 impl ConfigurationTableServices for CoreConfigurationTableServices {
     unsafe fn install_table(&self, guid: BinaryGuid, table: ConfigTablePtr) -> Result<(), ConfigTableError> {
-        let mut st_guard = SYSTEM_TABLE.lock();
+        let mut st_guard =
+            SYSTEM_TABLE.try_lock().ok_or_else(|| ConfigTableError::from(patina::error::EfiError::AccessDenied))?;
         let st = st_guard.as_mut().ok_or(ConfigTableError::NotFound)?;
         core_install_configuration_table(guid.into_inner(), table.as_raw(), st)
             .map(|_| ())
@@ -50,7 +57,8 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
     }
 
     fn remove_table(&self, guid: BinaryGuid) -> Result<(), ConfigTableError> {
-        let mut st_guard = SYSTEM_TABLE.lock();
+        let mut st_guard =
+            SYSTEM_TABLE.try_lock().ok_or_else(|| ConfigTableError::from(patina::error::EfiError::AccessDenied))?;
         let st = st_guard.as_mut().ok_or(ConfigTableError::NotFound)?;
         // Installing a null table removes the entry for the GUID.
         core_install_configuration_table(guid.into_inner(), core::ptr::null_mut(), st)
@@ -68,7 +76,8 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
         type_id: TypeId,
         table: ConfigTablePtr,
     ) -> Result<(), ConfigTableError> {
-        let mut st_guard = SYSTEM_TABLE.lock();
+        let mut st_guard =
+            SYSTEM_TABLE.try_lock().ok_or_else(|| ConfigTableError::from(patina::error::EfiError::AccessDenied))?;
         let st = st_guard.as_mut().ok_or(ConfigTableError::NotFound)?;
         // SAFETY: forwarding the precondition on `table` upheld by this function's own caller.
         core_install_typed_configuration_table(guid.into_inner(), table.as_raw(), type_id, true, st)
@@ -77,7 +86,7 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
     }
 
     fn get_typed_table(&self, guid: BinaryGuid, type_id: TypeId) -> Option<ConfigTablePtr> {
-        let st_guard = SYSTEM_TABLE.lock();
+        let st_guard = SYSTEM_TABLE.try_lock()?;
         let st = st_guard.as_ref()?;
         typed_table_ptr(st, guid, type_id)
     }
@@ -85,7 +94,7 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
     unsafe fn read_typed_table_bytes(&self, guid: BinaryGuid, type_id: TypeId, buf: &mut [u8]) -> bool {
         // Note: The `SYSTEM_TABLE` lock is held across the type check, lookup, and copy to keep all three
         // synchronized against a concurrent install, replace, or remove of the same entry.
-        let st_guard = SYSTEM_TABLE.lock();
+        let Some(st_guard) = SYSTEM_TABLE.try_lock() else { return false };
         let Some(st) = st_guard.as_ref() else { return false };
         let Some(ptr) = typed_table_ptr(st, guid, type_id) else { return false };
         let base = ptr.as_raw() as *const u8;
@@ -105,7 +114,7 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
     ) -> Option<Vec<u8>> {
         // Holding `SYSTEM_TABLE`'s lock across check and read operations is done to keep all of them
         // synchronized against a concurrent operations against the same entry.
-        let st_guard = SYSTEM_TABLE.lock();
+        let st_guard = SYSTEM_TABLE.try_lock()?;
         let st = st_guard.as_ref()?;
         let ptr = typed_table_ptr(st, guid, type_id)?;
         let base = ptr.as_raw() as *const u8;
@@ -138,7 +147,8 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
         type_id: TypeId,
         table: ConfigTablePtr,
     ) -> Result<(), ConfigTableError> {
-        let mut st_guard = SYSTEM_TABLE.lock();
+        let mut st_guard =
+            SYSTEM_TABLE.try_lock().ok_or_else(|| ConfigTableError::from(patina::error::EfiError::AccessDenied))?;
         let st = st_guard.as_mut().ok_or(ConfigTableError::NotFound)?;
         // SAFETY: forwarding the precondition on `table` upheld by this function's own caller.
         core_install_typed_configuration_table(guid.into_inner(), table.as_raw(), type_id, false, st)
@@ -167,6 +177,37 @@ mod tests {
             f();
         })
         .unwrap();
+    }
+
+    #[test]
+    fn test_config_table_services_contention_returns_internal_or_no_value() {
+        with_locked_state(|| {
+            let svc = CoreConfigurationTableServices;
+            let guid = BinaryGuid::from_bytes(&[0x93; 16]);
+            let table = ConfigTablePtr::from_raw(0x1000usize as *mut c_void).expect("non-null test pointer");
+            let _guard = SYSTEM_TABLE.try_lock().expect("test system table lock");
+            // SAFETY: The held system table lock prevents installation or dereferencing the dummy pointer.
+            assert_eq!(unsafe { svc.install_table(guid, table) }, Err(ConfigTableError::Internal));
+            assert_eq!(
+                // SAFETY: The held system table lock prevents installation or dereferencing the dummy pointer.
+                unsafe { svc.install_typed_table(guid, TypeId::of::<u32>(), table) },
+                Err(ConfigTableError::Internal)
+            );
+            assert_eq!(
+                // SAFETY: The held system table lock prevents replacement or dereferencing the dummy pointer.
+                unsafe { svc.replace_typed_table(guid, TypeId::of::<u32>(), table) },
+                Err(ConfigTableError::Internal)
+            );
+            assert_eq!(svc.remove_table(guid), Err(ConfigTableError::Internal));
+            assert_eq!(svc.get_table(guid), None);
+            assert_eq!(svc.get_typed_table(guid, TypeId::of::<u32>()), None);
+            let mut bytes = [0xAA];
+            // SAFETY: The held system table lock prevents lookup and any read from a table pointer.
+            assert!(!unsafe { svc.read_typed_table_bytes(guid, TypeId::of::<u32>(), &mut bytes) });
+            assert_eq!(bytes, [0xAA]);
+            // SAFETY: The held system table lock prevents lookup and any read from a table pointer.
+            assert_eq!(unsafe { svc.read_typed_table_bytes_sized(guid, TypeId::of::<u32>(), 1, |_| 1) }, None);
+        });
     }
 
     #[test]
@@ -224,7 +265,7 @@ mod tests {
         with_locked_state(|| {
             // Simulate an uninitialized system table. Restore it afterward (even on panic) so
             // later tests relying on `with_locked_state`'s invariant are unaffected.
-            *SYSTEM_TABLE.lock() = None;
+            *SYSTEM_TABLE.try_lock().expect("test system table lock") = None;
             let _guard = test_support::StateGuard::new(|| init_system_table(patina::UefiSpecVersion::V2_11));
 
             let svc = CoreConfigurationTableServices;
@@ -386,7 +427,7 @@ mod tests {
             core_install_configuration_table(
                 guid.into_inner(),
                 replacement,
-                &mut *SYSTEM_TABLE.lock().as_mut().unwrap(),
+                &mut *SYSTEM_TABLE.try_lock().expect("test system table lock").as_mut().unwrap(),
             )
             .unwrap();
 

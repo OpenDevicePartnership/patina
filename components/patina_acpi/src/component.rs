@@ -75,6 +75,12 @@ impl AcpiComponent {
     }
 
     /// Initializes the ACPI system.
+    ///
+    /// # TPL
+    /// Must be called at `TPL <= TPL_NOTIFY` for the provider locks and the underlying
+    /// memory allocation, protocol installation, and configuration table services.
+    /// The UEFI specification requires those APIs to be called at or below `TPL_NOTIFY`.
+    ///
     /// TODO: Coverage was previously disabled because the entry point relied on `StandardBootServices`. Now that
     /// the dependency on `StandardBootServices` has been removed, revisit to determine if the entry point can be
     /// refactored and to enable coverage of various code paths.
@@ -134,7 +140,9 @@ impl AcpiComponent {
             max_capacity: MAX_INITIAL_ENTRIES,
             slice: xsdt_allocated_bytes.into_boxed_slice(),
         };
-        STANDARD_ACPI_PROVIDER.set_xsdt(xsdt_metadata);
+        STANDARD_ACPI_PROVIDER
+            .set_xsdt(xsdt_metadata)
+            .map_err(|error| EfiError::from(patina::standard::efi::Status::from(error)))?;
 
         // Set up initial values for the RSDP, including XSDT address.
         // Fields preceded with an underscore are for unsupported ACPI version 1.0.
@@ -176,10 +184,14 @@ impl AcpiComponent {
         // and it will live for the 'static lifetime as ACPI memory.
         let rsdp_allocated = unsafe { &mut *rsdp_ptr };
 
-        STANDARD_ACPI_PROVIDER.set_rsdp(rsdp_allocated);
+        STANDARD_ACPI_PROVIDER
+            .set_rsdp(rsdp_allocated)
+            .map_err(|error| EfiError::from(patina::standard::efi::Status::from(error)))?;
 
         // Checksum the root tables after setting up.
-        STANDARD_ACPI_PROVIDER.checksum_common_tables();
+        STANDARD_ACPI_PROVIDER
+            .checksum_common_tables()
+            .map_err(|error| EfiError::from(patina::standard::efi::Status::from(error)))?;
 
         if let Some(acpi_guid_hob) = acpi_hob {
             let _ = STANDARD_ACPI_PROVIDER.install_tables_from_hob(acpi_guid_hob);

@@ -10,7 +10,7 @@
 //!
 //! SDK consumers normally construct a [`TplMutex`] with an owned or cloned Boot
 //! Services implementation and access the protected data through the guard
-//! returned by [`TplMutex::lock`].
+//! returned by [`TplMutex::try_lock`].
 //!
 //! ```
 //! use patina::uefi::{
@@ -39,8 +39,9 @@
 //!         }
 //!     }
 //!
-//!     fn increment(&self) {
-//!         self.state.lock().value += 1;
+//!     fn increment(&self) -> Result<(), ()> {
+//!         self.state.try_lock()?.value += 1;
+//!         Ok(())
 //!     }
 //! }
 //! ```
@@ -68,8 +69,9 @@
 //!     STATE.init(boot_services);
 //! }
 //!
-//! fn increment() {
-//!     STATE.lock().value += 1;
+//! fn increment() -> Result<(), ()> {
+//!     STATE.try_lock()?.value += 1;
+//!     Ok(())
 //! }
 //! ```
 //!
@@ -92,15 +94,25 @@ use crate::uefi::boot_services::{BootServices, StandardBootServices, tpl::Tpl};
 /// implementation provided for [`BootServices`].
 pub trait TplController {
     /// Raises the current TPL and returns the previous TPL.
-    fn raise_tpl(&self, tpl: Tpl) -> Tpl;
+    ///
+    /// # Panics
+    /// Panics if the controller rejects the transition.
+    #[deprecated(note = "Use try_raise_tpl to handle invalid TPL transitions")]
+    fn raise_tpl(&self, tpl: Tpl) -> Tpl {
+        self.try_raise_tpl(tpl).expect("Cannot raise TPL to a lower or unsupported level")
+    }
+
+    /// Attempts to raise the TPL, returning an error if the controller rejects the transition.
+    #[allow(clippy::result_unit_err)]
+    fn try_raise_tpl(&self, tpl: Tpl) -> Result<Tpl, ()>;
 
     /// Restores the current TPL to a previously returned value.
     fn restore_tpl(&self, tpl: Tpl);
 }
 
 impl<B: BootServices> TplController for B {
-    fn raise_tpl(&self, tpl: Tpl) -> Tpl {
-        BootServices::raise_tpl(self, tpl)
+    fn try_raise_tpl(&self, tpl: Tpl) -> Result<Tpl, ()> {
+        Ok(BootServices::raise_tpl(self, tpl))
     }
 
     fn restore_tpl(&self, tpl: Tpl) {
@@ -134,6 +146,7 @@ pub struct TplMutex<T: ?Sized, B: TplController = StandardBootServices> {
 #[must_use = "if unused the TplMutex will immediately unlock"]
 pub struct TplMutexGuard<'a, T: ?Sized, B: TplController> {
     tpl_mutex: &'a TplMutex<T, B>,
+    tpl_controller: &'a B,
     release_tpl: Tpl,
 }
 
@@ -175,39 +188,41 @@ impl<T, B: TplController> TplMutex<T, B> {
 }
 
 impl<T: ?Sized, B: TplController> TplMutex<T, B> {
-    fn tpl_controller(&self) -> &B {
+    fn tpl_controller(&self) -> Option<&B> {
         match &self.tpl_controller {
-            TplControllerStorage::Ready(controller) => controller,
-            TplControllerStorage::Deferred(controller) => controller.get().expect("TPL controller not initialized!"),
+            TplControllerStorage::Ready(controller) => Some(controller),
+            TplControllerStorage::Deferred(controller) => controller.get(),
         }
     }
 
-    /// Attempt to lock the mutex and return a [`TplMutexGuard`] if the mutex was not locked.
+    /// Locks the mutex and returns a [`TplMutexGuard`].
+    ///
+    /// Prefer [`Self::try_lock`] to handle lock acquisition failures explicitly.
     ///
     /// # Panics
-    /// This call will panic if the mutex is already locked.
+    /// Panics if the mutex is already locked, its TPL controller is not initialized,
+    /// or the controller rejects the TPL transition.
+    #[deprecated(note = "Use try_lock() and handle lock acquisition failures explicitly")]
     pub fn lock(&self) -> TplMutexGuard<'_, T, B> {
-        self.try_lock().map_err(|()| "Re-entrant lock").unwrap()
+        self.try_lock().expect("Failed to acquire TPL mutex")
     }
 
     /// Attempt to lock the mutex and return [`TplMutexGuard`] if the mutex was not locked.
     ///
     /// # Errors
-    /// If the mutex is already lock, then this call will return [Err].
-    ///
-    /// # Panics
-    /// This call will panic if the mutex is not initialized.
+    /// Returns [Err] if the mutex is already locked, its TPL controller is not initialized,
+    /// or the controller rejects the TPL transition.
     #[allow(clippy::result_unit_err)]
     pub fn try_lock(&self) -> Result<TplMutexGuard<'_, T, B>, ()> {
         if self.lock.load(Ordering::Relaxed) {
             return Err(());
         }
 
-        let tpl_controller = self.tpl_controller();
-        let release_tpl = tpl_controller.raise_tpl(self.tpl_lock_level);
+        let tpl_controller = self.tpl_controller().ok_or(())?;
+        let release_tpl = tpl_controller.try_raise_tpl(self.tpl_lock_level)?;
 
         if self.lock.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
-            Ok(TplMutexGuard { release_tpl, tpl_mutex: self })
+            Ok(TplMutexGuard { release_tpl, tpl_mutex: self, tpl_controller })
         } else {
             tpl_controller.restore_tpl(release_tpl);
             Err(())
@@ -225,7 +240,7 @@ impl<T: ?Sized, B: TplController> TplMutexGuard<'_, T, B> {
 impl<T: ?Sized, B: TplController> Drop for TplMutexGuard<'_, T, B> {
     fn drop(&mut self) {
         self.tpl_mutex.lock.store(false, Ordering::Release);
-        self.tpl_mutex.tpl_controller().restore_tpl(self.release_tpl);
+        self.tpl_controller.restore_tpl(self.release_tpl);
     }
 }
 
@@ -308,6 +323,27 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
+    fn test_deprecated_lock_acquires_and_releases_mutex() {
+        let mutex = TplMutex::new(boot_services(), Tpl::NOTIFY, 42);
+        {
+            let mut guard = mutex.lock();
+            *guard = 43;
+            assert!(mutex.try_lock().is_err());
+        }
+        assert_eq!(*mutex.try_lock().expect("dropping the guard must release the mutex"), 43);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    #[should_panic(expected = "Failed to acquire TPL mutex")]
+    fn test_deprecated_lock_panics_on_reentrant_acquisition() {
+        let mutex = TplMutex::new(boot_services(), Tpl::NOTIFY, 42);
+        let _guard = mutex.lock();
+        let _reentrant_guard = mutex.lock();
+    }
+
+    #[test]
     fn test_try_lock() {
         let mut boot_services = MockBootServices::new();
         boot_services.expect_raise_tpl().with(eq(Tpl::NOTIFY)).times(2).return_const(Tpl::APPLICATION);
@@ -330,6 +366,29 @@ mod tests {
     }
 
     #[test]
+    fn test_try_lock_rejected_tpl_transition_does_not_acquire_mutex() {
+        struct RejectOnceController(core::cell::Cell<bool>);
+
+        impl TplController for RejectOnceController {
+            fn try_raise_tpl(&self, tpl: Tpl) -> Result<Tpl, ()> {
+                assert_eq!(tpl, Tpl::NOTIFY);
+                if self.0.replace(false) { Err(()) } else { Ok(Tpl::APPLICATION) }
+            }
+
+            fn restore_tpl(&self, tpl: Tpl) {
+                assert_eq!(tpl, Tpl::APPLICATION);
+            }
+        }
+
+        let mutex = TplMutex::new(RejectOnceController(core::cell::Cell::new(true)), Tpl::NOTIFY, 42);
+        assert!(mutex.try_lock().is_err());
+        let guard = mutex.try_lock().expect("rejected transition must leave the mutex unlocked");
+        assert_eq!(*guard, 42);
+        drop(guard);
+        assert!(mutex.try_lock().is_ok());
+    }
+
+    #[test]
     #[should_panic(expected = "TPL controller already initialized!")]
     fn test_init_panics_when_tpl_controller_is_already_initialized() {
         let mutex = TplMutex::new(MockBootServices::new(), Tpl::NOTIFY, 0);
@@ -337,33 +396,26 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "TPL controller not initialized!")]
-    fn test_lock_panics_when_tpl_controller_is_not_initialized() {
+    fn test_try_lock_fails_until_tpl_controller_is_initialized() {
         let mutex = TplMutex::<_, MockBootServices>::new_uninit(Tpl::NOTIFY, 0);
-        let _guard = mutex.lock();
-    }
-
-    #[test]
-    #[should_panic(expected = "Re-entrant lock")]
-    fn test_that_locking_a_locked_mutex_with_lock_fn_should_panic() {
-        let mutex = TplMutex::new(boot_services(), Tpl::NOTIFY, TestStruct::default());
-        let guard_result = mutex.try_lock();
-        assert!(guard_result.is_ok());
-        let _ = mutex.lock();
+        assert!(mutex.try_lock().is_err());
+        assert!(mutex.try_lock().is_err());
+        mutex.init(boot_services());
+        assert!(mutex.try_lock().is_ok());
     }
 
     #[test]
     fn test_debug_output_for_tpl_mutex() {
         let mutex = TplMutex::new(boot_services(), Tpl::NOTIFY, TestStruct::default());
         assert_eq!("TplMutex { data: TestStruct { field: 0 }, .. }", format!("{mutex:?}"));
-        let _guard = mutex.lock();
+        let _guard = mutex.try_lock().unwrap();
         assert_eq!("TplMutex { data: <locked>, .. }", format!("{mutex:?}"));
     }
 
     #[test]
     fn test_display_and_debug_output_for_tpl_mutex_guard() {
         let mutex = TplMutex::new(boot_services(), Tpl::NOTIFY, TestStruct::default());
-        let guard = mutex.lock();
+        let guard = mutex.try_lock().unwrap();
         assert_eq!("0", format!("{guard}"));
         assert_eq!("TestStruct { field: 0 }", format!("{guard:?}"));
     }

@@ -556,12 +556,12 @@ impl SpinLockedGcd {
         base_address: usize,
         len: usize,
     ) -> Result<usize, EfiError> {
-        self.io.lock().add_io_space(io_type, base_address, len)
+        self.io.try_lock().ok_or(EfiError::AccessDenied)?.add_io_space(io_type, base_address, len)
     }
 
     /// Acquires lock and delegates to [`IoGCD::remove_io_space`]
     pub fn remove_io_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
-        self.io.lock().remove_io_space(base_address, len)
+        self.io.try_lock().ok_or(EfiError::AccessDenied)?.remove_io_space(base_address, len)
     }
 
     /// Acquires lock and delegates to [`IoGCD::allocate_io_space`]
@@ -574,21 +574,28 @@ impl SpinLockedGcd {
         image_handle: efi::Handle,
         device_handle: Option<efi::Handle>,
     ) -> Result<usize, EfiError> {
-        self.io.lock().allocate_io_space(allocate_type, io_type, alignment, len, image_handle, device_handle)
+        self.io.try_lock().ok_or(EfiError::AccessDenied)?.allocate_io_space(
+            allocate_type,
+            io_type,
+            alignment,
+            len,
+            image_handle,
+            device_handle,
+        )
     }
 
     /// Acquires lock and delegates to [`IoGCD::free_io_space`]
     pub fn free_io_space(&self, base_address: usize, len: usize) -> Result<(), EfiError> {
-        self.io.lock().free_io_space(base_address, len)
+        self.io.try_lock().ok_or(EfiError::AccessDenied)?.free_io_space(base_address, len)
     }
 
     /// Acquires lock and delegates to [`IoGCD::get_io_descriptors`]
     pub fn get_io_descriptors(&self, buffer: &mut Vec<dxe_services::IoSpaceDescriptor>) -> Result<(), EfiError> {
-        self.io.lock().get_io_descriptors(buffer)
+        self.io.try_lock().ok_or(EfiError::AccessDenied)?.get_io_descriptors(buffer)
     }
 
     /// Acquires lock and delegates to [`IoGCD::io_descriptor_count`]
-    pub fn io_descriptor_count(&self) -> usize {
-        self.io.lock().io_descriptor_count()
+    pub fn io_descriptor_count(&self) -> Result<usize, EfiError> {
+        Ok(self.io.try_lock().ok_or(EfiError::AccessDenied)?.io_descriptor_count())
     }
 }
