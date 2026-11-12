@@ -100,8 +100,9 @@ where
     ///
     /// The callback receives the hardware print level selected from the memory log header or matching target filter
     /// and returns the level to use. This can be used for dynamic platform filtering to the hw port. Adv Logger will
-    /// call this at the start of each log message. As such, this is a hot path and should be performant and not
-    /// cause any logging to occur.
+    /// call this at the start of each Rust log message and each Advanced Logger protocol write when a hardware
+    /// print level is available. As such, this is a hot path and should be performant and not cause any logging
+    /// to occur.
     ///
     /// ## Examples
     ///
@@ -193,6 +194,15 @@ where
 
     pub(crate) fn hardware_write_enabled(&self, error_level: u32, hw_print_mask_override: Option<u32>) -> bool {
         self.refresh_log_info_address();
+        let hw_print_mask_override = if let Some(callback) = self.hw_print_level_override_callback {
+            let hw_print_level = hw_print_mask_override.or_else(|| {
+                let log_guard = self.memory_log.read();
+                log_guard.as_ref().map(AdvancedLogWriter::hw_print_level)
+            });
+            hw_print_level.map(callback)
+        } else {
+            hw_print_mask_override
+        };
         let log_guard = self.memory_log.read();
         log_guard.as_ref().is_none_or(|memory_log| match hw_print_mask_override {
             Some(hw_print_level) => memory_log.hardware_write_enabled_with_mask(error_level, hw_print_level),
@@ -340,16 +350,6 @@ where
 {
     /// Creates a new `BufferedWriter` with the specified log level, optional hardware print mask override, and writer.
     fn new(level: u32, hw_print_mask_override: Option<u32>, writer: &'a AdvancedLogger<'a, S>) -> Self {
-        writer.refresh_log_info_address();
-        let hw_print_mask_override = if let Some(callback) = writer.hw_print_level_override_callback {
-            let hw_print_level = hw_print_mask_override.or_else(|| {
-                let log_guard = writer.memory_log.read();
-                log_guard.as_ref().map(AdvancedLogWriter::hw_print_level)
-            });
-            hw_print_level.map(callback)
-        } else {
-            hw_print_mask_override
-        };
         let hw_write = writer.hardware_write_enabled(level, hw_print_mask_override);
 
         Self { level, hw_write, writer, buffer: [0; WRITER_BUFFER_SIZE], buffer_size: 0 }

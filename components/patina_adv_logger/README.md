@@ -24,6 +24,9 @@ Platforms that need dynamic filtering, such as gating hardware output on a debug
 selected from the memory log header or matching target filter and returns the level to use for that log message.
 Without a callback, the selected hardware print level is used unchanged.
 
+The callback applies to both Rust log records and incoming Advanced Logger protocol writes from C drivers.
+Suppressing hardware output does not suppress memory logging, and `HwPortDisabled` remains authoritative.
+
 For example, a platform can suppress all hardware output when its debug port is disabled:
 
 ```rust
