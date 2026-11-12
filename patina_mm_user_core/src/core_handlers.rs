@@ -8,7 +8,7 @@
 //!
 //! | GUID | Handler | Description |
 //! |------|---------|-------------|
-//! | `MM_DISPATCH_EVENT_GROUP_GUID` | `mm_driver_dispatch_handler` | Dispatches the discovered MM drivers |
+//! | `MM_DISPATCH_EVENT_GROUP_GUID` | `mm_driver_dispatch_handler` | Prepares and runs components, then dispatches discovered MM drivers |
 //! | `MM_DXE_READY_TO_LOCK_PROTOCOL_GUID` | `mm_ready_to_lock_handler` | Unregisters one-shot handlers, installs the ready-to-lock protocol |
 //! | `MM_END_OF_PEI_PROTOCOL_GUID` | `mm_end_of_pei_handler` | Installs the end-of-PEI protocol |
 //! | `END_OF_DXE_EVENT_GROUP_GUID` | `mm_end_of_dxe_handler` | Installs the end-of-DXE protocol |
@@ -108,7 +108,7 @@ impl SendHandle {
 /// Registers every core MMI handler with the MMI database.
 ///
 /// This includes the `MM_DISPATCH_EVENT_GROUP_GUID` handler that performs the deferred
-/// driver dispatch, so it must run before any driver is dispatched.
+/// component and driver dispatch.
 pub fn register_core_mmi_handlers() {
     let mut handles = DISPATCH_HANDLES.lock();
 
@@ -147,7 +147,7 @@ fn install_lifecycle_protocol(guid: &efi::Guid) -> efi::Status {
 
 /// MM Driver Dispatch Handler.
 ///
-/// Dispatches the drivers discovered during `StartUserCore`, then unregisters itself.
+/// Prepares and runs components, then dispatches the drivers discovered during `StartUserCore`.
 ///
 /// Corresponds to the C `MmDriverDispatchHandler`.
 fn mm_driver_dispatch_handler(
@@ -157,21 +157,32 @@ fn mm_driver_dispatch_handler(
 ) -> efi::Status {
     log::info!("MM driver dispatch event received");
 
-    match MmUserCore::instance().dispatch_drivers() {
-        Ok(count) => log::info!("Successfully dispatched {count} MM driver(s)."),
-        Err(status) => log::error!("Driver dispatch failed: {:#x}", status.as_usize()),
-    }
-
-    // One-shot: unregister this handler.
     let handles = DISPATCH_HANDLES.lock();
     let dispatch_handle = handles.first().map_or(core::ptr::null_mut(), |handle| handle.0);
     drop(handles);
 
-    if !dispatch_handle.is_null() {
-        let _ = MmUserCore::instance().mmi_handler_unregister(dispatch_handle);
+    let core = MmUserCore::instance();
+    if !dispatch_handle.is_null()
+        && let Err(status) = core.mmi_handler_unregister(dispatch_handle)
+    {
+        log::error!("Failed to unregister MM dispatch handler: {:#x}", status.as_usize());
+        return status;
     }
 
-    efi::Status::SUCCESS
+    if let Err(status) = core.dispatch_components() {
+        return status;
+    }
+
+    match core.dispatch_drivers() {
+        Ok(count) => {
+            log::info!("Successfully dispatched {count} MM driver(s).");
+            efi::Status::SUCCESS
+        }
+        Err(status) => {
+            log::error!("Driver dispatch failed: {:#x}", status.as_usize());
+            status
+        }
+    }
 }
 
 /// MM Ready To Lock Handler.
@@ -390,7 +401,15 @@ mod tests {
     #[test]
     fn test_driver_dispatch_handler_is_one_shot() {
         let core = init_core();
-        register_core_mmi_handlers();
+        let hobs = crate::tests::HobListBuffer::new().build();
+        assert_eq!(
+            core.entry_point_worker::<crate::tests::BarePlatform>(
+                patina::management_mode::supervisor::UserCommandType::StartUserCore as u64,
+                hobs.as_ptr() as u64,
+                0,
+            ),
+            efi::Status::SUCCESS.as_usize() as u64
+        );
         let dispatch_handle = dispatch_handles()[0];
 
         let status =
@@ -403,14 +422,26 @@ mod tests {
     }
 
     #[test]
-    fn test_driver_dispatch_handler_tolerates_an_unregistered_handle() {
+    fn test_driver_dispatch_handler_rejects_missing_component_preparation() {
         init_core();
 
-        // `register_core_mmi_handlers` was never called, so the handle slot is still null.
+        // Bootstrap has not queued component preparation or registered a dispatch handle.
         let status =
             mm_driver_dispatch_handler(&MM_DISPATCH_EVENT_GROUP_GUID, core::ptr::null_mut(), core::ptr::null_mut());
 
-        assert_eq!(status, efi::Status::SUCCESS);
+        assert_eq!(status, efi::Status::NOT_READY);
+    }
+
+    #[test]
+    fn test_driver_dispatch_handler_rejects_a_retired_handle() {
+        let core = init_core();
+        register_core_mmi_handlers();
+        assert!(take_handler(core, dispatch_handles()[0]));
+
+        let status =
+            mm_driver_dispatch_handler(&MM_DISPATCH_EVENT_GROUP_GUID, core::ptr::null_mut(), core::ptr::null_mut());
+
+        assert_eq!(status, efi::Status::INVALID_PARAMETER);
     }
 
     #[test]

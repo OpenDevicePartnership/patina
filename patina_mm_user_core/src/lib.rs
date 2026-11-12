@@ -16,8 +16,8 @@
 //!
 //! The commands are:
 //! - `StartUserCore` (0): one-time initialization. Discovers drivers from the HOB list,
-//!   builds the MM System Table, registers the core MMI handlers, and dispatches the
-//!   platform's components. Driver dispatch waits for the MM dispatch event MMI.
+//!   builds the MM System Table, registers the core MMI handlers. The platform's component
+//!   and driver dispatch waits for the MM dispatch event MMI.
 //! - `UserRequest` (1): runtime MMI dispatch. Parses the communication buffer and calls the
 //!   registered handlers.
 //! - `UserApProcedure` (2): runs a procedure on an AP.
@@ -114,6 +114,12 @@ static __USER_CORE: Once<NonZeroUsize> = Once::new();
 #[used]
 static MM_USER_CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Deferred platform callback and the address of the supervisor's persistent user HOB list.
+struct ComponentPreparation {
+    prepare: fn(&MmUserCore, &Hob<'_>),
+    hob_list: usize,
+}
+
 /// The MM User Core responsible for driver dispatch and MMI handling in user mode.
 ///
 /// Create a static instance and call [`entry_point_worker`](MmUserCore::entry_point_worker)
@@ -150,6 +156,8 @@ pub struct MmUserCore {
     pub dispatcher: MmDispatcher,
     /// The Patina component dispatcher (dependency-injected `#[component]` entry points).
     pub component_dispatcher: Mutex<MmComponentDispatcher>,
+    /// Consumed by the one-shot dispatch event without running platform code during bootstrap.
+    component_preparation: Mutex<Option<ComponentPreparation>>,
     /// Address of the heap-allocated MM System Table, set once it is built.
     mm_system_table: Once<usize>,
     /// Whether the core has completed initialization.
@@ -171,6 +179,7 @@ impl MmUserCore {
             config_table_db: MmConfigurationTableDb::new(),
             dispatcher: MmDispatcher::new(),
             component_dispatcher: Mutex::new(MmComponentDispatcher::new()),
+            component_preparation: Mutex::new(None),
             mm_system_table: Once::new(),
             initialized: AtomicBool::new(false),
         }
@@ -264,9 +273,7 @@ impl MmUserCore {
     ///
     /// Publishes the instance, reads the communication buffer and the MM drivers from the
     /// HOB list, builds the MM System Table, publishes the HOB list as a configuration
-    /// table, registers the core MMI handlers, and dispatches the platform's components.
-    /// Driver dispatch is deferred to the `MM_DISPATCH_EVENT_GROUP_GUID` handler (see
-    /// [`dispatch_drivers`](Self::dispatch_drivers)).
+    /// table, registers the core MMI handlers.
     fn handle_start_user_core<C: MmComponentInfo>(&'static self, hob_list: *const c_void) -> u64 {
         // `set_instance` only rejects a different core, so a repeat `StartUserCore` on this
         // core has to be caught here or initialization runs a second time.
@@ -322,7 +329,10 @@ impl MmUserCore {
         // driver dispatch handler that the supervisor triggers once the MM foundation is ready.
         core_handlers::register_core_mmi_handlers();
 
-        self.dispatch_components::<C>(&hob);
+        *self.component_preparation.lock() = Some(ComponentPreparation {
+            prepare: Self::prepare_components::<C>,
+            hob_list: hob_list.expose_provenance(),
+        });
 
         self.initialized.store(true, Ordering::Release);
         log::info!("MM User Core initialization complete.");
@@ -345,9 +355,8 @@ impl MmUserCore {
     /// Registers the platform's Patina components, feeds guided HOBs to their parsers, and
     /// dispatches the components until no more can run.
     ///
-    /// Runs once during `StartUserCore`. Components are dispatched in two rounds: before the
-    /// configs are locked (for `ConfigMut<T>` components) and after (for `Config<T>` consumers).
-    fn dispatch_components<C: MmComponentInfo>(&self, hob: &Hob<'_>) {
+    /// Runs on the MM dispatch event.
+    fn prepare_components<C: MmComponentInfo>(&self, hob: &Hob<'_>) {
         // Expose the MM services (protocol install/locate, MMI handler registration,
         // pool/page allocation) to components through the `MmServiceProvider` parameter.
         patina::management_mode::mm_services::register_component_mm_services(MmUserCore::instance());
@@ -355,12 +364,32 @@ impl MmUserCore {
         let mut dispatcher = self.component_dispatcher.lock();
         dispatcher.apply_component_info::<C>();
         dispatcher.insert_hobs(hob);
+    }
 
+    /// Prepares and runs components during the one-shot MM dispatch event, before MM drivers.
+    ///
+    /// Components run before configs are locked (for `ConfigMut<T>`) and after (for `Config<T>`
+    /// consumers).
+    pub(crate) fn dispatch_components(&self) -> Result<(), efi::Status> {
+        let Some(preparation) = self.component_preparation.lock().take() else {
+            log::error!("MM component dispatch requested without pending preparation");
+            return Err(efi::Status::NOT_READY);
+        };
+
+        // SAFETY: bootstrap retained the non-null, supervisor-validated user HOB copy.
+        // That read-only copy remains live across MM entries, as required by its MMST publication.
+        let hob = Hob::Handoff(unsafe {
+            &*core::ptr::with_exposed_provenance::<PhaseHandoffInformationTable>(preparation.hob_list)
+        });
+        (preparation.prepare)(self, &hob);
+
+        let mut dispatcher = self.component_dispatcher.lock();
         dispatcher.dispatch_to_completion();
         dispatcher.lock_configs();
         dispatcher.dispatch_to_completion();
 
         dispatcher.display_not_dispatched();
+        Ok(())
     }
 
     /// Handles `UserRequest` (runtime MMI dispatch).
@@ -602,15 +631,168 @@ impl MmUserCore {
 mod tests {
     use super::*;
 
+    use alloc::borrow::Cow;
     use core::sync::atomic::AtomicU64;
 
-    use patina::pi::hob::{END_OF_HOB_LIST, GUID_EXTENSION, GuidHob, HANDOFF, HobHeader};
+    use patina::{
+        component::{
+            MetaData, Storage, UnsafeStorageCell, component,
+            hob::{FromHob, Hob as ComponentHob, HobParseError},
+            params::{Config as ConfigParam, ConfigMut, Param},
+        },
+        management_mode::{
+            event::MM_DISPATCH_EVENT_GROUP_GUID, mm_services::MmServiceProvider,
+            supervisor::MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+        },
+        pi::hob::{
+            END_OF_HOB_LIST, GUID_EXTENSION, GuidHob, HANDOFF, HobHeader, MEMORY_ALLOCATION, MemoryAllocationHeader,
+            MemoryAllocationModule,
+        },
+    };
+
+    use crate::component_dispatcher::{Add, Component, Config};
 
     const HANDLER_GUID: efi::Guid = efi::Guid::from_fields(0x1111_0000, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 1]);
 
     static CORE: MmUserCore = MmUserCore::new();
     static AP_ARGUMENT: AtomicU64 = AtomicU64::new(0);
     static HANDLER_CALLS: AtomicU64 = AtomicU64::new(0);
+    static DISPATCH_ORDER: Mutex<Vec<&str>> = Mutex::new(Vec::new());
+    static NESTED_DISPATCH_STATUS: AtomicU64 = AtomicU64::new(0);
+    static NESTED_PREPARATION_STATUS: AtomicU64 = AtomicU64::new(0);
+    static PREPARATION_READY: AtomicBool = AtomicBool::new(false);
+    static DRIVER_READY: AtomicBool = AtomicBool::new(false);
+
+    struct PreparationProbe;
+
+    // SAFETY: this parameter accesses no storage and has no access requirements.
+    unsafe impl Param for PreparationProbe {
+        type State = ();
+        type Item<'storage, 'state> = Self;
+
+        unsafe fn get_param<'storage, 'state>(
+            _state: &'state Self::State,
+            _storage: UnsafeStorageCell<'storage>,
+        ) -> Self {
+            Self
+        }
+
+        fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {
+            true
+        }
+
+        fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<(), Cow<'static, str>> {
+            DISPATCH_ORDER.lock().push("parameter initialization");
+            Ok(())
+        }
+    }
+
+    struct DispatchValue(u64);
+
+    impl FromHob for DispatchValue {
+        const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("00000000-0000-0000-0000-0000000000a1");
+
+        fn parse(bytes: &[u8]) -> Result<Self, HobParseError> {
+            DISPATCH_ORDER.lock().push("HOB parsing");
+            Ok(Self(u64::from_le_bytes(bytes[..8].try_into().expect("test HOB contains a u64"))))
+        }
+    }
+
+    struct ConfigureDispatch;
+
+    impl ConfigureDispatch {
+        fn new() -> Self {
+            DISPATCH_ORDER.lock().push("construction");
+            Self
+        }
+    }
+
+    #[component]
+    impl ConfigureDispatch {
+        fn entry_point(
+            self,
+            mut config: ConfigMut<u64>,
+            hob: ComponentHob<DispatchValue>,
+            _probe: PreparationProbe,
+        ) -> patina::error::Result<()> {
+            *config = hob.0;
+            DISPATCH_ORDER.lock().push("mutable-config entry");
+            Ok(())
+        }
+    }
+
+    struct PublishDispatchProtocol;
+
+    #[component]
+    impl PublishDispatchProtocol {
+        fn entry_point(self, config: ConfigParam<u64>, services: MmServiceProvider) -> patina::error::Result<()> {
+            assert_eq!(*config, 42, "the mutable-config pass consumed the startup HOB");
+            DISPATCH_ORDER.lock().push("read-only-config entry");
+            // SAFETY: the installed protocol is a null marker with no borrowed interface.
+            unsafe {
+                services.install_protocol_interface(None, &HANDLER_GUID, core::ptr::null_mut()).unwrap();
+            }
+            // SAFETY: the dispatch event has no context or payload.
+            let nested = unsafe {
+                services.mmi_manage(
+                    Some(&MM_DISPATCH_EVENT_GROUP_GUID),
+                    core::ptr::null(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            NESTED_DISPATCH_STATUS.store(nested.as_usize() as u64, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct DispatchPlatform;
+
+    impl MmComponentInfo for DispatchPlatform {
+        fn configs(mut add: Add<Config>) {
+            // SAFETY: the core builds the MM System Table before any component callback.
+            let table = unsafe { &*CORE.mm_system_table_ptr() };
+            PREPARATION_READY.store(
+                CORE.initialized.load(Ordering::Acquire)
+                    && table.currently_executing_cpu == 1
+                    && table.number_of_cpus == 4,
+                Ordering::SeqCst,
+            );
+            DISPATCH_ORDER.lock().push("config registration");
+            add.config(0u64);
+        }
+
+        fn services(_add: Add<crate::component_dispatcher::Service>) {
+            DISPATCH_ORDER.lock().push("service registration");
+        }
+
+        fn components(mut add: Add<Component>) {
+            DISPATCH_ORDER.lock().push("component registration");
+            let nested = CORE.mmi_db.mmi_manage(
+                Some(&MM_DISPATCH_EVENT_GROUP_GUID),
+                core::ptr::null(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            );
+            NESTED_PREPARATION_STATUS.store(nested.as_usize() as u64, Ordering::SeqCst);
+            add.component(PublishDispatchProtocol);
+            add.component(ConfigureDispatch::new());
+        }
+    }
+
+    extern "efiapi" fn component_dependent_driver(handle: efi::Handle, table: *const c_void) -> efi::Status {
+        // SAFETY: the dispatcher passes the initialized MM System Table.
+        let table = unsafe { &*table.cast::<EfiMmSystemTable>() };
+        DRIVER_READY.store(
+            handle.is_null()
+                && table.currently_executing_cpu == 1
+                && table.number_of_cpus == 4
+                && CORE.protocol_db.locate_protocol(&HANDLER_GUID).is_some(),
+            Ordering::SeqCst,
+        );
+        DISPATCH_ORDER.lock().push("driver entry");
+        efi::Status::SUCCESS
+    }
 
     /// Publishes the process-wide core instance. nextest gives each test its own process, so the
     /// `Once` behind `set_instance` starts empty every time.
@@ -624,7 +806,7 @@ mod tests {
     }
 
     /// A platform that registers no components, configs or services.
-    struct BarePlatform;
+    pub(super) struct BarePlatform;
     impl MmComponentInfo for BarePlatform {}
 
     fn counting_handler(_: &efi::Guid, _: *mut c_void, _: *mut usize) -> efi::Status {
@@ -644,13 +826,13 @@ mod tests {
     ///
     /// The HOB iterator walks raw memory from one header to the next, so the entries must be laid
     /// out consecutively with every length a multiple of eight to keep the next header aligned.
-    struct HobListBuffer {
+    pub(super) struct HobListBuffer {
         bytes: Vec<u8>,
         aligned: Vec<u64>,
     }
 
     impl HobListBuffer {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let phit = PhaseHandoffInformationTable {
                 header: HobHeader {
                     r#type: HANDOFF,
@@ -695,7 +877,35 @@ mod tests {
             self
         }
 
-        fn build(mut self) -> Self {
+        fn driver(mut self) -> Self {
+            static IMAGE: [u8; 64] = [0; 64];
+            let module = MemoryAllocationModule {
+                header: HobHeader {
+                    r#type: MEMORY_ALLOCATION,
+                    length: size_of::<MemoryAllocationModule>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: MemoryAllocationHeader {
+                    name: MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+                    memory_base_address: IMAGE.as_ptr() as u64,
+                    memory_length: IMAGE.len() as u64,
+                    memory_type: efi::BOOT_SERVICES_CODE,
+                    reserved: [0; 4],
+                },
+                module_name: patina::BinaryGuid::from_string("00000000-0000-0000-0000-0000000000a2"),
+                entry_point: component_dependent_driver as *const () as u64,
+            };
+            // SAFETY: `MemoryAllocationModule` is repr(C), with all bytes initialized.
+            self.bytes.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(
+                    core::ptr::from_ref(&module).cast::<u8>(),
+                    size_of::<MemoryAllocationModule>(),
+                )
+            });
+            self
+        }
+
+        pub(super) fn build(mut self) -> Self {
             let end = HobHeader { r#type: END_OF_HOB_LIST, length: size_of::<HobHeader>() as u16, reserved: 0 };
             // SAFETY: `HobHeader` is `repr(C)` over integers.
             self.bytes.extend_from_slice(unsafe {
@@ -714,7 +924,7 @@ mod tests {
             self
         }
 
-        fn as_ptr(&self) -> *const c_void {
+        pub(super) fn as_ptr(&self) -> *const c_void {
             self.aligned.as_ptr().cast::<c_void>()
         }
 
@@ -877,6 +1087,81 @@ mod tests {
         let repeat =
             CORE.entry_point_worker::<BarePlatform>(UserCommandType::StartUserCore as u64, hobs.as_ptr() as u64, 0);
         assert_eq!(repeat, efi::Status::ALREADY_STARTED.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_components_dispatch_with_drivers_only_on_the_dispatch_event() {
+        let comm = legacy_comm_buffer(MM_DISPATCH_EVENT_GROUP_GUID.into_inner(), &[], patina::UEFI_PAGE_SIZE);
+        let hobs = HobListBuffer::new()
+            .guid_hob(MM_COMM_BUFFER_HOB_GUID, &comm_buffer_hob_payload(comm.as_ptr() as u64, 1))
+            .guid_hob(DispatchValue::HOB_GUID, &42u64.to_le_bytes())
+            .driver()
+            .build();
+
+        let status =
+            CORE.entry_point_worker::<DispatchPlatform>(UserCommandType::StartUserCore as u64, hobs.as_ptr() as u64, 0);
+        assert_eq!(status, efi::Status::SUCCESS.as_usize() as u64);
+        assert!(DISPATCH_ORDER.lock().is_empty(), "startup must not execute any component-supplied code");
+        assert!(CORE.protocol_db.locate_protocol(&HANDLER_GUID).is_none());
+        mm_mem::mock::set_handler(|index, _, _, _| {
+            assert_eq!(index, patina::management_mode::supervisor::SyscallIndex::MmIsCommBuffer.as_u64());
+            1
+        });
+
+        let expected = [
+            "config registration",
+            "service registration",
+            "component registration",
+            "construction",
+            "parameter initialization",
+            "HOB parsing",
+            "mutable-config entry",
+            "read-only-config entry",
+            "driver entry",
+        ];
+        for (valid, expected_order, expected_status) in [
+            (0, &[][..], efi::Status::SUCCESS),
+            (1, &expected[..], efi::Status::SUCCESS),
+            (1, &expected[..], efi::Status::NOT_FOUND),
+        ] {
+            let buffer = SupvToUserBuffer::new(
+                EfiMmEntryContext {
+                    mm_startup_this_ap: 0,
+                    currently_executing_cpu: 1,
+                    number_of_cpus: 4,
+                    cpu_save_state_size: 0,
+                    cpu_save_state: 0,
+                },
+                MmCommBufferStatus {
+                    is_comm_buffer_valid: valid,
+                    _padding: [0; 7],
+                    return_status: 0,
+                    return_buffer_size: 0,
+                },
+            );
+            let result = CORE.entry_point_worker::<DispatchPlatform>(
+                UserCommandType::UserRequest as u64,
+                buffer.as_u64(),
+                SupvToUserBuffer::context_size(),
+            );
+            assert_eq!(result, efi::Status::SUCCESS.as_usize() as u64);
+            assert_eq!(DISPATCH_ORDER.lock().as_slice(), expected_order);
+            assert_eq!(buffer.status().return_status, expected_status.as_usize() as u64);
+        }
+
+        assert!(PREPARATION_READY.load(Ordering::SeqCst), "preparation must wait for the request's CPU context");
+        assert!(DRIVER_READY.load(Ordering::SeqCst), "components and CPU context must be ready before drivers");
+        assert_eq!(
+            NESTED_PREPARATION_STATUS.load(Ordering::SeqCst),
+            efi::Status::NOT_FOUND.as_usize() as u64,
+            "the handler must retire before invoking registration callbacks"
+        );
+        assert_eq!(
+            NESTED_DISPATCH_STATUS.load(Ordering::SeqCst),
+            efi::Status::NOT_FOUND.as_usize() as u64,
+            "the handler must retire before calling components to prevent recursive dispatch"
+        );
+        assert_eq!(CORE.dispatch_components(), Err(efi::Status::NOT_READY), "preparation is consumed once");
     }
 
     #[test]

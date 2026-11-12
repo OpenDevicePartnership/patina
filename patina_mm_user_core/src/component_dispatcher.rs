@@ -2,8 +2,8 @@
 //!
 //! Brings the Patina component model (dependency-injected `#[component]` entry points)
 //! into the MM User Core, like the DXE Core's `component_dispatcher` module. A platform
-//! registers components, configurations, and services, which are dispatched in dependency
-//! order during MM User Core startup.
+//! registers components, configurations, and services on the MM dispatch event, after AP
+//! rendezvous.
 //!
 //! The component [`Storage`], [`Component`](patina::component::Component), and parameter
 //! types come from the Patina SDK ([`patina::component`]); only the dispatcher and the
@@ -36,7 +36,7 @@ use patina::{
 /// The MM counterpart of the DXE Core's `ComponentInfo` trait. The platform MM binary
 /// passes its implementing type to
 /// [`MmUserCore::entry_point_worker`](crate::MmUserCore::entry_point_worker), which applies
-/// it during `StartUserCore`. The heap is available in these callbacks.
+/// it at the MM dispatch event. The heap is available in these callbacks.
 ///
 /// ## Examples
 ///
@@ -136,7 +136,7 @@ impl Default for MmComponentDispatcher {
 }
 
 // SAFETY: The dispatcher owns everything stored in it and does not share it. Only the BSP
-// uses it, during single-threaded MM User Core startup, behind the containing `spin::Mutex`.
+// uses it, during deferred component startup, behind the containing `spin::Mutex`.
 unsafe impl Send for MmComponentDispatcher {}
 
 impl MmComponentDispatcher {
