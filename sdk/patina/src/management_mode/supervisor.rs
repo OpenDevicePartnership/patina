@@ -10,6 +10,10 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use crate::pi::mm_cis::EfiMmEntryContext;
+
+use super::comm_buffer_hob::MmCommBufferStatus;
+
 // GUID for gMmSupervisorHobMemoryAllocModuleGuid
 // { 0x3efafe72, 0x3dbf, 0x4341, { 0xad, 0x04, 0x1c, 0xb6, 0xe8, 0xb6, 0x8e, 0x5e }}
 /// GUID used in `MemoryAllocationModule` HOBs to identify MM Supervisor module allocations.
@@ -33,6 +37,28 @@ pub const MM_SUPERVISOR_CORE_GUID: crate::BinaryGuid =
 /// GUID identifying the MM Supervisor Init module.
 pub const MM_SUPERVISOR_INIT_GUID: crate::BinaryGuid =
     crate::BinaryGuid::from_string("A41AD2F6-78D4-47C9-AEF1-B623D0734D63");
+
+/// Runtime handoff for [`UserCommandType::UserRequest`].
+///
+/// The supervisor passes a pointer to this user-accessible structure in `arg1` and
+/// `size_of::<MmUserRequest>()` in `arg2`. The user core updates only `status`.
+/// The communication buffer is the supervisor's internal, user-accessible copy, not the
+/// external buffer described by the MM communication buffer HOB.
+///
+/// Both cores must use this layout. It replaces the context-plus-status handoff whose
+/// `arg2` described only the entry context.
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct MmUserRequest {
+    /// Processor context for this MMI.
+    pub entry_context: EfiMmEntryContext,
+    /// Request validity and response status, copied from and back to the external mailbox.
+    pub status: MmCommBufferStatus,
+    /// Base address of the internal communication buffer.
+    pub comm_buffer_address: u64,
+    /// Capacity of the internal communication buffer in bytes, not the message length.
+    pub comm_buffer_size: u64,
+}
 
 /// Command types passed from the supervisor to the user core via `invoke_demoted_routine`.
 ///
@@ -192,4 +218,19 @@ pub unsafe fn raw_syscall(call_index: u64, arg1: u64, arg2: u64, arg3: u64) -> u
 #[cfg(not(all(target_os = "uefi", target_arch = "x86_64")))]
 pub unsafe fn raw_syscall(_call_index: u64, _arg1: u64, _arg2: u64, _arg3: u64) -> u64 {
     r_efi::efi::Status::UNSUPPORTED.as_usize() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mm_user_request_layout() {
+        assert_eq!(size_of::<MmUserRequest>(), 80);
+        assert_eq!(align_of::<MmUserRequest>(), align_of::<u64>());
+        assert_eq!(core::mem::offset_of!(MmUserRequest, entry_context), 0);
+        assert_eq!(core::mem::offset_of!(MmUserRequest, status), 40);
+        assert_eq!(core::mem::offset_of!(MmUserRequest, comm_buffer_address), 64);
+        assert_eq!(core::mem::offset_of!(MmUserRequest, comm_buffer_size), 72);
+    }
 }
