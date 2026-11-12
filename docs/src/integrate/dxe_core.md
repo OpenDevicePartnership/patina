@@ -263,18 +263,61 @@ The interrupt handler is just the Rust business logic for processing the interru
 managed by Patina.
 
 For example, replace the empty `impl CpuInfo for ExamplePlatform {}` from the previous section with the following
-to supply an x64 page-fault handler:
+to supply an x64 page-fault handler.
+
+Patina offers helper functions to decode exceptions, dump the stack, and dump the page table, if a platform so
+desires. In addition to the dependencies already shown, add `log` and `patina_paging`
+to your platform crate, using versions compatible with your Patina release.
 
 ```rust
+# extern crate log;
+# extern crate patina;
 # extern crate patina_dxe_core;
+# extern crate patina_paging;
+# extern crate patina_stacktrace;
+use patina::{arch::SystemContextDiagnostics, UEFI_PAGE_MASK, UEFI_PAGE_SIZE};
 use patina_dxe_core::{CpuInfo, ExceptionContext, ExceptionType, InterruptHandler};
+use patina_paging::{page_allocator::PageAllocatorStub, x64::X64PageTable, PageTable};
+use patina_stacktrace::{StackFrame, StackTrace};
 
 # struct ExamplePlatform;
 struct PlatformPageFaultHandler;
 
+#[cfg(target_arch = "x86_64")]
 impl InterruptHandler for PlatformPageFaultHandler {
     fn handle_interrupt(&'static self, exception_type: ExceptionType, context: &mut ExceptionContext) {
-        panic!("Platform exception {exception_type}: {context:#X?}");
+        // Optionally log the exception information
+        context.dump_exception(exception_type);
+
+        // Optionally, if this was a page fault, log the page table info
+        if let Some(address) = context.page_fault_address(exception_type) {
+            dump_pte(address);
+        }
+
+        // Optionally log the stack trace
+        let stack_frame = StackFrame { pc: context.rip, sp: context.rsp, fp: context.rbp };
+        // SAFETY: These are the architecturally provided values for the exception, we have to trust them.
+        if let Err(error) = unsafe { StackTrace::dump_with(stack_frame) } {
+            log::error!("StackTrace: {error}");
+        }
+
+        // Super critical business logic goes here
+
+        panic!("Oops!");
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn dump_pte(address: u64) {
+    // SAFETY: We are reading the active page table, it must be safe if we are operating
+    match unsafe { X64PageTable::open_active(PageAllocatorStub) } {
+        Ok(page_table) => {
+            let page_address = address & !(UEFI_PAGE_MASK as u64);
+            if let Err(error) = page_table.dump_page_tables(page_address, UEFI_PAGE_SIZE as u64) {
+                log::error!("Failed to dump page tables: {error:?}");
+            }
+        }
+        Err(error) => log::error!("Failed to open active page tables: {error:?}"),
     }
 }
 
@@ -288,6 +331,14 @@ impl CpuInfo for ExamplePlatform {
     }
 }
 ```
+
+Import `patina::arch::SystemContextDiagnostics` to use the diagnostic helpers on the saved context. As shown above,
+`context.dump_exception(exception_type)` logs the decoded exception information and saved registers for x64 or
+AArch64. To log only the registers, call `context.dump_system_context_registers()` instead.
+`context.page_fault_address(exception_type)` returns the saved fault address when valid, or `None` for other
+exceptions or an invalid address. The helpers implemented on `SystemContextDiagnostics` are safe and only parse
+that information. Stack trace dumping and page table dumping are unsafe operations and do touch a greater range of
+memory and hardware.
 
 Platform handlers are registered before the exception vector table becomes active. Patina then installs default
 handlers only for vectors not claimed by the platform:
