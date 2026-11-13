@@ -13,7 +13,7 @@
 extern crate alloc;
 use super::{AllocationStatistics, AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY, PageAllocator};
 
-use crate::{gcd::SpinLockedGcd, tpl_mutex};
+use crate::{gcd::SpinLockedGcd, memory_bin::MemoryBinManager, tpl_mutex};
 
 use alloc::vec::Vec;
 use core::{
@@ -67,6 +67,20 @@ fn retained_pool_size(layout: Layout) -> Option<usize> {
         return None;
     }
     align_up(layout.size().max(1), UEFI_PAGE_SIZE).ok()
+}
+
+// Pool pages come directly from the GCD, so they must be added to the memory bin statistics here.
+// The global allocator can run while the bin lock is held, so check the type before locking.
+fn record_bin_allocation(memory_type: efi::MemoryType, pages: usize) {
+    if MemoryBinManager::is_special_type(memory_type) {
+        super::MEMORY_BIN_MANAGER.lock().record_allocation(memory_type, pages as u64);
+    }
+}
+
+fn record_bin_free(memory_type: efi::MemoryType, pages: usize) {
+    if MemoryBinManager::is_special_type(memory_type) {
+        super::MEMORY_BIN_MANAGER.lock().record_free(memory_type, pages as u64);
+    }
 }
 
 // Slice::get() is not const on stable Rust
@@ -1435,6 +1449,9 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                     return Err(AllocError);
                 };
 
+                // Retired pages remain owned by the allocator, so count the expansion once.
+                record_bin_allocation(allocator.memory_type(), required_pages);
+
                 let new_pages = new_pages.ok_or(AllocError)?;
                 let active_start = align_up(new_pages.start, user_alignment).map_err(|_| AllocError)?;
                 let active_end =
@@ -1505,6 +1522,7 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                 let allocation =
                     NonNull::slice_from_raw_parts(NonNull::new(start_address as *mut u8).ok_or(AllocError)?, size);
                 allocator.notify_page_allocation(allocation);
+                record_bin_allocation(allocator.memory_type(), uefi_size_to_pages!(size));
 
                 Ok(NonNull::slice_from_raw_parts(user_addr, layout.size()))
             }
@@ -1564,6 +1582,7 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                 debug_assert!(false, "Failed to free pages for large allocation");
             } else {
                 allocator.notify_pages_freed(base.get() as efi::PhysicalAddress, pages);
+                record_bin_free(allocator.memory_type(), pages);
             }
             return;
         };
