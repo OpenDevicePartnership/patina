@@ -94,7 +94,8 @@ mockall = ["dep:mockall", "std"]
 global_allocator = []
 serde = ["alloc", "dep:serde", "serde/alloc", "dep:serde_json"]
 
-unstable = ["unstable-device-path"]
+unstable = ["unstable-device-path", "unstable-sbom"]
 unstable-device-path = []
+unstable-sbom = []
 # All non-std features to test in CI
-ci_features = ["core", "alloc", "global_allocator", "unstable", "unstable-device-path"]
+ci_features = ["core", "alloc", "global_allocator", "unstable", "unstable-device-path", "unstable-sbom"]
