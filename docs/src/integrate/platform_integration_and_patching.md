@@ -255,7 +255,6 @@ your changes and dependency graph.
 
 ```toml
 [patch.crates-io]
-patina_acpi={path="C:/src/patina/components/patina_acpi"}
 patina={path="C:/src/patina/sdk/patina"}
 patina_macro={path="C:/src/patina/sdk/patina_macro"}
 patina_test={path="C:/src/patina/components/patina_test"}

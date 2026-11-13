@@ -227,13 +227,6 @@ unsafe extern "efiapi" fn c_callback(/* fixed signature, no context param */) ->
   resolves it.
   - `patina_dxe_core`'s `CORE_PERFORMANCE` static does the same thing.
 
-Sometimes a static like this is the only option given a pre-defined protocol interface structure.
-
-- For example, in
-  [`patina_acpi`](https://github.com/OpenDevicePartnership/patina/blob/main/components/patina_acpi/src/acpi_protocol.rs)'s
-  `AcpiGetProtocol`, none of its functions get a pointer back to the protocol, so there is nothing to embed a reference
-  into. A shared static is the only way those callbacks can reach the rest of the ACPI state.
-
 ## Pattern 5: Let a callback and a later method share state
 
 Sometimes a callback needs to write something that a later `&self` method on the same component has to read, or the
