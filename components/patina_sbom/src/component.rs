@@ -12,6 +12,7 @@ use patina::{
         hob::Hob,
         service::{
             Service,
+            performance::PerformanceManager,
             uefi_services::{
                 event::{EventServices, EventServicesExt, Tpl},
                 protocol::{ProtocolServices, ProtocolServicesExt},
@@ -19,6 +20,7 @@ use patina::{
         },
     },
     error::EfiError,
+    guid::CALLER_ID,
     uefi::acpi_table::{
         ACPI_CHECKSUM_OFFSET, AcpiDescriptionHeader,
         sbom::{EFI_ACPI_SBOM_TABLE_REVISION, EFI_ACPI_SBOM_TABLE_SIGNATURE},
@@ -27,6 +29,8 @@ use patina::{
     vendor_protocols::sbom::{PROTOCOL_GUID as SBOM_PROTOCOL_GUID, SbomProtocol},
 };
 use zerocopy::IntoBytes;
+
+const DEDUPLICATION_MEASUREMENT: &str = "SbomDeduplication";
 
 /// Publishes a combined ACPI SBOM table once, at Ready to Boot.
 pub struct SbomComponent {
@@ -63,6 +67,7 @@ impl SbomComponent {
         hobs: Option<Hob<SbomHob>>,
         events: Service<dyn EventServices>,
         protocols: Service<dyn ProtocolServices>,
+        performance: Option<Service<dyn PerformanceManager>>,
     ) -> Result<(), EfiError> {
         let mut entries = Vec::new();
         if let Some(hobs) = hobs {
@@ -71,7 +76,7 @@ impl SbomComponent {
             }
         }
         events.on_event_group_self_managed(READY_TO_BOOT_EVENT_GROUP_GUID, Tpl::Callback, move |event| {
-            if let Err(error) = publish(self.header, &mut entries, &protocols) {
+            if let Err(error) = publish(self.header, &mut entries, &protocols, performance.as_ref()) {
                 log::error!("SBOM: failed to publish ACPI table: {error}");
             }
             if let Err(error) = events.close_event(event) {
@@ -86,6 +91,7 @@ fn publish(
     header: AcpiDescriptionHeader,
     entries: &mut Vec<Vec<u8>>,
     protocols: &Service<dyn ProtocolServices>,
+    performance: Option<&Service<dyn PerformanceManager>>,
 ) -> Result<(), EfiError> {
     for handle in protocols.locate_handles(SBOM_PROTOCOL_GUID)? {
         let interface = protocols.interface_on_handle(handle, SBOM_PROTOCOL_GUID)?;
@@ -100,8 +106,14 @@ fn publish(
     if entries.is_empty() {
         return Ok(());
     }
+    if let Some(performance) = performance {
+        performance.perf_in_module_begin(DEDUPLICATION_MEASUREMENT, CALLER_ID.as_efi_guid());
+    }
     entries.sort_unstable();
     entries.dedup();
+    if let Some(performance) = performance {
+        performance.perf_in_module_end(DEDUPLICATION_MEASUREMENT, CALLER_ID.as_efi_guid());
+    }
     let table = build_table(header, entries)?;
     protocols.with_protocol::<AcpiTableProtocol, _>(|protocol| protocol.install(&table).map(|_| ()))?
 }
@@ -143,12 +155,16 @@ mod tests {
     use super::*;
     use alloc::{boxed::Box, vec};
     use core::{cell::RefCell, ffi::c_void, ptr::NonNull, slice};
+    use mockall::Sequence;
     use patina::{
         component::{
             hob::FromHob,
-            service::uefi_services::{
-                event::{Event, EventError, MockEventServices},
-                protocol::{Handle, MockProtocolServices, ProtocolError, ProtocolPtr},
+            service::{
+                performance::MockPerformanceManager,
+                uefi_services::{
+                    event::{Event, EventError, MockEventServices},
+                    protocol::{Handle, MockProtocolServices, ProtocolError, ProtocolPtr},
+                },
             },
         },
         protocol::ProtocolInterface,
@@ -269,6 +285,7 @@ mod tests {
                 Some(hobs),
                 Service::mock(Box::new(events())),
                 Service::mock(Box::new(protocols(&acpi, vec![entry(b"image-one"), entry(b"image-two")]))),
+                None,
             )
             .unwrap();
         let tables = acpi.tables.borrow();
@@ -284,6 +301,7 @@ mod tests {
                 Some(Hob::mock(vec![SbomHob::parse(&entry(b"hob")).unwrap()])),
                 Service::mock(Box::new(events())),
                 Service::mock(Box::new(protocols(&acpi, vec![]))),
+                None,
             )
             .unwrap();
         assert_table(&acpi.tables.borrow()[0], &[b"hob"]);
@@ -304,6 +322,7 @@ mod tests {
                     &acpi,
                     vec![entry(b"ccc"), entry(b"bbb"), entry(b"ccc"), entry(b"aaa")],
                 ))),
+                None,
             )
             .unwrap();
         assert_table(&acpi.tables.borrow()[0], &[b"aaa", b"bbb", b"ccc"]);
@@ -317,6 +336,7 @@ mod tests {
                 Some(Hob::mock(vec![SbomHob::parse(&entry(b"")).unwrap()])),
                 Service::mock(Box::new(events())),
                 Service::mock(Box::new(protocols(&acpi, vec![entry(b""), entry(b"")]))),
+                None,
             )
             .unwrap();
         assert_table(&acpi.tables.borrow()[0], &[b""]);
@@ -337,7 +357,12 @@ mod tests {
         inputs.extend(expected.clone());
         inputs.reverse();
         publisher()
-            .entry_point(None, Service::mock(Box::new(events())), Service::mock(Box::new(protocols(&acpi, inputs))))
+            .entry_point(
+                None,
+                Service::mock(Box::new(events())),
+                Service::mock(Box::new(protocols(&acpi, inputs))),
+                None,
+            )
             .unwrap();
         expected.sort_unstable();
         let tables = acpi.tables.borrow();
@@ -355,9 +380,38 @@ mod tests {
                 None,
                 Service::mock(Box::new(events())),
                 Service::mock(Box::new(protocols(&acpi, vec![entry(b"")]))),
+                None,
             )
             .unwrap();
         assert_table(&acpi.tables.borrow()[0], &[b""]);
+    }
+
+    #[test]
+    fn test_sbom_component_measures_deduplication() {
+        let acpi = TestAcpiProtocol::new(efi::Status::SUCCESS);
+        let mut performance = MockPerformanceManager::new();
+        let mut sequence = Sequence::new();
+        performance
+            .expect_perf_in_module_begin()
+            .withf(|name, caller| name == DEDUPLICATION_MEASUREMENT && caller == CALLER_ID.as_efi_guid())
+            .times(1)
+            .in_sequence(&mut sequence)
+            .return_const(());
+        performance
+            .expect_perf_in_module_end()
+            .withf(|name, caller| name == DEDUPLICATION_MEASUREMENT && caller == CALLER_ID.as_efi_guid())
+            .times(1)
+            .in_sequence(&mut sequence)
+            .return_const(());
+        publisher()
+            .entry_point(
+                None,
+                Service::mock(Box::new(events())),
+                Service::mock(Box::new(protocols(&acpi, vec![entry(b"image"), entry(b"image")]))),
+                Some(Service::mock(Box::new(performance))),
+            )
+            .unwrap();
+        assert_table(&acpi.tables.borrow()[0], &[b"image"]);
     }
 
     #[test]
@@ -365,7 +419,9 @@ mod tests {
         let acpi = TestAcpiProtocol::new(efi::Status::SUCCESS);
         let mut protocols = MockProtocolServices::new();
         protocols.expect_locate_handles().times(1).returning(|_| Ok(Vec::new()));
-        publisher().entry_point(None, Service::mock(Box::new(events())), Service::mock(Box::new(protocols))).unwrap();
+        publisher()
+            .entry_point(None, Service::mock(Box::new(events())), Service::mock(Box::new(protocols)), None)
+            .unwrap();
         assert!(acpi.tables.borrow().is_empty());
     }
 
@@ -381,6 +437,7 @@ mod tests {
                 None,
                 Service::mock(Box::new(events())),
                 Service::mock(Box::new(protocols(&acpi, vec![bad_revision, bad_header, entry(b"valid")]))),
+                None,
             )
             .unwrap();
         assert_table(&acpi.tables.borrow()[0], &[b"valid"]);
@@ -394,6 +451,7 @@ mod tests {
                 None,
                 Service::mock(Box::new(events())),
                 Service::mock(Box::new(protocols(&acpi, vec![entry(b"image")]))),
+                None,
             )
             .unwrap();
         assert_eq!(acpi.tables.borrow().len(), 1);
@@ -403,7 +461,7 @@ mod tests {
     fn test_sbom_component_publish_propagates_installation_status() {
         let acpi = TestAcpiProtocol::new(efi::Status::OUT_OF_RESOURCES);
         let protocols = Service::mock(Box::new(protocols(&acpi, vec![entry(b"image")])) as Box<dyn ProtocolServices>);
-        assert_eq!(publish(publisher().header, &mut Vec::new(), &protocols), Err(EfiError::OutOfResources));
+        assert_eq!(publish(publisher().header, &mut Vec::new(), &protocols, None), Err(EfiError::OutOfResources));
     }
 
     #[test]
@@ -412,7 +470,7 @@ mod tests {
         protocols.expect_locate_handles().returning(|_| Ok(Vec::new()));
         protocols.expect_locate_interface().times(1).returning(|_| Err(ProtocolError::NotFound));
         let protocols = Service::mock(Box::new(protocols) as Box<dyn ProtocolServices>);
-        assert_eq!(publish(publisher().header, &mut vec![entry(b"hob")], &protocols), Err(EfiError::NotFound));
+        assert_eq!(publish(publisher().header, &mut vec![entry(b"hob")], &protocols, None), Err(EfiError::NotFound));
     }
 
     #[test]
@@ -420,7 +478,7 @@ mod tests {
         let mut protocols = MockProtocolServices::new();
         protocols.expect_locate_handles().times(1).returning(|_| Err(ProtocolError::OutOfResources));
         let protocols = Service::mock(Box::new(protocols) as Box<dyn ProtocolServices>);
-        assert_eq!(publish(publisher().header, &mut Vec::new(), &protocols), Err(EfiError::OutOfResources));
+        assert_eq!(publish(publisher().header, &mut Vec::new(), &protocols, None), Err(EfiError::OutOfResources));
 
         let mut protocols = MockProtocolServices::new();
         protocols
@@ -429,7 +487,7 @@ mod tests {
             .returning(|_| Ok(vec![Handle::from_raw(NonNull::<c_void>::dangling().as_ptr()).unwrap()]));
         protocols.expect_interface_on_handle().times(1).returning(|_, _| Err(ProtocolError::NotFound));
         let protocols = Service::mock(Box::new(protocols) as Box<dyn ProtocolServices>);
-        assert_eq!(publish(publisher().header, &mut Vec::new(), &protocols), Err(EfiError::NotFound));
+        assert_eq!(publish(publisher().header, &mut Vec::new(), &protocols, None), Err(EfiError::NotFound));
     }
 
     #[test]
@@ -440,7 +498,8 @@ mod tests {
             publisher().entry_point(
                 None,
                 Service::mock(Box::new(events)),
-                Service::mock(Box::new(MockProtocolServices::new()))
+                Service::mock(Box::new(MockProtocolServices::new())),
+                None
             ),
             Err(EfiError::InvalidParameter),
         );
@@ -469,6 +528,7 @@ mod tests {
                 None,
                 Service::mock(Box::new(events)),
                 Service::mock(Box::new(protocols(&acpi, vec![entry(b"image")]))),
+                None,
             )
             .unwrap();
         assert_eq!(acpi.tables.borrow().len(), 1);

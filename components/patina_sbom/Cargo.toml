@@ -28,6 +28,7 @@ log = { workspace = true }
 zerocopy = { workspace = true }
 
 [dev-dependencies]
+mockall = { workspace = true }
 patina = { path = "../../sdk/patina", features = ["mockall"] }
 
 [features]
