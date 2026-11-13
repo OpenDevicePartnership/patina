@@ -115,7 +115,9 @@ impl<P: PlatformInfo> PiDispatcher<P> {
     }
 
     pub(crate) fn set_performance(&self, performance: &Service<performance::CorePerformance>) {
-        self.performance.publish(*performance).expect("Performance service was already set on the PI dispatcher!");
+        self.performance
+            .publish(performance.clone())
+            .expect("Performance service was already set on the PI dispatcher!");
     }
 
     fn instance<'a>() -> &'a Self {
