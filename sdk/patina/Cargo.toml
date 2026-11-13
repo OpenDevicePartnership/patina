@@ -58,7 +58,7 @@ fixedbitset = { workspace = true, optional = true }
 compile-time = { workspace = true }
 goblin = { workspace = true, features = ["pe32", "pe64", "te", "alloc"], optional = true }
 log = { workspace = true }
-r-efi = { version = "7.1", default-features = false }
+r-efi = { version = "7.2", default-features = false }
 mockall = { workspace = true, optional = true }
 num-traits = { workspace = true }
 fallible-streaming-iterator = { workspace = true }

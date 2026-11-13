@@ -71,6 +71,8 @@ macro_rules! impl_r_efi_protocol {
 impl_r_efi_protocol!(absolute_pointer);
 impl_r_efi_protocol!(block_io);
 impl_r_efi_protocol!(bus_specific_driver_override);
+impl_r_efi_protocol!(component_name);
+impl_r_efi_protocol!(component_name2);
 impl_r_efi_protocol!(debug_support);
 impl_r_efi_protocol!(debugport);
 impl_r_efi_protocol!(decompress);
@@ -82,6 +84,7 @@ impl_r_efi_protocol!(disk_io2);
 impl_r_efi_protocol!(driver_binding);
 impl_r_efi_protocol!(driver_diagnostics2);
 impl_r_efi_protocol!(driver_family_override);
+impl_r_efi_protocol!(driver_supported_efi_version);
 // protocol file ???;
 impl_r_efi_protocol!(graphics_output);
 impl_r_efi_protocol!(hii_database);
