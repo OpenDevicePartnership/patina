@@ -8,7 +8,7 @@ injection in addition to a general-purpose UEFI Rust SDK.
 
 The workspace is organized into four top-level areas:
 
-- `components/` - Feature components (ACPI, Advanced Logger, MM, Performance, SMBIOS, etc.)
+- `components/` - Feature components (Advanced Logger, MM, Performance, SMBIOS, etc.)
 - `core/` - Shared core internals (debugger, collections, CPU, dependency expressions, stack traces)
 - `patina_dxe_core/` - Main DXE Core library that ties everything together
 - `sdk/` - Public SDK (`patina` crate for Boot/Runtime Services, component infrastructure, `patina_ffs` for firmware
