@@ -17,16 +17,7 @@ use alloc::boxed::Box;
 use core::mem::size_of;
 
 use crate::base::UefiSpecVersion;
-use crate::base::guid::BinaryGuid;
-use crate::base::protocol::ProtocolInterface;
-
-pub use crate::uefi::driver_supported_efi_version::Protocol;
-
-// SAFETY: `Protocol` is `#[repr(C)]` and matches the layout of
-// `EFI_DRIVER_SUPPORTED_EFI_VERSION_PROTOCOL`.
-unsafe impl ProtocolInterface for Protocol {
-    const PROTOCOL_GUID: BinaryGuid = BinaryGuid(crate::uefi::driver_supported_efi_version::PROTOCOL_GUID);
-}
+use crate::standard::efi::protocols::driver_supported_efi_version::Protocol;
 
 /// Builds an EFI Driver Supported EFI Version protocol instance for `firmware_version`.
 ///
@@ -38,6 +29,8 @@ pub(in crate::component::service::uefi_services) fn build_protocol(firmware_vers
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::base::guid::BinaryGuid;
+    use crate::base::protocol::ProtocolInterface;
 
     #[test]
     fn test_build_protocol_sets_length_and_firmware_version() {
@@ -48,6 +41,6 @@ mod tests {
 
     #[test]
     fn test_protocol_guid_matches_raw_definition() {
-        assert_eq!(Protocol::PROTOCOL_GUID, BinaryGuid(crate::uefi::driver_supported_efi_version::PROTOCOL_GUID));
+        assert_eq!(Protocol::PROTOCOL_GUID, BinaryGuid(r_efi::protocols::driver_supported_efi_version::PROTOCOL_GUID));
     }
 }

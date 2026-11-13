@@ -21,8 +21,8 @@ use alloc::string::String;
 
 use crate::base::guid::BinaryGuid;
 use crate::base::protocol::ProtocolInterface;
+use crate::standard::efi::protocols::{component_name, component_name2};
 use crate::string::{Char8Str, Char8String};
-use crate::uefi::component_name::{component_name, component_name2};
 
 use super::language::LanguageTable;
 pub use crate::component::service::uefi_services::handle::Handle;

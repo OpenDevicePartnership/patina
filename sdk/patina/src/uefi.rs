@@ -12,13 +12,11 @@
 
 #[cfg(any(test, feature = "alloc"))]
 pub mod boot_services;
-pub mod component_name;
 pub mod decompress;
 #[cfg(any(test, feature = "alloc"))]
 pub mod device_path;
 #[cfg(any(test, feature = "alloc"))]
 pub mod driver_binding;
-pub mod driver_supported_efi_version;
 pub mod event;
 pub mod memory;
 #[cfg(any(test, feature = "alloc"))]

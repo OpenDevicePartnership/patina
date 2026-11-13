@@ -1662,11 +1662,11 @@ mod tests {
         let mut mock = MockProtocolServices::new();
         mock.expect_install_interface().times(1).returning(|handle, guid, ptr| {
             assert_eq!(handle, None);
-            assert_eq!(guid, driver_supported_efi_version::Protocol::PROTOCOL_GUID);
+            assert_eq!(guid, efi::protocols::driver_supported_efi_version::Protocol::PROTOCOL_GUID);
             // SAFETY: `ptr` was built by `build_protocol`, which always produces a valid,
-            // aligned `driver_supported_efi_version::Protocol`.
-            let protocol = unsafe { &*(ptr.as_raw() as *const driver_supported_efi_version::Protocol) };
-            assert_eq!(protocol.length, size_of::<driver_supported_efi_version::Protocol>() as u32);
+            // aligned `efi::protocols::driver_supported_efi_version::Protocol`.
+            let protocol = unsafe { &*(ptr.as_raw() as *const efi::protocols::driver_supported_efi_version::Protocol) };
+            assert_eq!(protocol.length, size_of::<efi::protocols::driver_supported_efi_version::Protocol>() as u32);
             assert_eq!(protocol.firmware_version, u32::from(UefiSpecVersion::V2_11));
             Ok(fake_handle())
         });
