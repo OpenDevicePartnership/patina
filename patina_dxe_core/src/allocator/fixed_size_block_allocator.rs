@@ -13,7 +13,7 @@
 extern crate alloc;
 use super::{AllocationStatistics, AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY, PageAllocator};
 
-use crate::{gcd::SpinLockedGcd, tpl_mutex};
+use crate::{gcd::SpinLockedGcd, memory_bin::MemoryBinManager, tpl_mutex};
 
 use alloc::vec::Vec;
 use core::{
@@ -755,6 +755,13 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                 if self.lock().expand(NonNull::slice_from_raw_parts(allocated_ptr, allocation_size)).is_err() {
                     debug_assert!(false);
                     return Err(AllocError);
+                }
+
+                // Count retained pool backing pages once, not individual pool requests.
+                // The global allocator can run while the bin lock is held, so filter before locking.
+                let memory_type = self.memory_type();
+                if MemoryBinManager::is_special_type(memory_type) {
+                    super::MEMORY_BIN_MANAGER.lock().record_allocation(memory_type, required_pages as u64);
                 }
 
                 // Try the allocation one more time

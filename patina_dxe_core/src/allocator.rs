@@ -1651,6 +1651,96 @@ mod tests {
         (*base, *max)
     }
 
+    // Test-only helper; not included in firmware builds.
+    fn bin_usage(memory_type: efi::MemoryType) -> (u64, u32) {
+        let manager = MEMORY_BIN_MANAGER.lock();
+        let peak = manager
+            .memory_type_information()
+            .iter()
+            .find(|entry| entry.memory_type == memory_type)
+            .unwrap()
+            .number_of_pages;
+        (manager.current_pages_for_type(memory_type), peak)
+    }
+
+    #[test]
+    fn pool_bin_usage_should_include_spillover_and_page_allocations() {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_| {
+            let memory_type = efi::ACPI_RECLAIM_MEMORY;
+            initialize_memory_bins(
+                &HobList::default(),
+                &[EFiMemoryTypeInformation { memory_type, number_of_pages: 1 }],
+            );
+
+            let page = core_allocate_pages(efi::ALLOCATE_ANY_PAGES, memory_type, 1, 0, None).unwrap();
+            let pool_size = 0x23C162;
+            let buffer = core_allocate_pool(memory_type, pool_size).unwrap();
+            let allocator = core_get_allocator(memory_type).unwrap();
+            assert!(!allocator.reserved_range().unwrap().contains(&(buffer as efi::PhysicalAddress)));
+
+            let pool_pages = uefi_size_to_pages!(pool_size) as u64;
+            let peak = (pool_pages + 1) as u32;
+            assert_eq!(bin_usage(memory_type), (pool_pages + 1, peak));
+
+            // SAFETY: page and buffer were allocated above and have not been freed.
+            unsafe {
+                core_free_pages(page, 1).unwrap();
+                core_free_pool(buffer).unwrap();
+            }
+            assert_eq!(bin_usage(memory_type), (pool_pages, peak));
+
+            let reused = core_allocate_pool(memory_type, pool_size).unwrap();
+            assert_eq!(bin_usage(memory_type), (pool_pages, peak));
+            // SAFETY: reused was allocated above and has not been freed.
+            unsafe { core_free_pool(reused).unwrap() };
+        });
+    }
+
+    #[test]
+    fn pool_bin_usage_should_count_shared_backing_pages_once() {
+        for memory_type in [
+            efi::ACPI_RECLAIM_MEMORY,
+            efi::ACPI_MEMORY_NVS,
+            efi::RESERVED_MEMORY_TYPE,
+            efi::RUNTIME_SERVICES_DATA,
+            efi::RUNTIME_SERVICES_CODE,
+        ] {
+            with_locked_state(GcdInit::WithSize(0x1000000), |_| {
+                initialize_memory_bins(
+                    &HobList::default(),
+                    &[EFiMemoryTypeInformation { memory_type, number_of_pages: 0x40 }],
+                );
+
+                let first = core_allocate_pool(memory_type, 16).unwrap();
+                let second = core_allocate_pool(memory_type, 16).unwrap();
+                let backing_pages = uefi_size_to_pages!(LOW_TRAFFIC_RUNTIME_ALLOC_MIN_EXPANSION);
+                assert_eq!(bin_usage(memory_type), (backing_pages as u64, backing_pages as u32));
+
+                let allocator = core_get_allocator(memory_type).unwrap();
+                let reserved = allocator.reserved_range().unwrap();
+                assert!(reserved.contains(&(first as efi::PhysicalAddress)));
+                assert!(reserved.contains(&(second as efi::PhysicalAddress)));
+
+                // SAFETY: first and second were allocated above and have not been freed.
+                unsafe {
+                    core_free_pool(first).unwrap();
+                    core_free_pool(second).unwrap();
+                }
+                assert_eq!(bin_usage(memory_type), (backing_pages as u64, backing_pages as u32));
+            });
+        }
+    }
+
+    #[test]
+    fn pool_bin_usage_should_not_lock_bin_manager_for_global_allocator() {
+        with_locked_state(GcdInit::WithSize(0x1000000), |_| {
+            let _manager = MEMORY_BIN_MANAGER.lock();
+            let buffer = core_allocate_pool(efi::BOOT_SERVICES_DATA, UEFI_PAGE_SIZE).unwrap();
+            // SAFETY: buffer was allocated above and has not been freed.
+            unsafe { core_free_pool(buffer).unwrap() };
+        });
+    }
+
     #[test]
     #[allow(unpredictable_function_pointer_comparisons)]
     fn install_memory_support_should_populate_boot_services_ptrs() {
