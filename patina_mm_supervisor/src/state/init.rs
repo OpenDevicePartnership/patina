@@ -201,3 +201,130 @@ static INIT_STATE: InitState = InitState::new();
 pub(crate) fn init_state() -> &'static InitState {
     &INIT_STATE
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    fn processor_id_lookup(cpu_index: usize) -> Option<u64> {
+        Some(cpu_index as u64 + 0x10)
+    }
+
+    fn replacement_processor_id_lookup(_: usize) -> Option<u64> {
+        None
+    }
+
+    #[test]
+    fn test_init_state_defaults() {
+        let state = InitState::new();
+
+        assert!(state.supervisor().is_none());
+        assert!(state.processor_id_lookup_fn().is_none());
+        assert!(!state.is_bsp_init_complete());
+        assert!(state.mm_initialized_buffer().is_none());
+        assert!(state.user_entry_point().is_none());
+        assert!(state.init_module_region().is_none());
+        assert!(!state.is_init_module_freed());
+        assert!(state.mseg_base().is_none());
+        assert!(state.ap_startup_fn().is_none());
+        assert!(!state.is_at_runtime());
+        assert!(state.smrr_range().is_none());
+    }
+
+    #[test]
+    fn test_init_module_freed_flag() {
+        let state = InitState::new();
+        assert!(!state.is_init_module_freed());
+        state.mark_init_module_freed();
+        assert!(state.is_init_module_freed());
+    }
+
+    #[test]
+    fn test_init_module_region_is_recorded_once() {
+        let state = InitState::new();
+        let first = MemoryRange::new(0x1000, 0x3000).unwrap();
+        state.set_init_module_region(first);
+        state.set_init_module_region(MemoryRange::new(0x8000, 0x9000).unwrap());
+        assert_eq!(state.init_module_region(), Some(first));
+        assert!(!state.is_init_module_freed());
+    }
+
+    #[test]
+    fn test_init_state_processor_id_lookup_is_initialized_once() {
+        let state = InitState::new();
+
+        state.set_processor_id_lookup_fn(processor_id_lookup);
+        assert_eq!(state.processor_id_lookup_fn().unwrap()(3), Some(0x13));
+
+        state.set_processor_id_lookup_fn(replacement_processor_id_lookup);
+        assert_eq!(state.processor_id_lookup_fn().unwrap()(3), Some(0x13));
+
+        // The replacement is a working lookup in its own right, so the retained value above
+        // is the result of the one-time semantics rather than of an inert replacement.
+        let fresh = InitState::new();
+        fresh.set_processor_id_lookup_fn(replacement_processor_id_lookup);
+        assert_eq!(fresh.processor_id_lookup_fn().unwrap()(3), None);
+    }
+
+    #[test]
+    fn test_init_state_synchronization_updates() {
+        let state = InitState::new();
+
+        state.mark_bsp_init_complete();
+        assert!(state.is_bsp_init_complete());
+
+        assert_eq!(state.inc_per_core_init_count(), 1);
+        assert_eq!(state.inc_per_core_init_count(), 2);
+
+        assert!(state.mark_at_runtime());
+        assert!(!state.mark_at_runtime());
+        assert!(state.is_at_runtime());
+    }
+
+    #[test]
+    fn test_init_state_one_time_values_ignore_later_writes() {
+        static INITIALIZED_BUFFER: [AtomicU8; 2] = [AtomicU8::new(0), AtomicU8::new(1)];
+        static REPLACEMENT_BUFFER: [AtomicU8; 1] = [AtomicU8::new(2)];
+
+        let state = InitState::new();
+        let smrr = MemoryRange::new(0x6000_0000, 0x10_0000).unwrap();
+
+        state.set_mm_initialized_buffer(&INITIALIZED_BUFFER);
+        state.set_mseg_base(0x7000_0000);
+        state.set_smrr_range(smrr);
+
+        state.set_mm_initialized_buffer(&REPLACEMENT_BUFFER);
+        state.set_mseg_base(0x9000_0000);
+        state.set_smrr_range(MemoryRange::new(0x9000_0000, 0x2000).unwrap());
+
+        let stored_buffer = state.mm_initialized_buffer().expect("initialized buffer should be stored");
+        assert!(core::ptr::eq(stored_buffer, &INITIALIZED_BUFFER));
+        assert_eq!(state.mseg_base(), Some(0x7000_0000));
+        assert_eq!(state.smrr_range(), Some(smrr));
+    }
+
+    #[test]
+    fn test_init_state_supervisor_address_is_recorded_once() {
+        let state = InitState::new();
+        let first = NonZeroUsize::new(0x1000).unwrap();
+        let second = NonZeroUsize::new(0x2000).unwrap();
+
+        assert!(state.set_supervisor(first));
+        assert!(!state.set_supervisor(second));
+        assert_eq!(state.supervisor(), Some(first));
+    }
+
+    #[test]
+    fn test_init_state_entry_points_are_recorded_once() {
+        let state = InitState::new();
+
+        state.set_user_entry_point(0x4000);
+        state.set_user_entry_point(0x5000);
+        assert_eq!(state.user_entry_point(), Some(0x4000));
+
+        state.set_ap_startup_fn(|cpu_index, procedure, argument| cpu_index + procedure + argument);
+        state.set_ap_startup_fn(|_, _, _| 0);
+        assert_eq!(state.ap_startup_fn().unwrap()(1, 2, 3), 6);
+    }
+}

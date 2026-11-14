@@ -642,3 +642,574 @@ impl PageAllocator {
         Some(self.lock_state().classify_mmram(range))
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::test_support;
+
+    /// Returns `[base, base + size)` as a range.
+    fn range(base: u64, size: u64) -> MemoryRange {
+        MemoryRange::new(base, size).unwrap()
+    }
+
+    const TEST_REGION_PAGES: usize = 16;
+    const TEST_REGION_BYTES: usize = uefi_pages_to_size!(TEST_REGION_PAGES);
+
+    #[repr(align(4096))]
+    struct AlignedRegion([u8; TEST_REGION_BYTES]);
+
+    struct AllocatorFixture {
+        allocator: PageAllocator,
+        base: u64,
+        _memory: Box<AlignedRegion>,
+    }
+
+    impl AllocatorFixture {
+        fn new() -> Self {
+            let mut memory = Box::new(AlignedRegion([0xA5; TEST_REGION_BYTES]));
+            let base = memory.0.as_mut_ptr() as u64;
+            let allocator = PageAllocator::new();
+            let regions = [MmramRegion::new(range(base, TEST_REGION_BYTES as u64), false)];
+
+            // SAFETY: `memory` is page-aligned, exclusively owned by the fixture,
+            // remains live with the allocator, and covers the declared region.
+            unsafe {
+                allocator.init_from_regions(&regions).unwrap();
+            }
+
+            Self { allocator, base, _memory: memory }
+        }
+    }
+
+    #[test]
+    fn test_scan_hob_list_rejects_a_list_that_describes_no_smram() {
+        // A producer that names no SMRAM leaves nothing to allocate from. Reporting that as an
+        // error keeps the caller from committing to an allocator with zero regions, which would
+        // then classify every address as outside MMRAM.
+        let hob_list = test_support::RawHobList::new().finish();
+
+        // SAFETY: `hob_list` is a valid contiguous HOB list that outlives the call.
+        let scanned = unsafe { PageAllocator::scan_hob_list_for_smram_regions(hob_list.handoff()) };
+
+        assert_eq!(scanned.map(|scanned| scanned.as_slice().len()), Err(AllocError::NotInitialized.into()));
+    }
+
+    fn smram_hob_payload(declared_count: u32, descriptors: &[SmramDescriptor]) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(size_of::<SmramReserveHobData>() + size_of_val(descriptors));
+        payload.extend_from_slice(&declared_count.to_ne_bytes());
+        payload.extend_from_slice(&0u32.to_ne_bytes());
+        for descriptor in descriptors {
+            payload.extend_from_slice(&descriptor.physical_start.to_ne_bytes());
+            payload.extend_from_slice(&descriptor.cpu_start.to_ne_bytes());
+            payload.extend_from_slice(&descriptor.physical_size.to_ne_bytes());
+            payload.extend_from_slice(&descriptor.region_state.to_ne_bytes());
+        }
+        payload
+    }
+
+    #[test]
+    fn test_page_allocator_uninitialized_operations() {
+        let allocator = PageAllocator::new();
+
+        assert!(!allocator.is_initialized());
+        assert_eq!(allocator.region_count(), 0);
+        assert_eq!(allocator.total_page_count(), 0);
+        assert_eq!(allocator.free_page_count(), 0);
+        assert_eq!(allocator.allocate_pages(1), Err(AllocError::NotInitialized.into()));
+        assert_eq!(allocator.free_pages(UEFI_PAGE_SIZE as u64, 1), Err(AllocError::NotInitialized.into()));
+        assert_eq!(allocator.get_allocation_type(UEFI_PAGE_SIZE as u64), None);
+        assert_eq!(allocator.classify_mmram(&range(UEFI_PAGE_SIZE as u64, UEFI_PAGE_SIZE as u64)), None);
+
+        let mut state = allocator.lock_state();
+        assert!(state.regions().is_empty());
+        assert!(state.regions_mut().is_empty());
+        assert!(state.alloc_bitmap().is_empty());
+        assert!(state.type_bitmap().is_empty());
+        let (alloc_bitmap, type_bitmap) = state.bitmaps_mut();
+        assert!(alloc_bitmap.is_empty());
+        assert!(type_bitmap.is_empty());
+    }
+
+    #[test]
+    fn test_page_allocator_initialization_reserves_bookkeeping() {
+        test_support::init_test_logger();
+        let fixture = AllocatorFixture::new();
+
+        assert!(fixture.allocator.is_initialized());
+        assert_eq!(fixture.allocator.region_count(), 1);
+        assert_eq!(fixture.allocator.total_page_count(), TEST_REGION_PAGES);
+        assert_eq!(fixture.allocator.free_page_count(), TEST_REGION_PAGES - 1);
+        assert_eq!(fixture.allocator.allocated_page_count(AllocationType::Supervisor), 1);
+        assert_eq!(fixture.allocator.allocated_page_count(AllocationType::User), 0);
+        assert_eq!(fixture.allocator.get_allocation_type(fixture.base), Some(AllocationType::Supervisor));
+        assert_eq!(fixture.allocator.allocate_pages(0), Err(AllocError::InvalidSize.into()));
+        assert_eq!(fixture.allocator.free_pages(fixture.base + 1, 1), Err(AllocError::InvalidAlignment.into()));
+        assert_eq!(fixture.allocator.free_pages(fixture.base, 0), Err(AllocError::InvalidSize.into()));
+        assert_eq!(
+            fixture.allocator.free_pages(fixture.base + TEST_REGION_BYTES as u64, 1),
+            Err(AllocError::InvalidAddress.into())
+        );
+    }
+
+    #[test]
+    fn test_page_allocator_rejects_double_initialization() {
+        let fixture = AllocatorFixture::new();
+        let regions = [MmramRegion::new(range(fixture.base, TEST_REGION_BYTES as u64), false)];
+
+        // SAFETY: the fixture owns the page-aligned region for its full declared size.
+        unsafe {
+            assert_eq!(fixture.allocator.init_from_regions(&regions), Err(AllocError::AlreadyInitialized.into()));
+        }
+        assert_eq!(fixture.allocator.free_page_count(), TEST_REGION_PAGES - 1);
+    }
+
+    #[test]
+    fn test_page_allocator_validates_regions_before_writing_bookkeeping() {
+        let allocator = PageAllocator::new();
+        let empty: [MmramRegion; 0] = [];
+        let unaligned = [MmramRegion::new(range(0x1001, UEFI_PAGE_SIZE as u64), false)];
+        let partial_page = [MmramRegion::new(range(0x1000, UEFI_PAGE_SIZE as u64 - 1), false)];
+        let overlapping = [
+            MmramRegion::new(range(0x1000, 2 * UEFI_PAGE_SIZE as u64), false),
+            MmramRegion::new(range(0x2000, UEFI_PAGE_SIZE as u64), false),
+        ];
+
+        // SAFETY: these invalid descriptors are rejected before any address is dereferenced.
+        unsafe {
+            assert_eq!(allocator.init_from_regions(&empty), Err(AllocError::NotInitialized.into()));
+            assert_eq!(allocator.init_from_regions(&unaligned), Err(AllocError::InvalidAlignment.into()));
+            assert_eq!(allocator.init_from_regions(&partial_page), Err(AllocError::InvalidAlignment.into()));
+            assert_eq!(allocator.init_from_regions(&overlapping), Err(AllocError::InvalidAddress.into()));
+        }
+        assert!(!allocator.is_initialized());
+    }
+
+    #[test]
+    fn test_page_allocator_tracks_types_and_uses_first_fit() {
+        let fixture = AllocatorFixture::new();
+        let mut state = fixture.allocator.lock_state();
+
+        let supervisor = state.allocate(2, AllocationType::Supervisor).unwrap();
+        let user = state.allocate(3, AllocationType::User).unwrap();
+
+        assert_eq!(supervisor, fixture.base + UEFI_PAGE_SIZE as u64);
+        assert_eq!(user, fixture.base + 3 * UEFI_PAGE_SIZE as u64);
+        assert_eq!(state.allocation_type(supervisor), Some(AllocationType::Supervisor));
+        assert_eq!(state.allocation_type(user), Some(AllocationType::User));
+        assert_eq!(state.allocation_type(user + 1), Some(AllocationType::User));
+        assert_eq!(state.allocated_page_count(AllocationType::Supervisor), 3);
+        assert_eq!(state.allocated_page_count(AllocationType::User), 3);
+        assert_eq!(state.free_page_count(), TEST_REGION_PAGES - 6);
+    }
+
+    #[test]
+    fn test_page_allocator_public_allocate_and_free_api() {
+        let fixture = AllocatorFixture::new();
+
+        let supervisor = fixture.allocator.allocate_pages(2).unwrap();
+        let user = fixture.allocator.allocate_pages_with_type(3, AllocationType::User).unwrap();
+
+        assert_eq!(fixture.allocator.get_allocation_type(supervisor), Some(AllocationType::Supervisor));
+        assert_eq!(fixture.allocator.get_allocation_type(user), Some(AllocationType::User));
+        assert_eq!(fixture.allocator.allocated_page_count(AllocationType::Supervisor), 3);
+        assert_eq!(fixture.allocator.allocated_page_count(AllocationType::User), 3);
+        assert_eq!(
+            fixture.allocator.classify_mmram(&range(user, 3 * UEFI_PAGE_SIZE as u64)),
+            Some(MmramPlacement::Inside)
+        );
+
+        assert_eq!(
+            fixture.allocator.free_pages_checked(user, 3, AllocationType::Supervisor),
+            Err(AllocError::TypeMismatch.into())
+        );
+        assert_eq!(fixture.allocator.free_pages_checked(user, 3, AllocationType::User), Ok(()));
+        assert_eq!(fixture.allocator.free_pages(supervisor, 2), Ok(()));
+        assert_eq!(fixture.allocator.free_pages(supervisor, 2), Err(AllocError::NotAllocated.into()));
+        assert_eq!(fixture.allocator.free_page_count(), TEST_REGION_PAGES - 1);
+    }
+
+    #[test]
+    fn test_page_allocator_zeroes_fresh_user_pages() {
+        let fixture = AllocatorFixture::new();
+
+        // The fixture memory starts as 0xA5, as MMRAM the producer used before the allocator took
+        // it over might, and these pages were never freed, so no scrub has touched them.
+        let user = fixture.allocator.allocate_pages_with_type(2, AllocationType::User).unwrap();
+
+        // SAFETY: the fixture owns this range for the allocation's full size.
+        let fresh = unsafe { core::slice::from_raw_parts(user as *const u8, 2 * UEFI_PAGE_SIZE) };
+        assert!(fresh.iter().all(|&byte| byte == 0), "a fresh user allocation exposed old MMRAM contents");
+    }
+
+    #[test]
+    fn test_page_allocator_scrubs_pages_on_free() {
+        let fixture = AllocatorFixture::new();
+
+        // A supervisor allocation holding secrets is released back into the shared pool.
+        let supervisor = fixture.allocator.allocate_pages(2).unwrap();
+        let secret_len = 2 * UEFI_PAGE_SIZE;
+        // SAFETY: the fixture owns this range for the allocation's full size.
+        let secret = unsafe { core::slice::from_raw_parts_mut(supervisor as *mut u8, secret_len) };
+        secret.fill(0x5A);
+
+        assert_eq!(fixture.allocator.free_pages(supervisor, 2), Ok(()));
+
+        // Nothing may survive the free, so the next allocation cannot observe it.
+        let user = fixture.allocator.allocate_pages_with_type(2, AllocationType::User).unwrap();
+        assert_eq!(user, supervisor, "first-fit must hand back the just-freed range");
+        // SAFETY: as above, for the range the allocator just handed out.
+        let reused = unsafe { core::slice::from_raw_parts(user as *const u8, secret_len) };
+        assert!(reused.iter().all(|&byte| byte == 0), "freed supervisor pages leaked into a user allocation");
+    }
+
+    #[test]
+    fn test_page_allocator_checked_free_scrubs_pages() {
+        let fixture = AllocatorFixture::new();
+
+        let user = fixture.allocator.allocate_pages_with_type(1, AllocationType::User).unwrap();
+        // SAFETY: the fixture owns this range for the allocation's full size.
+        unsafe { core::slice::from_raw_parts_mut(user as *mut u8, UEFI_PAGE_SIZE) }.fill(0xC3);
+
+        assert_eq!(fixture.allocator.free_pages_checked(user, 1, AllocationType::User), Ok(()));
+
+        // SAFETY: as above; the range is still owned by the fixture after the free.
+        let scrubbed = unsafe { core::slice::from_raw_parts(user as *const u8, UEFI_PAGE_SIZE) };
+        assert!(scrubbed.iter().all(|&byte| byte == 0), "checked free left page contents behind");
+    }
+
+    #[test]
+    fn test_page_allocator_classifies_ranges_containment_misses() {
+        let fixture = AllocatorFixture::new();
+        let base = fixture.base;
+        let end = base + TEST_REGION_BYTES as u64;
+        let classify = |addr, size| fixture.allocator.classify_mmram(&range(addr, size));
+
+        // Wholly inside.
+        assert_eq!(classify(base, 0x1000), Some(MmramPlacement::Inside));
+        assert_eq!(classify(base, TEST_REGION_BYTES as u64), Some(MmramPlacement::Inside));
+
+        // Crossing either boundary. Containment alone reports these as not inside MMRAM, which is
+        // why an overlap check must use the partly-inside result.
+        assert_eq!(classify(base - 0x1000, 0x2000), Some(MmramPlacement::PartlyInside));
+        assert_eq!(classify(end - 0x1000, 0x2000), Some(MmramPlacement::PartlyInside));
+
+        // A range that swallows the whole region is also not "inside" it.
+        assert_eq!(classify(base - 0x1000, TEST_REGION_BYTES as u64 + 0x2000), Some(MmramPlacement::PartlyInside));
+
+        // Clear of the region on either side, and touching only its exclusive bounds.
+        assert_eq!(classify(base - 0x1000, 0x1000), Some(MmramPlacement::Outside));
+        assert_eq!(classify(end, 0x1000), Some(MmramPlacement::Outside));
+    }
+
+    #[test]
+    fn test_page_allocator_reports_overlap_before_it_knows_any_regions() {
+        // Nothing can be shown to lie either inside or outside MMRAM before the regions are
+        // scanned, so the layout is reported as unknown rather than guessed at.
+        let allocator = PageAllocator::new();
+
+        assert!(!allocator.is_initialized());
+        assert_eq!(allocator.classify_mmram(&range(0x1000, 0x1000)), None);
+    }
+
+    #[test]
+    fn test_page_allocator_checked_free_is_atomic_on_type_mismatch() {
+        test_support::init_test_logger();
+        let fixture = AllocatorFixture::new();
+        let mut state = fixture.allocator.lock_state();
+        let user = state.allocate(2, AllocationType::User).unwrap();
+
+        assert_eq!(
+            state.verify_allocated_with_type(user, 2, AllocationType::Supervisor),
+            Err(AllocError::TypeMismatch.into())
+        );
+        assert_eq!(state.allocation_type(user), Some(AllocationType::User));
+        assert_eq!(state.allocation_type(user + UEFI_PAGE_SIZE as u64), Some(AllocationType::User));
+
+        let bit_range =
+            state.verify_allocated_with_type(user, 2, AllocationType::User).expect("the range is user-allocated");
+        state.mark_free(bit_range);
+        assert_eq!(state.verify_allocated(user, 2), Err(AllocError::NotAllocated.into()));
+        assert_eq!(state.verify_allocated(user, 0), Err(AllocError::InvalidSize.into()));
+    }
+
+    #[test]
+    fn test_page_allocator_rejects_a_free_whose_page_count_overflows() {
+        let fixture = AllocatorFixture::new();
+        let state = fixture.allocator.lock_state();
+
+        // Starting one page into the region makes the page index plus the count overflow.
+        let second_page = fixture.base + UEFI_PAGE_SIZE as u64;
+        assert_eq!(state.verify_allocated(second_page, usize::MAX), Err(AllocError::InvalidAddress.into()));
+    }
+
+    #[test]
+    fn test_page_allocator_rejects_a_free_outside_every_region() {
+        let fixture = AllocatorFixture::new();
+        let state = fixture.allocator.lock_state();
+
+        // An address below the region start belongs to no region at all.
+        assert_eq!(state.verify_allocated(UEFI_PAGE_SIZE as u64, 1), Err(AllocError::InvalidAddress.into()));
+    }
+
+    #[test]
+    fn test_page_allocator_public_free_rejects_unaligned_addresses() {
+        let fixture = AllocatorFixture::new();
+        let unaligned = fixture.base + 1;
+
+        assert_eq!(fixture.allocator.free_pages(unaligned, 1), Err(AllocError::InvalidAlignment.into()));
+        assert_eq!(
+            fixture.allocator.free_pages_checked(unaligned, 1, AllocationType::User),
+            Err(AllocError::InvalidAlignment.into())
+        );
+    }
+
+    #[test]
+    fn test_page_allocator_public_free_reports_pages_that_are_not_allocated() {
+        test_support::init_test_logger();
+        let fixture = AllocatorFixture::new();
+        let last_page = fixture.base + (TEST_REGION_PAGES - 1) as u64 * UEFI_PAGE_SIZE as u64;
+
+        assert_eq!(fixture.allocator.free_pages(last_page, 1), Err(AllocError::NotAllocated.into()));
+        assert_eq!(
+            fixture.allocator.free_pages_checked(last_page, 1, AllocationType::User),
+            Err(AllocError::NotAllocated.into())
+        );
+    }
+
+    #[test]
+    fn test_page_allocator_marks_pre_allocated_regions_as_used() {
+        test_support::init_test_logger();
+        let mut memory = Box::new(AlignedRegion([0u8; TEST_REGION_BYTES]));
+        let base = memory.0.as_mut_ptr() as u64;
+        let half = (TEST_REGION_BYTES / 2) as u64;
+        let allocator = PageAllocator::new();
+        // The second half is handed over pre-allocated, so none of it is available.
+        let regions = [MmramRegion::new(range(base, half), false), MmramRegion::new(range(base + half, half), true)];
+
+        // SAFETY: `memory` is page-aligned, owned by this test, and covers both regions.
+        unsafe { allocator.init_from_regions(&regions).unwrap() };
+
+        assert_eq!(allocator.region_count(), 2);
+        assert_eq!(allocator.total_page_count(), TEST_REGION_PAGES);
+        // Every pre-allocated page plus the bookkeeping page is charged to the supervisor.
+        assert_eq!(allocator.allocated_page_count(AllocationType::Supervisor), TEST_REGION_PAGES / 2 + 1);
+        assert_eq!(allocator.free_page_count(), TEST_REGION_PAGES / 2 - 1);
+    }
+
+    #[test]
+    fn test_page_allocator_rejects_an_empty_allocation_request() {
+        let fixture = AllocatorFixture::new();
+
+        assert_eq!(
+            fixture.allocator.allocate_pages_with_type(0, AllocationType::User),
+            Err(AllocError::InvalidSize.into())
+        );
+    }
+
+    #[test]
+    fn test_page_allocator_reports_an_allocation_larger_than_the_region() {
+        let fixture = AllocatorFixture::new();
+
+        assert_eq!(
+            fixture.allocator.allocate_pages_with_type(TEST_REGION_PAGES + 1, AllocationType::User),
+            Err(AllocError::OutOfMemory.into())
+        );
+    }
+
+    #[test]
+    fn test_page_allocator_rejects_an_empty_region_list() {
+        let allocator = PageAllocator::new();
+
+        // SAFETY: an empty list is rejected before any region is read.
+        let result = unsafe { allocator.init_from_regions(&[]) };
+        assert_eq!(result, Err(AllocError::NotInitialized.into()));
+    }
+
+    #[test]
+    fn test_page_allocator_rejects_free_crossing_region_end() {
+        test_support::init_test_logger();
+        let fixture = AllocatorFixture::new();
+        let mut state = fixture.allocator.lock_state();
+        let allocation = state.allocate(TEST_REGION_PAGES - 1, AllocationType::User).unwrap();
+        let last_page = fixture.base + (TEST_REGION_PAGES - 1) as u64 * UEFI_PAGE_SIZE as u64;
+
+        assert_eq!(state.verify_allocated(last_page, 2), Err(AllocError::InvalidAddress.into()));
+        assert_eq!(state.verify_allocated(allocation, TEST_REGION_PAGES), Err(AllocError::InvalidAddress.into()));
+        assert_eq!(state.allocated_page_count(AllocationType::User), TEST_REGION_PAGES - 1);
+    }
+
+    #[test]
+    fn test_page_allocator_keeps_pages_allocated_when_they_cannot_be_unmapped() {
+        // A range that could not be made inaccessible must not go back into the pool: a later
+        // allocation would hand out memory that a stale mapping still reaches.
+        let fixture = AllocatorFixture::new();
+        let allocation = fixture.allocator.allocate_pages_with_type(2, AllocationType::User).unwrap();
+        let free_before = fixture.allocator.free_page_count();
+
+        let result = fixture
+            .allocator
+            .release_pages_with(allocation, 2, Some(AllocationType::User), |_, _| Err(AllocError::UnmapFailed.into()));
+
+        assert_eq!(result, Err(AllocError::UnmapFailed.into()));
+        assert_eq!(fixture.allocator.free_page_count(), free_before, "the failed range was returned to the pool");
+        assert_eq!(fixture.allocator.get_allocation_type(allocation), Some(AllocationType::User));
+        assert_eq!(fixture.allocator.allocated_page_count(AllocationType::User), 2);
+    }
+
+    #[test]
+    fn test_page_allocator_mmram_range_checks_do_not_overflow() {
+        let fixture = AllocatorFixture::new();
+        let state = fixture.allocator.lock_state();
+
+        assert_eq!(state.classify_mmram(&range(fixture.base, TEST_REGION_BYTES as u64)), MmramPlacement::Inside);
+        assert_eq!(
+            state.classify_mmram(&range(
+                fixture.base + TEST_REGION_BYTES as u64 - UEFI_PAGE_SIZE as u64,
+                2 * UEFI_PAGE_SIZE as u64
+            )),
+            MmramPlacement::PartlyInside
+        );
+        // A range ending at the top of the address space is classified without overflowing.
+        assert_eq!(state.classify_mmram(&range(u64::MAX - 2, 2)), MmramPlacement::Outside);
+    }
+
+    #[test]
+    fn test_page_allocator_collects_unaligned_hob_payload_safely() {
+        let descriptors = [
+            SmramDescriptor {
+                physical_start: 0x8000_0000,
+                cpu_start: 0x8000_0000,
+                physical_size: 2 * UEFI_PAGE_SIZE as u64,
+                region_state: 0,
+            },
+            SmramDescriptor {
+                physical_start: 0x9000_0000,
+                cpu_start: 0x9000_0000,
+                physical_size: UEFI_PAGE_SIZE as u64,
+                region_state: EFI_ALLOCATED,
+            },
+        ];
+        let payload = smram_hob_payload(descriptors.len() as u32, &descriptors);
+        let mut unaligned = vec![0xFF];
+        unaligned.extend_from_slice(&payload);
+        let mut scanned = ScannedRegions::new();
+
+        PageAllocator::collect_smram_regions(&unaligned[1..], &mut scanned).unwrap();
+
+        assert_eq!(
+            scanned.as_slice(),
+            [
+                MmramRegion::new(range(descriptors[0].physical_start, descriptors[0].physical_size), false),
+                MmramRegion::new(range(descriptors[1].physical_start, descriptors[1].physical_size), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_page_allocator_collect_rejects_descriptors_that_are_not_valid_ranges() {
+        // An empty descriptor, or one that runs past the end of the address space, never becomes a
+        // region, so nothing later has to check for either case.
+        for (physical_start, physical_size) in [(0x8000_0000, 0), (u64::MAX - 0xfff, 2 * UEFI_PAGE_SIZE as u64)] {
+            let descriptor =
+                SmramDescriptor { physical_start, cpu_start: physical_start, physical_size, region_state: 0 };
+            let payload = smram_hob_payload(1, &[descriptor]);
+            let mut scanned = ScannedRegions::new();
+
+            assert_eq!(
+                PageAllocator::collect_smram_regions(&payload, &mut scanned),
+                Err(AllocError::InvalidAddress.into())
+            );
+            assert!(scanned.as_slice().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_page_allocator_collect_clamps_truncated_descriptor_list() {
+        let descriptor = SmramDescriptor {
+            physical_start: 0x8000_0000,
+            cpu_start: 0x8000_0000,
+            physical_size: UEFI_PAGE_SIZE as u64,
+            region_state: 0,
+        };
+        let payload = smram_hob_payload(2, &[descriptor]);
+        let mut scanned = ScannedRegions::new();
+
+        PageAllocator::collect_smram_regions(&payload, &mut scanned).unwrap();
+
+        assert_eq!(scanned.as_slice().len(), 1);
+        assert_eq!(scanned.as_slice()[0].range.base(), descriptor.physical_start);
+    }
+
+    #[test]
+    fn test_page_allocator_collect_handles_short_payload_and_full_output() {
+        let descriptor = SmramDescriptor {
+            physical_start: 0x8000_0000,
+            cpu_start: 0x8000_0000,
+            physical_size: UEFI_PAGE_SIZE as u64,
+            region_state: 0,
+        };
+        let payload = smram_hob_payload(1, &[descriptor]);
+        let mut scanned = ScannedRegions::new();
+
+        PageAllocator::collect_smram_regions(&payload[..size_of::<SmramReserveHobData>() - 1], &mut scanned).unwrap();
+        assert!(scanned.as_slice().is_empty());
+
+        scanned.count = MAX_TEMP_REGIONS;
+        assert_eq!(PageAllocator::collect_smram_regions(&payload, &mut scanned), Err(AllocError::OutOfMemory.into()));
+    }
+
+    #[test]
+    fn test_page_allocator_calculates_bookkeeping_requirements() {
+        let valid = [MmramRegion::new(range(0x8000_0000, TEST_REGION_BYTES as u64), false)];
+        let allocated = [MmramRegion::new(range(0x8000_0000, TEST_REGION_BYTES as u64), true)];
+        let too_small = [MmramRegion::new(range(0x8000_0000, 1), false)];
+        let unaligned = [MmramRegion::new(range(0x8000_0001, TEST_REGION_BYTES as u64), false)];
+
+        assert_eq!(PageAllocator::calculate_bookkeeping(&valid), Ok((valid[0].range.base(), 1)));
+        assert_eq!(PageAllocator::calculate_bookkeeping(&allocated), Err(AllocError::OutOfMemory.into()));
+        assert_eq!(PageAllocator::calculate_bookkeeping(&too_small), Err(AllocError::OutOfMemory.into()));
+        assert_eq!(PageAllocator::calculate_bookkeeping(&unaligned), Err(AllocError::InvalidAlignment.into()));
+    }
+
+    #[test]
+    fn test_page_allocator_bookkeeping_rejects_a_page_total_that_overflows() {
+        // The descriptors are produced outside MMRAM, so the sizing has to survive a list that
+        // claims more pages than a usize can hold. Each region here claims the whole address
+        // space, and enough of them are present that the running total wraps. The sizing must
+        // report that rather than allocating a bookkeeping area too small for the bitmaps.
+        let pages_per_region = u64::MAX as usize / UEFI_PAGE_SIZE;
+        let regions_needed = usize::MAX / pages_per_region + 1;
+        let regions = vec![MmramRegion::new(range(0, u64::MAX), false); regions_needed];
+
+        assert_eq!(PageAllocator::calculate_bookkeeping(&regions), Err(AllocError::OutOfMemory.into()));
+    }
+
+    #[test]
+    fn test_page_allocator_span_classification_matches_the_committed_classifier() {
+        // The pre-paging HOB checks classify against the contiguous MMRAM span before the
+        // allocator commits, and later code uses the allocator. Both decide the same security
+        // questions, so a range must not be judged differently depending on which one is used.
+        let fixture = AllocatorFixture::new();
+        let base = fixture.base;
+        let page = UEFI_PAGE_SIZE as u64;
+        let span = TEST_REGION_BYTES as u64;
+
+        for (addr, size) in [
+            (base, page),
+            (base, span),
+            (base + span - page, page),
+            (base + span, page),
+            (base - page, page),
+            (base - page, span),
+            (base + span - page, span),
+        ] {
+            assert_eq!(
+                MmramPlacement::from(range(addr, size).coverage([range(base, span)])),
+                fixture.allocator.classify_mmram(&range(addr, size)).expect("fixture allocator is initialized"),
+                "classification diverged for 0x{addr:016x} size 0x{size:x}"
+            );
+        }
+    }
+}

@@ -887,3 +887,763 @@ impl<P: PlatformInfo> MmSupervisorCore<P> {
         Ok((save_state_info, mmi_entry_size))
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::error::MmSupervisorError;
+    use crate::hob::validation::HobValidationError;
+    use crate::{memory, test_support};
+    use crate::{
+        memory::{PageAllocator, PagingPoolAllocator},
+        state::InitState,
+    };
+    use patina::management_mode::supervisor::{MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_USER_GUID};
+    use patina::{management_mode::supervisor::MM_SUPERVISOR_CORE_GUID, pi::hob::PhaseHandoffInformationTable};
+    use patina_internal_cpu::save_state::PROCESSOR_INFO_ENTRY_SIZE;
+    use patina_paging::PageTable;
+    use serial_test::serial;
+    use std::panic::catch_unwind;
+
+    use crate::test_support::*;
+
+    #[test]
+    fn test_scan_hob_list_does_not_write_the_memory_it_describes() {
+        // Scanning must not commit to the producer's descriptors. Nothing in the memory they name
+        // may be touched until they have been anchored and validated, or a forged descriptor
+        // steers a write before anything has had the chance to reject it.
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        let hob_list = smram_hob_list(&memory);
+        let size = memory.size() as usize;
+        // SAFETY: `memory` is a live, exclusively owned allocation of `size` bytes and no
+        // references into it are held here.
+        unsafe { core::ptr::write_bytes(memory.base() as *mut u8, 0xa5, size) };
+
+        let scanned = scan_regions(&hob_list);
+
+        assert_eq!(scanned, [MmramRegion::new(memory.range(), false)]);
+        // SAFETY: the same live allocation, read through a shared view while nothing else
+        // references it.
+        let after_scan = unsafe { core::slice::from_raw_parts(memory.base() as *const u8, size) };
+        assert!(after_scan.iter().all(|byte| *byte == 0xa5), "scanning wrote into the memory the HOB list describes");
+
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let page_allocator = PageAllocator::new();
+        let paging_allocator = PagingPoolAllocator::new();
+        // SAFETY: the scanned descriptor references the live, exclusively owned `memory`.
+        unsafe { supervisor.init_page_allocators(&scanned, &page_allocator, &paging_allocator) }
+            .expect("the scanned region supports both allocators");
+
+        // SAFETY: the same live allocation, read after the allocator has finished with it.
+        let after_commit = unsafe { core::slice::from_raw_parts(memory.base() as *const u8, size) };
+        assert!(
+            after_commit.iter().any(|byte| *byte != 0xa5),
+            "committing left the bookkeeping region untouched, so the test proves nothing"
+        );
+    }
+
+    #[test]
+    fn test_init_page_allocators_commits_scanned_regions() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        let hob_list = smram_hob_list(&memory);
+        let scanned = scan_regions(&hob_list);
+        let page_allocator = PageAllocator::new();
+        let paging_allocator = PagingPoolAllocator::new();
+
+        assert_eq!(scanned, [MmramRegion::new(memory.range(), false)]);
+
+        // SAFETY: the scanned descriptor references the live, exclusively owned page-aligned
+        // `memory` allocation.
+        unsafe { supervisor.init_page_allocators(&scanned, &page_allocator, &paging_allocator) }
+            .expect("the scanned region supports both allocators");
+
+        assert!(page_allocator.is_initialized());
+        assert!(paging_allocator.is_initialized());
+        assert_eq!(paging_allocator.free_page_count(), memory::DEFAULT_PAGING_POOL_PAGES);
+    }
+
+    #[test]
+    fn test_init_page_allocators_reports_paging_pool_allocation_failure() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(2);
+        let hob_list = smram_hob_list(&memory);
+        let scanned = scan_regions(&hob_list);
+        let page_allocator = PageAllocator::new();
+        let paging_allocator = PagingPoolAllocator::new();
+
+        // SAFETY: the scanned descriptor references the live `memory` allocation.
+        let result = unsafe { supervisor.init_page_allocators(&scanned, &page_allocator, &paging_allocator) };
+
+        assert!(result.is_err(), "a region too small for the paging pool must be reported");
+        assert!(page_allocator.is_initialized());
+        assert!(!paging_allocator.is_initialized());
+    }
+
+    #[test]
+    fn test_init_page_allocators_reports_paging_allocator_failure() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let existing_pool = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES);
+        let paging_allocator = PagingPoolAllocator::new();
+        // SAFETY: `existing_pool` is page-aligned, exclusively owned, and remains alive.
+        unsafe {
+            paging_allocator
+                .init(existing_pool.base(), memory::DEFAULT_PAGING_POOL_PAGES)
+                .expect("pre-initialize paging allocator");
+        }
+
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        let hob_list = smram_hob_list(&memory);
+        let scanned = scan_regions(&hob_list);
+        let page_allocator = PageAllocator::new();
+
+        // SAFETY: the scanned descriptor references the live `memory` allocation.
+        let result = unsafe { supervisor.init_page_allocators(&scanned, &page_allocator, &paging_allocator) };
+
+        assert!(result.is_err(), "an already-initialized paging allocator must be reported");
+    }
+
+    #[test]
+    fn test_discover_and_store_user_entry_walks_real_hob_list() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let state = InitState::new();
+        let mut hob_list = RawHobList::new();
+        hob_list.push_struct(allocation_module(
+            MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+            MM_SUPERVISOR_USER_GUID,
+            0x1234_5678,
+        ));
+        let hob_list = hob_list.finish();
+        supervisor
+            .discover_and_store_user_entry(hob_list.handoff(), &state)
+            .expect("the synthetic HOB list is well formed");
+
+        assert_eq!(state.user_entry_point(), Some(0x1234_5678));
+    }
+
+    #[test]
+    fn test_discover_and_store_user_entry_reports_a_missing_module() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let state = InitState::new();
+        let hob_list = RawHobList::new().finish();
+
+        let result = supervisor.discover_and_store_user_entry(hob_list.handoff(), &state);
+
+        assert_eq!(result, Err(CoreInitError::UserEntryPointMissing.into()));
+        assert_eq!(state.user_entry_point(), None);
+    }
+
+    #[test]
+    #[serial]
+    fn test_publish_hob_list_to_user_copies_the_list_and_reclaims_whole_pages() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 32);
+        init_global_state_over(&memory);
+
+        // The producer's list starts mid-page, so only the whole pages inside it can be reclaimed.
+        let staging = security_state().page_allocator().allocate_pages(6).expect("staging pages");
+        let producer = staging + UEFI_PAGE_SIZE as u64 / 2;
+        let source = padded_hob_list(3 * UEFI_PAGE_SIZE);
+        // SAFETY: `source` is a valid HOB list and `producer` is inside a live six-page
+        // allocation that comfortably holds it.
+        let size = unsafe { hob::get_pi_hob_list_size(source.as_ptr()) };
+        // SAFETY: source and destination are separate live allocations of at least `size` bytes.
+        unsafe { core::ptr::copy_nonoverlapping(source.as_ptr().cast::<u8>(), producer as *mut u8, size) };
+
+        let reclaimed = MemoryRange::new(producer, size as u64)
+            .and_then(|list| list.align_inward(UEFI_PAGE_SIZE as u64))
+            .expect("the producer's list spans whole pages")
+            .pages() as usize;
+        assert_eq!(reclaimed, 2, "the producer's list must span whole pages for the reclaim to run");
+
+        let free_before = security_state().page_allocator().free_page_count();
+        // SAFETY: `producer` now holds a valid HOB list inside the committed MMRAM region, so it
+        // begins with a Phase Handoff Information Table that stays live for the borrow.
+        let handoff = unsafe { &*(producer as *const PhaseHandoffInformationTable) };
+        let copy = supervisor.publish_hob_list_to_user(handoff).expect("publishing the HOB list copy should succeed");
+
+        assert_ne!(copy, 0);
+        assert_eq!(security_state().page_allocator().get_allocation_type(copy), Some(AllocationType::User));
+
+        // SAFETY: `copy` is a live allocation of at least `size` bytes the supervisor just filled.
+        let published = unsafe { core::slice::from_raw_parts(copy as *const u8, size) };
+        // SAFETY: `source` is still live and holds the bytes the copy was taken from.
+        let original = unsafe { core::slice::from_raw_parts(source.as_ptr().cast::<u8>(), size) };
+        assert_eq!(published, original, "the published copy does not match the producer's list");
+
+        let copy_pages = uefi_size_to_pages!(size);
+        let tail = uefi_pages_to_size!(copy_pages) - size;
+        // SAFETY: the allocation is page-granular, so the slack after the list is live memory.
+        let slack = unsafe { core::slice::from_raw_parts((copy + size as u64) as *const u8, tail) };
+        assert!(slack.iter().all(|byte| *byte == 0), "the tail Ring 3 can read was not zeroed");
+
+        // The whole pages of the producer's list went back to the pool, offsetting the copy.
+        assert_eq!(security_state().page_allocator().free_page_count(), free_before - copy_pages + reclaimed);
+    }
+
+    #[test]
+    #[serial]
+    fn test_publish_hob_list_to_user_reports_a_failed_reclaim() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 32);
+        init_global_state_over(&memory);
+
+        // A user-owned staging range makes the supervisor-typed reclaim fail, which is reported
+        // rather than fatal: the copy the user core needs has already been published.
+        let staging =
+            security_state().page_allocator().allocate_pages_with_type(4, AllocationType::User).expect("staging pages");
+        let source = padded_hob_list(2 * UEFI_PAGE_SIZE);
+        // SAFETY: `source` is a valid HOB list.
+        let size = unsafe { hob::get_pi_hob_list_size(source.as_ptr()) };
+        // SAFETY: source and destination are separate live allocations of at least `size` bytes.
+        unsafe { core::ptr::copy_nonoverlapping(source.as_ptr().cast::<u8>(), staging as *mut u8, size) };
+
+        // SAFETY: `staging` now holds a valid HOB list inside the committed MMRAM region, so it
+        // begins with a Phase Handoff Information Table that stays live for the borrow.
+        let handoff = unsafe { &*(staging as *const PhaseHandoffInformationTable) };
+        let copy = supervisor.publish_hob_list_to_user(handoff).expect("publishing the HOB list copy should succeed");
+
+        assert_ne!(copy, 0);
+        // The reclaim was refused, so the producer's pages are still marked user-allocated.
+        assert_eq!(security_state().page_allocator().get_allocation_type(staging), Some(AllocationType::User));
+    }
+
+    #[test]
+    #[serial]
+    fn test_publish_hob_list_to_user_rejects_a_list_outside_mmram() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        init_global_state_over(&memory);
+
+        // A list placed outside the regions the producer described is refused before it is read,
+        // and reported as an error so the caller can see why.
+        let outside = padded_hob_list(0);
+
+        let result = supervisor.publish_hob_list_to_user(outside.handoff());
+
+        assert!(
+            matches!(result, Err(MmSupervisorError::HobValidation(HobValidationError::HobListOutsideMmram { .. }))),
+            "a HOB list outside MMRAM was published to Ring 3, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_map_cpl3_stacks_to_user_rejects_a_region_the_hob_does_not_describe() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+
+        // A zero base or per-core size, and a total that overflows, all mean the producer gave
+        // the supervisor nowhere to demote to. Each is reported rather than halting here, and
+        // each is refused before the region is looked up in the page table.
+        for (base, per_core_size, number_of_cores) in [(0, 0x2000, 4), (0x1000, 0, 4), (0x1000, u64::MAX, 4)] {
+            assert_eq!(
+                supervisor.map_cpl3_stacks_to_user(base, per_core_size, number_of_cores),
+                Err(CoreInitError::Cpl3StackRegionInvalid { base, per_core_size, number_of_cores }.into()),
+                "base 0x{base:x} size 0x{per_core_size:x} for {number_of_cores} cores should be refused"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_map_cpl3_stacks_to_user_rejects_a_region_outside_mmram() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        init_global_state_over(&memory);
+
+        // The producer names this range, so mapping it user-accessible without the MMRAM check
+        // would hand Ring 3 write access to whatever sits outside MMRAM at that address.
+        let outside = 0x1000;
+        let per_core_size = UEFI_PAGE_SIZE as u64;
+
+        let result = supervisor.map_cpl3_stacks_to_user(outside, per_core_size, 2);
+
+        assert_eq!(
+            result,
+            Err(CoreInitError::Cpl3StackRegionOutsideMmram {
+                range: MemoryRange::new(outside, 2 * per_core_size).unwrap()
+            }
+            .into())
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_publish_hob_list_to_user_refuses_to_publish_without_a_page_table() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        let hob_list = smram_hob_list(&memory);
+        let scanned = scan_regions(&hob_list);
+        // SAFETY: the scanned descriptor references the live, exclusively owned `memory`.
+        unsafe {
+            supervisor
+                .init_page_allocators(&scanned, security_state().page_allocator(), security_state().paging_allocator())
+                .expect("the scanned region supports both allocators");
+        }
+
+        // Without a page table the copy cannot be made read-only, so it must not be handed to
+        // Ring 3 writable instead.
+        let staging = security_state().page_allocator().allocate_pages(2).expect("staging pages");
+        let source = padded_hob_list(0);
+        // SAFETY: `source` is a valid HOB list.
+        let size = unsafe { hob::get_pi_hob_list_size(source.as_ptr()) };
+        // SAFETY: source and destination are separate live allocations of at least `size` bytes.
+        unsafe { core::ptr::copy_nonoverlapping(source.as_ptr().cast::<u8>(), staging as *mut u8, size) };
+
+        // SAFETY: `staging` holds a valid HOB list inside the committed MMRAM region, so it
+        // begins with a Phase Handoff Information Table that stays live for the borrow.
+        let handoff = unsafe { &*(staging as *const PhaseHandoffInformationTable) };
+        let result = supervisor.publish_hob_list_to_user(handoff);
+
+        // The refusal is reported rather than panicked, so the caller can see which step failed.
+        assert_eq!(
+            result,
+            Err(CoreInitError::PageTableUnavailable.into()),
+            "the HOB list copy was published without being mapped read-only"
+        );
+    }
+
+    #[test]
+    fn test_free_init_module_does_not_mark_missing_image_as_freed() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let state = InitState::new();
+        let hob_list = RawHobList::new().finish();
+
+        // Discovery reports the missing module rather than leaving the region unset.
+        let result = supervisor.discover_and_store_init_region(hob_list.handoff(), &state);
+        assert_eq!(result, Err(CoreInitError::InitModuleRegionMissing.into()));
+
+        assert_eq!(state.init_module_region(), None);
+        supervisor.free_init_module(&state);
+
+        assert!(!state.is_init_module_freed());
+    }
+
+    #[test]
+    fn test_discover_init_region_rejects_an_empty_allocation() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let state = InitState::new();
+        let mut init_module = allocation_module(HOB_MEMORY_ALLOC_MODULE_GUID, MM_SUPERVISOR_INIT_GUID, 0x10_0000);
+        init_module.alloc_descriptor.memory_length = 0;
+        let mut hobs = RawHobList::new();
+        hobs.push_struct(init_module);
+        let hob_list = hobs.finish();
+
+        assert_eq!(
+            supervisor.discover_and_store_init_region(hob_list.handoff(), &state),
+            Err(CoreInitError::InitModuleRegionInvalid { base: 0x10_0000, length: 0 }.into())
+        );
+        assert_eq!(state.init_module_region(), None);
+    }
+
+    #[test]
+    fn test_free_init_module_skips_already_freed_region() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let state = InitState::new();
+        state.mark_init_module_freed();
+
+        supervisor.free_init_module(&state);
+    }
+
+    #[test]
+    fn test_free_init_module_releases_mixed_code_and_data_exactly_once() {
+        let mapped = MappedInitModule::new();
+        let base = mapped.init_module.alloc_descriptor.memory_base_address;
+        let size = mapped.init_module.alloc_descriptor.memory_length as usize;
+        let image = MemoryRange::new(base, size as u64).unwrap();
+        let allocator = security_state().page_allocator();
+        let free_pages = allocator.free_page_count();
+        // SAFETY: the inactive test page table does not change the host allocation's writable mapping.
+        let bytes = unsafe { core::slice::from_raw_parts_mut(base as *mut u8, size) };
+        bytes.fill(0xA5);
+
+        mapped.free();
+
+        assert!(mapped.state.is_init_module_freed());
+        assert_eq!(allocator.free_page_count(), free_pages + 3);
+        assert!(bytes.iter().all(|&byte| byte == 0), "the page allocator must scrub the freed image");
+        {
+            let page_table = security_state().lock_page_table();
+            let page_table = page_table.as_ref().unwrap();
+            for address in image.step_by(PAGE_STEP) {
+                assert_eq!(allocator.get_allocation_type(address), None);
+                assert_eq!(
+                    page_table.query_memory_region(address, UEFI_PAGE_SIZE as u64),
+                    Err(patina_paging::PtError::NoMapping)
+                );
+            }
+            let core_base = mapped.core_module.alloc_descriptor.memory_base_address;
+            assert_eq!(allocator.get_allocation_type(core_base), Some(AllocationType::Supervisor));
+            assert_eq!(
+                page_table.query_memory_region(core_base, UEFI_PAGE_SIZE as u64).unwrap(),
+                MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly
+            );
+        }
+
+        assert_eq!(allocator.allocate_pages(3).unwrap(), base);
+        mapped.supervisor.free_init_module(&mapped.state);
+        assert_eq!(allocator.free_page_count(), free_pages);
+        assert_eq!(allocator.get_allocation_type(base), Some(AllocationType::Supervisor));
+    }
+
+    #[test]
+    fn test_free_init_module_uses_saved_region_after_hobs_are_reclaimed_and_reused() {
+        let mapped = MappedInitModule::new();
+        let allocator = security_state().page_allocator();
+        let producer = allocator.allocate_pages(4).unwrap();
+        let mut source = RawHobList::new();
+        source.push_struct(mapped.core_module);
+        source.push_struct(mapped.init_module);
+        source.push_guid_hob(MM_SUPERVISOR_CORE_GUID, &vec![0xcd_u8; 2 * UEFI_PAGE_SIZE]);
+        let source = source.finish();
+        // SAFETY: the separate producer allocation has room for this valid HOB list.
+        let size = unsafe {
+            let size = hob::get_pi_hob_list_size(source.as_ptr());
+            core::ptr::copy_nonoverlapping(source.as_ptr().cast::<u8>(), producer as *mut u8, size);
+            size
+        };
+        let free_before = allocator.free_page_count();
+        // SAFETY: the producer's HOB list and its synthetic image allocations remain live, so the
+        // list begins with a Phase Handoff Information Table that outlives the borrow.
+        let handoff = unsafe { &*(producer as *const PhaseHandoffInformationTable) };
+        mapped
+            .supervisor
+            .discover_and_store_init_region(handoff, &mapped.state)
+            .expect("the producer's HOB list describes an Init module");
+        let user_copy =
+            mapped.supervisor.publish_hob_list_to_user(handoff).expect("publishing the HOB list copy should succeed");
+
+        let init_base = mapped.init_module.alloc_descriptor.memory_base_address;
+        let init_size = mapped.init_module.alloc_descriptor.memory_length;
+        assert_eq!(mapped.state.init_module_region(), MemoryRange::new(init_base, init_size).ok());
+        assert!(!mapped.state.is_init_module_freed());
+        assert_eq!(allocator.get_allocation_type(init_base), Some(AllocationType::Supervisor));
+        let reclaimed_pages = size / UEFI_PAGE_SIZE;
+        let copy_pages = uefi_size_to_pages!(size);
+        assert_eq!(reclaimed_pages, 2);
+        assert_eq!(allocator.free_page_count(), free_before - copy_pages + reclaimed_pages);
+        for address in (producer..producer + uefi_pages_to_size!(reclaimed_pages) as u64).step_by(UEFI_PAGE_SIZE) {
+            assert_eq!(allocator.get_allocation_type(address), None);
+            assert_eq!(
+                security_state()
+                    .lock_page_table()
+                    .as_ref()
+                    .unwrap()
+                    .query_memory_region(address, UEFI_PAGE_SIZE as u64),
+                Err(patina_paging::PtError::NoMapping)
+            );
+        }
+
+        assert_eq!(allocator.allocate_pages(reclaimed_pages).unwrap(), producer);
+        // SAFETY: the old HOB pages are now a live, writable allocation used for unrelated data.
+        let reused =
+            unsafe { core::slice::from_raw_parts_mut(producer as *mut u8, uefi_pages_to_size!(reclaimed_pages)) };
+        reused.fill(0xA5);
+        mapped.supervisor.free_init_module(&mapped.state);
+
+        assert!(mapped.state.is_init_module_freed());
+        assert_eq!(allocator.get_allocation_type(init_base), None);
+        assert_eq!(allocator.free_page_count(), free_before - copy_pages + 3);
+        assert!(reused.iter().all(|&byte| byte == 0xA5), "runtime must not read or free the old HOB allocation");
+        assert_eq!(allocator.get_allocation_type(producer), Some(AllocationType::Supervisor));
+        assert_eq!(
+            allocator.get_allocation_type(mapped.core_module.alloc_descriptor.memory_base_address),
+            Some(AllocationType::Supervisor)
+        );
+        // SAFETY: the published user copy and `source` are both still readable.
+        assert_eq!(unsafe { core::slice::from_raw_parts(user_copy as *const u8, size) }, unsafe {
+            core::slice::from_raw_parts(source.as_ptr().cast::<u8>(), size)
+        });
+        assert_eq!(allocator.get_allocation_type(user_copy), Some(AllocationType::User));
+        assert_eq!(
+            security_state()
+                .lock_page_table()
+                .as_ref()
+                .unwrap()
+                .query_memory_region(user_copy, uefi_pages_to_size!(copy_pages) as u64),
+            Ok(MemoryAttributes::ReadOnly | MemoryAttributes::ExecuteProtect)
+        );
+    }
+
+    #[test]
+    fn test_init_policy_and_validate_reports_a_missing_pass_down_hob() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+
+        // The PassDown lookup is the first step, so initialization stops there. Lists that get
+        // past this point reach steps that touch real MMRAM, so the later required-HOB lookups are
+        // not reachable from a host test.
+        let without_pass_down = RawHobList::new().finish();
+
+        let result = supervisor.init_policy_and_validate(without_pass_down.handoff(), 2);
+        assert_eq!(result, Err(PassDownHobError::Missing.into()));
+        // The core count is recorded before the PassDown lookup.
+        assert_eq!(supervisor.number_of_cores(), 2);
+    }
+
+    #[test]
+    fn test_mp_information_cpu_count_reports_a_missing_hob() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let hob_list = RawHobList::new().finish();
+
+        let result = supervisor.mp_information_cpu_count(hob_list.handoff(), whole_address_space());
+
+        assert_eq!(result, Err(CoreInitError::MpInformationHobMissing.into()));
+    }
+
+    #[test]
+    fn test_mp_information_cpu_count_requires_the_payload_inside_mmram() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let hob_list = policy_hob_list_with_core_count(2, false);
+
+        assert_eq!(supervisor.mp_information_cpu_count(hob_list.handoff(), whole_address_space()), Ok(2));
+
+        // The list is on the host heap, so a one-page span at 0x1000 cannot hold its payload. It is
+        // rejected before a byte of it is read.
+        let mmram = MemoryRange::new(0x1000, UEFI_PAGE_SIZE as u64).unwrap();
+        assert_eq!(
+            supervisor.mp_information_cpu_count(hob_list.handoff(), mmram),
+            Err(CoreInitError::MpInformationHobOutsideMmram.into())
+        );
+    }
+
+    /// A span holding any host test buffer, standing in for MMRAM.
+    fn whole_address_space() -> MemoryRange {
+        MemoryRange::new(0, u64::MAX).unwrap()
+    }
+
+    #[test]
+    fn test_mp_information_cpu_count_takes_any_nonzero_count_the_payload_holds() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+
+        let empty = policy_hob_list_with_core_count(0, true);
+        assert_eq!(
+            supervisor.mp_information_cpu_count(empty.handoff(), whole_address_space()),
+            Err(CoreInitError::ZeroCoreCount.into())
+        );
+
+        // No compile-time capacity caps the count; the payload holds all five processor entries.
+        let five = policy_hob_list_with_core_count(5, true);
+        assert_eq!(supervisor.mp_information_cpu_count(five.handoff(), whole_address_space()), Ok(5));
+    }
+
+    #[test]
+    fn test_parse_mp_information_hob() {
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let processor_ids = [0x00_u64, 0x10, 0x20];
+        let mut data = [0_u8; 16 + 3 * PROCESSOR_INFO_ENTRY_SIZE];
+        data[..8].copy_from_slice(&(processor_ids.len() as u64).to_le_bytes());
+        for (cpu_index, processor_id) in processor_ids.iter().enumerate() {
+            let offset = 16 + cpu_index * PROCESSOR_INFO_ENTRY_SIZE;
+            data[offset..offset + 8].copy_from_slice(&processor_id.to_le_bytes());
+        }
+
+        assert_eq!(supervisor.parse_mp_information_hob(&data), Ok(3));
+    }
+
+    #[test]
+    fn test_parse_mp_information_hob_rejects_invalid_size() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let mut data = [0_u8; 16 + PROCESSOR_INFO_ENTRY_SIZE];
+
+        assert_eq!(
+            supervisor.parse_mp_information_hob(&data[..15]),
+            Err(CoreInitError::MpInformationHobMalformed.into())
+        );
+
+        data[..8].copy_from_slice(&2_u64.to_le_bytes());
+        assert_eq!(supervisor.parse_mp_information_hob(&data), Err(CoreInitError::MpInformationHobMalformed.into()));
+    }
+
+    #[test]
+    fn test_parse_mp_information_hob_rejects_invalid_core_count() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let mut data = [0_u8; 16];
+
+        data[..8].copy_from_slice(&0_u64.to_le_bytes());
+        assert_eq!(supervisor.parse_mp_information_hob(&data), Err(CoreInitError::ZeroCoreCount.into()));
+
+        // A count far beyond what the payload holds, including one that overflows the entry size,
+        // fails the payload bound.
+        for core_count in [5_u64, u64::MAX] {
+            data[..8].copy_from_slice(&core_count.to_le_bytes());
+            assert_eq!(
+                supervisor.parse_mp_information_hob(&data),
+                Err(CoreInitError::MpInformationHobMalformed.into())
+            );
+        }
+    }
+
+    #[test]
+    fn test_store_mm_initialized_slots_rejects_a_null_buffer() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+
+        // SAFETY: a null buffer fails the MMRAM check before anything is read.
+        let result = unsafe { supervisor.store_mm_initialized_slots(0, 2) };
+        assert_eq!(result, Err(CoreInitError::InitializedBufferInvalid.into()));
+        assert!(init_state().mm_initialized_buffer().is_none());
+    }
+
+    #[test]
+    fn test_store_mm_initialized_slots_rejects_zero_cores() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(1);
+
+        // The count is the length of the slot slice, so it is refused before the buffer is read.
+        // SAFETY: the count is rejected before `memory` is dereferenced.
+        let result = unsafe { supervisor.store_mm_initialized_slots(memory.base(), 0) };
+        assert_eq!(result, Err(CoreInitError::ZeroCoreCount.into()));
+        assert!(init_state().mm_initialized_buffer().is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn test_store_mm_initialized_slots_rejects_a_buffer_outside_mmram() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        test_support::init_global_state_over(&memory);
+
+        // Every core writes its own slot, so a buffer the MM IPL placed outside MMRAM would let
+        // anything outside MM report a core as initialized.
+        let outside = PageAlignedMemory::new(1);
+        // SAFETY: `outside` is a live page, and the call refuses it before building a slice.
+        let result = unsafe { supervisor.store_mm_initialized_slots(outside.base(), 2) };
+        assert_eq!(result, Err(CoreInitError::InitializedBufferInvalid.into()));
+        assert!(init_state().mm_initialized_buffer().is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn test_store_mm_initialized_slots_rejects_a_user_mapped_buffer() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        test_support::init_global_state_over(&memory);
+        security_state()
+            .lock_page_table()
+            .as_mut()
+            .expect("a page table is installed")
+            .map_memory_region(memory.base(), UEFI_PAGE_SIZE as u64, MemoryAttributes::ExecuteProtect)
+            .expect("map the buffer for Ring 3");
+
+        // Ring 3 could write a slot it can reach and make a core skip its first entry.
+        // SAFETY: `memory` is a live allocation inside MMRAM, and the call refuses it before
+        // building a slice.
+        let result = unsafe { supervisor.store_mm_initialized_slots(memory.base(), 2) };
+        assert_eq!(result, Err(CoreInitError::InitializedBufferInvalid.into()));
+        assert!(init_state().mm_initialized_buffer().is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn test_store_mm_initialized_slots_publishes_one_slot_per_cpu() {
+        test_support::init_test_logger();
+        let supervisor = MmSupervisorCore::<TestPlatform>::new();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        test_support::init_global_state_over(&memory);
+        test_support::map_supervisor_only(&memory);
+
+        // SAFETY: `memory` is a live allocation inside the MMRAM the allocators were built over,
+        // and it outlives the published slice for the rest of this test.
+        assert_eq!(unsafe { supervisor.store_mm_initialized_slots(memory.base(), 3) }, Ok(()));
+
+        let slots = init_state().mm_initialized_buffer().expect("the slots were published");
+        assert_eq!(slots.len(), 3);
+    }
+
+    #[test]
+    fn test_validate_init_code_page_requires_supervisor_readonly_executable() {
+        let code = MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly;
+        validate_init_code_page(0x1000, code);
+        validate_init_code_page(0x2000, MemoryAttributes::Supervisor | MemoryAttributes::ExecuteProtect);
+        for attributes in
+            [MemoryAttributes::Supervisor, MemoryAttributes::ReadOnly, code | MemoryAttributes::ReadProtect]
+        {
+            assert!(catch_unwind(|| validate_init_code_page(0x1000, attributes)).is_err());
+        }
+    }
+
+    #[test]
+    fn test_free_init_module_accepts_an_entirely_non_executable_image() {
+        let mapped = MappedInitModule::new();
+        let base = mapped.init_module.alloc_descriptor.memory_base_address;
+        let size = mapped.init_module.alloc_descriptor.memory_length;
+        security_state()
+            .lock_page_table()
+            .as_mut()
+            .unwrap()
+            .map_memory_region(base, size, MemoryAttributes::Supervisor | MemoryAttributes::ExecuteProtect)
+            .unwrap();
+
+        mapped.free();
+
+        assert!(mapped.state.is_init_module_freed());
+        assert_eq!(security_state().page_allocator().get_allocation_type(base), None);
+    }
+
+    #[test]
+    fn test_free_init_module_rejects_missing_page_table() {
+        let mapped = MappedInitModule::new();
+        *security_state().lock_page_table() = None;
+
+        mapped.assert_rejected("Page table required to validate MM Init module");
+    }
+
+    #[test]
+    fn test_free_init_module_rejects_an_unmapped_later_page() {
+        let mapped = MappedInitModule::new();
+        let last_page = mapped.init_module.alloc_descriptor.memory_base_address + 2 * UEFI_PAGE_SIZE as u64;
+        security_state()
+            .lock_page_table()
+            .as_mut()
+            .unwrap()
+            .unmap_memory_region(last_page, UEFI_PAGE_SIZE as u64)
+            .unwrap();
+
+        mapped.assert_rejected("Failed to query MM Init module page");
+    }
+
+    #[test]
+    fn test_free_init_module_rejects_unprotected_later_code_pages() {
+        let mapped = MappedInitModule::new();
+        let last_page = mapped.init_module.alloc_descriptor.memory_base_address + 2 * UEFI_PAGE_SIZE as u64;
+        for attributes in [MemoryAttributes::Supervisor, MemoryAttributes::ReadOnly] {
+            security_state()
+                .lock_page_table()
+                .as_mut()
+                .unwrap()
+                .map_memory_region(last_page, UEFI_PAGE_SIZE as u64, attributes)
+                .unwrap();
+            mapped.assert_rejected("must be supervisor-only, read-only and executable");
+        }
+    }
+
+    #[test]
+    fn test_free_init_module_does_not_mark_failed_free_as_complete() {
+        let mapped = MappedInitModule::new();
+        let base = mapped.init_module.alloc_descriptor.memory_base_address;
+        let size = mapped.init_module.alloc_descriptor.memory_length;
+        let allocator = security_state().page_allocator();
+        allocator.free_pages(base, 3).unwrap();
+        assert_eq!(allocator.allocate_pages_with_type(3, AllocationType::User).unwrap(), base);
+        security_state()
+            .lock_page_table()
+            .as_mut()
+            .unwrap()
+            .map_memory_region(base, size, MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly)
+            .unwrap();
+
+        mapped.assert_rejected("Failed to free MM Init module");
+    }
+}

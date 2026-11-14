@@ -241,3 +241,79 @@ impl<P: PlatformInfo> MmSupervisorCore<P> {
         Self::instance().cpu_manager.get_cpu_id_by_index(cpu_index).map(u64::from)
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    use serial_test::serial;
+
+    use super::super::CoreInitError;
+    use super::{core_already_initialized, is_core_initialized, mark_core_initialized};
+    use crate::state::init_state;
+    use crate::{MmSupervisorCore, PlatformInfo};
+
+    struct TestPlatform;
+
+    impl PlatformInfo for TestPlatform {}
+
+    #[test]
+    fn test_supervisor_creation_and_accessors() {
+        let supervisor: MmSupervisorCore<TestPlatform> = MmSupervisorCore::new();
+
+        // The per-core storage is only published by BSP initialization.
+        assert_eq!(supervisor.cpu_manager.get_cpu_id_by_index(0), None);
+        assert_eq!(supervisor.mailbox_manager.check_mailbox(0), None);
+        assert!(!supervisor.initialized.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_supervisor_is_const() {
+        static _SUPERVISOR: MmSupervisorCore<TestPlatform> = MmSupervisorCore::new();
+    }
+
+    #[test]
+    #[serial]
+    fn test_core_initialization_functions_handle_state_values_and_bounds() {
+        static SLOTS: [AtomicU8; 2] = [AtomicU8::new(0), AtomicU8::new(0)];
+
+        assert!(init_state().mm_initialized_buffer().is_none());
+        assert_eq!(is_core_initialized(0), Err(CoreInitError::InitializedBufferUnavailable.into()));
+        // The entry point reads the same missing buffer as a first entry, because nothing can have
+        // been initialized before the buffer that records it exists.
+        assert_eq!(core_already_initialized(0), Ok(false));
+        // Before the buffer is published the mark is reported rather than silently dropped.
+        assert_eq!(mark_core_initialized(0), Err(CoreInitError::InitializedBufferUnavailable.into()));
+
+        init_state().set_mm_initialized_buffer(&SLOTS);
+        assert_eq!(is_core_initialized(0), Ok(false));
+        assert_eq!(is_core_initialized(1), Ok(false));
+
+        SLOTS[1].store(0xFF, Ordering::Relaxed);
+        assert_eq!(is_core_initialized(1), Ok(true));
+        SLOTS[1].store(0, Ordering::Relaxed);
+
+        assert_eq!(mark_core_initialized(1), Ok(()));
+        assert_eq!(is_core_initialized(0), Ok(false));
+        assert_eq!(is_core_initialized(1), Ok(true));
+
+        // An out-of-range mark fails instead of corrupting an adjacent slot.
+        assert_eq!(
+            mark_core_initialized(SLOTS.len()),
+            Err(CoreInitError::CpuIndexOutOfRange { index: SLOTS.len(), len: SLOTS.len() }.into())
+        );
+        assert_eq!(
+            is_core_initialized(SLOTS.len()),
+            Err(CoreInitError::CpuIndexOutOfRange { index: SLOTS.len(), len: SLOTS.len() }.into())
+        );
+        // A bad index is a real fault and stays a fault, unlike an absent buffer.
+        assert_eq!(
+            core_already_initialized(SLOTS.len()),
+            Err(CoreInitError::CpuIndexOutOfRange { index: SLOTS.len(), len: SLOTS.len() }.into())
+        );
+        assert_eq!(is_core_initialized(0), Ok(false));
+        assert_eq!(is_core_initialized(1), Ok(true));
+        assert_eq!(core_already_initialized(1), Ok(true));
+    }
+}

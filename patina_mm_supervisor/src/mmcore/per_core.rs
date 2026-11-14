@@ -56,3 +56,79 @@ pub(crate) fn allocate_per_core_slice<T: Default>(
         Ok(core::slice::from_raw_parts(first, count))
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::test_support::{PageAlignedMemory, scan_regions, smram_hob_list};
+
+    fn page_allocator_over(memory: &PageAlignedMemory) -> PageAllocator {
+        let allocator = PageAllocator::new();
+        let hob_list = smram_hob_list(memory);
+        // SAFETY: the scanned descriptor references the live, exclusively owned `memory`.
+        unsafe { allocator.init_from_regions(&scan_regions(&hob_list)) }.expect("the region supports the allocator");
+        allocator
+    }
+
+    /// One cache line, the size of an `ApMailbox`.
+    #[derive(Default)]
+    #[repr(C, align(64))]
+    struct CacheLine(u8);
+
+    /// One page.
+    #[derive(Default)]
+    #[repr(C, align(4096))]
+    struct Page(u8);
+
+    /// A value whose default is not zero, so a written element can be told from fresh memory.
+    #[derive(Debug, PartialEq)]
+    struct Marker(u32);
+
+    impl Default for Marker {
+        fn default() -> Self {
+            Self(7)
+        }
+    }
+
+    #[test]
+    fn test_per_core_slice_rounds_up_to_whole_pages() {
+        let memory = Box::leak(Box::new(PageAlignedMemory::new(8)));
+        let allocator = page_allocator_over(memory);
+        let free_before = allocator.free_page_count();
+
+        // 65 cache lines are one line more than a page holds, so two pages are taken.
+        let slice = allocate_per_core_slice::<CacheLine>(&allocator, 65).expect("two pages are free");
+
+        assert_eq!(slice.len(), 65);
+        assert_eq!(slice.as_ptr().addr() % UEFI_PAGE_SIZE, 0);
+        assert_eq!(free_before - allocator.free_page_count(), 2);
+    }
+
+    #[test]
+    fn test_per_core_slice_sets_every_element_to_its_default() {
+        let memory = Box::leak(Box::new(PageAlignedMemory::new(8)));
+        let allocator = page_allocator_over(memory);
+
+        let slice = allocate_per_core_slice::<Marker>(&allocator, 3).expect("a page is free");
+
+        assert_eq!(slice, [Marker(7), Marker(7), Marker(7)]);
+    }
+
+    #[test]
+    fn test_per_core_slice_rejects_an_empty_or_overflowing_count() {
+        let memory = Box::leak(Box::new(PageAlignedMemory::new(8)));
+        let allocator = page_allocator_over(memory);
+
+        assert_eq!(allocate_per_core_slice::<u64>(&allocator, 0).err(), Some(AllocError::InvalidSize.into()));
+        assert_eq!(allocate_per_core_slice::<u64>(&allocator, usize::MAX).err(), Some(AllocError::InvalidSize.into()));
+    }
+
+    #[test]
+    fn test_per_core_slice_reports_a_count_the_allocator_cannot_hold() {
+        let memory = Box::leak(Box::new(PageAlignedMemory::new(4)));
+        let allocator = page_allocator_over(memory);
+
+        assert!(allocate_per_core_slice::<Page>(&allocator, 64).is_err());
+    }
+}

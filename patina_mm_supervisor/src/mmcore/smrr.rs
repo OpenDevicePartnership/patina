@@ -257,3 +257,140 @@ pub(crate) fn smrr_enable() {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_smrr_error_displays_each_variant() {
+        assert_eq!(format!("{}", SmrrError::MtrrUnsupported), "unsupported CPU: MTRRs are not supported");
+        assert_eq!(format!("{}", SmrrError::SmrrUnsupported), "unsupported CPU: SMRRs are not supported");
+        assert_eq!(
+            format!("{}", SmrrError::SmrrExtUnsupported),
+            "unsupported CPU: the extended SMRR capability is not supported"
+        );
+        assert_eq!(
+            format!("{}", SmrrError::SmmCodeAccessCheckUnsupported),
+            "unsupported CPU: SMM Code Access Check is not supported"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                SmrrError::RangeNotAddressable { range: MemoryRange::new(0x1_0000_0000, 0x80_0000).unwrap() }
+            ),
+            "SMRAM region 0x100000000..=0x1007fffff does not fit the 32-bit SMRR registers"
+        );
+        assert_eq!(
+            format!("{}", SmrrError::RangeNotAligned { range: MemoryRange::new(0x80_1000, 0x80_0000).unwrap() }),
+            "SMRAM region 0x801000..=0x1000fff does not meet the SMRR alignment and size requirements"
+        );
+    }
+
+    #[test]
+    fn test_smrr_verify_accepts_minimum_size() {
+        // A 4 KiB region at base 0 is the smallest valid configuration.
+        assert!(verify_smrr_base_size(&MemoryRange::new(0, UEFI_PAGE_SIZE as u64).unwrap()));
+    }
+
+    #[test]
+    fn test_smrr_verify_accepts_naturally_aligned_regions() {
+        // Base is naturally aligned to the (power-of-two) size.
+        for (base, size) in [(0x0080_0000, 0x0080_0000), (0x1000_0000, 0x1000_0000), (0x0000_8000, 0x1000)] {
+            assert!(verify_smrr_base_size(&MemoryRange::new(base, size).unwrap()), "0x{base:x} +0x{size:x}");
+        }
+    }
+
+    #[test]
+    fn test_smrr_verify_rejects_size_below_4kb() {
+        for size in [1, 0x800, 0xFFF] {
+            assert!(!verify_smrr_base_size(&MemoryRange::new(0, size).unwrap()), "size 0x{size:x}");
+        }
+    }
+
+    #[test]
+    fn test_smrr_verify_rejects_non_power_of_two_size() {
+        for size in [0x3000, 0x5000, 0x1001] {
+            assert!(!verify_smrr_base_size(&MemoryRange::new(0, size).unwrap()), "size 0x{size:x}");
+        }
+    }
+
+    #[test]
+    fn test_smrr_verify_requires_a_range_below_4gib() {
+        // A range may end exactly at 4 GiB.
+        assert!(verify_smrr_base_size(&MemoryRange::new(0xFF00_0000, 0x0100_0000).unwrap()));
+        // The mask cannot describe a 4 GiB size, and the registers cannot hold a base at or
+        // above 4 GiB.
+        for (base, size) in [(0, 1 << 32), (1 << 32, 0x1000), (1 << 33, 1 << 33)] {
+            assert!(!verify_smrr_base_size(&MemoryRange::new(base, size).unwrap()), "0x{base:x} +0x{size:x}");
+        }
+    }
+
+    #[test]
+    fn test_smrr_verify_rejects_misaligned_base() {
+        // Base must be aligned to the size; these are off by 4 KiB or unaligned.
+        for (base, size) in [(0x1000, 0x0080_0000), (0x0080_1000, 0x0080_0000), (0x1000, 0x2000)] {
+            assert!(!verify_smrr_base_size(&MemoryRange::new(base, size).unwrap()), "0x{base:x} +0x{size:x}");
+        }
+    }
+
+    #[test]
+    fn test_smrr_mask_reg_bit10_detection() {
+        assert!(!mask_reg_bit10_set(0));
+        assert!(!mask_reg_bit10_set(MASK_VALID_BIT));
+        assert!(mask_reg_bit10_set(MASK_BIT_10));
+        assert!(mask_reg_bit10_set(MASK_BIT_10 | MASK_VALID_BIT));
+    }
+
+    #[test]
+    fn test_smrr_capability_bits_are_decoded_from_raw_registers() {
+        assert!(!smm_code_access_supported(0));
+        assert!(!smm_code_access_supported(!SMM_CODE_ACCESS_CHK_BIT));
+        assert!(smm_code_access_supported(SMM_CODE_ACCESS_CHK_BIT));
+
+        assert!(!mtrr_supported(0));
+        assert!(!mtrr_supported(!CPUID_EDX_MTRR));
+        assert!(mtrr_supported(CPUID_EDX_MTRR));
+
+        // The two MTRR_CAP capabilities are reported by distinct bits.
+        assert!(!smrr_supported(0));
+        assert!(smrr_supported(MTRR_CAP_SMRR_BIT));
+        assert!(!smrr_supported(MTRR_CAP_SMRR_EXT_BIT));
+
+        assert!(!smrr_ext_supported(0));
+        assert!(smrr_ext_supported(MTRR_CAP_SMRR_EXT_BIT));
+        assert!(!smrr_ext_supported(MTRR_CAP_SMRR_BIT));
+    }
+
+    #[test]
+    fn test_smrr_feature_control_update_sets_both_bits_and_preserves_the_rest() {
+        let expected = SMM_CODE_CHK_EN_BIT | SMM_FEATURE_CONTROL_LOCK_BIT;
+        assert_eq!(smm_feature_control_update(0), Some(expected));
+        assert_eq!(smm_feature_control_update(SMM_CODE_CHK_EN_BIT), Some(expected));
+        assert_eq!(smm_feature_control_update(SMM_FEATURE_CONTROL_LOCK_BIT), Some(expected));
+        // Unrelated bits are carried through untouched.
+        assert_eq!(smm_feature_control_update(0x10), Some(expected | 0x10));
+    }
+
+    #[test]
+    fn test_smrr_feature_control_update_skips_the_write_when_already_locked() {
+        // Both bits already set, so the MSR write is suppressed as redundant.
+        assert_eq!(smm_feature_control_update(SMM_CODE_CHK_EN_BIT | SMM_FEATURE_CONTROL_LOCK_BIT), None);
+        assert_eq!(smm_feature_control_update(u64::MAX), None);
+    }
+
+    #[test]
+    fn test_smrr_enable_mask_sets_valid_and_bit10() {
+        assert_eq!(smrr_enable_mask(0), Some(MASK_VALID_BIT | MASK_BIT_10));
+        // The programmed range mask is preserved alongside the new bits.
+        assert_eq!(smrr_enable_mask(0xFF80_0000), Some(0xFF80_0000 | MASK_VALID_BIT | MASK_BIT_10));
+    }
+
+    #[test]
+    fn test_smrr_enable_mask_skips_a_mask_with_bit10_set() {
+        // With bit 10 already set, no write is issued.
+        assert_eq!(smrr_enable_mask(MASK_BIT_10), None);
+        assert_eq!(smrr_enable_mask(0xFF80_0000 | MASK_VALID_BIT | MASK_BIT_10), None);
+    }
+}

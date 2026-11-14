@@ -355,3 +355,256 @@ impl Default for MailboxManager {
         Self::new()
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::test_support::leaked_storage;
+
+    /// A manager with `slots` published mailboxes.
+    fn manager_with(slots: usize) -> MailboxManager {
+        let manager = MailboxManager::new();
+        manager.init(leaked_storage(slots)).expect("fresh storage is published");
+        manager
+    }
+
+    #[test]
+    fn test_mailbox_creation() {
+        let mailbox = ApMailbox::new();
+        // A fresh mailbox has nothing to take or read back.
+        assert_eq!(mailbox.take_command(), None);
+        assert_eq!(mailbox.get_response(), None);
+    }
+
+    #[test]
+    fn test_mailbox_defaults_match_new() {
+        // The manager is held in a static, so Default has to produce the same empty manager that
+        // new() does: no mailbox can be reached before storage is published.
+        let mailbox = ApMailbox::default();
+        assert_eq!(mailbox.take_command(), None);
+        assert_eq!(mailbox.get_response(), None);
+
+        let manager = MailboxManager::default();
+        assert_eq!(manager.check_mailbox(0), None);
+    }
+
+    #[test]
+    fn test_mailbox_is_const() {
+        // Verify we can create a static mailbox
+        static _MAILBOX: ApMailbox = ApMailbox::new();
+    }
+
+    #[test]
+    fn test_command_send_receive() {
+        let mailbox = ApMailbox::new();
+        let cmd = ApCommand { procedure: 0x1234, argument: 0x5678 };
+
+        // Send a command; a second send is rejected while one is pending.
+        assert!(mailbox.send_command(cmd));
+        assert!(!mailbox.send_command(cmd));
+
+        // Take the command, then post and read back the response.
+        assert_eq!(mailbox.take_command(), Some(cmd));
+        mailbox.post_response(ApResponse::Success);
+        assert_eq!(mailbox.get_response(), Some(ApResponse::Success));
+
+        // The mailbox is empty again: a fresh command can be sent.
+        assert!(mailbox.send_command(cmd));
+    }
+
+    #[test]
+    fn test_only_one_concurrent_sender_claims_the_mailbox() {
+        use std::sync::{Arc, Barrier};
+
+        const SENDERS: u64 = 4;
+
+        // Each sender's payload carries the same value in both fields, so a command assembled
+        // from two senders' writes is visible as a mismatched pair.
+        for _ in 0..64 {
+            let mailbox = Arc::new(ApMailbox::new());
+            let accepted = Arc::new(AtomicU32::new(0));
+            // Thread spawn alone lets each sender finish before the next starts, which hides the
+            // race entirely. Hold them until every one is ready.
+            let start = Arc::new(Barrier::new(SENDERS as usize));
+
+            let senders: Vec<_> = (1..=SENDERS)
+                .map(|sender_number| {
+                    let mailbox = Arc::clone(&mailbox);
+                    let accepted = Arc::clone(&accepted);
+                    let start = Arc::clone(&start);
+                    std::thread::spawn(move || {
+                        let value = sender_number * 0x1111_1111;
+                        start.wait();
+                        if mailbox.send_command(ApCommand { procedure: value, argument: value }) {
+                            accepted.fetch_add(1, Ordering::SeqCst);
+                        }
+                    })
+                })
+                .collect();
+            for sender in senders {
+                sender.join().expect("sender thread completes");
+            }
+
+            assert_eq!(accepted.load(Ordering::SeqCst), 1, "more than one sender claimed the mailbox");
+
+            let ApCommand { procedure, argument } = mailbox.take_command().expect("the accepted command is pending");
+            assert_eq!(procedure, argument, "payload was interleaved between senders");
+        }
+    }
+
+    #[test]
+    fn test_run_procedure_command() {
+        let mailbox = ApMailbox::new();
+
+        let cmd = ApCommand { procedure: 0xDEAD_BEEF, argument: 0x12345678 };
+
+        assert!(mailbox.send_command(cmd));
+        let received = mailbox.take_command();
+        assert!(matches!(received, Some(ApCommand { procedure: 0xDEAD_BEEF, argument: 0x12345678 })));
+    }
+
+    #[test]
+    fn test_mailbox_manager_is_const() {
+        // Verify we can create a static manager
+        static _MANAGER: MailboxManager = MailboxManager::new();
+    }
+
+    #[test]
+    fn test_mailbox_manager_has_no_mailboxes_before_init() {
+        let manager = MailboxManager::new();
+        let command = ApCommand { procedure: 0x1000, argument: 0x2000 };
+
+        assert_eq!(manager.send_command(0, command), Err(MailboxError::NotInitialized.into()));
+        assert_eq!(manager.check_mailbox(0), None);
+        assert_eq!(manager.wait_response(0, 0), None);
+    }
+
+    #[test]
+    fn test_mailbox_manager_publishes_storage_once() {
+        let manager = manager_with(2);
+        let command = ApCommand { procedure: 0x1000, argument: 0x2000 };
+        assert!(manager.send_command(1, command).is_ok());
+
+        // A second publication is refused, and the first storage, with its pending command, stays.
+        assert_eq!(manager.init(leaked_storage(8)), Err(MailboxError::AlreadyInitialized.into()));
+        assert_eq!(manager.check_mailbox(1), Some(command));
+        assert_eq!(
+            manager.send_command(2, command),
+            Err(MailboxError::NoMailboxForCpuIndex { index: 2, len: 2 }.into())
+        );
+    }
+
+    #[test]
+    fn test_mailbox_manager_rejects_an_unknown_cpu_index() {
+        let manager = manager_with(4);
+        let command = ApCommand { procedure: 0x1000, argument: 0x2000 };
+
+        // Slot 4 is past the end of a four slot manager.
+        assert_eq!(
+            manager.send_command(4, command),
+            Err(MailboxError::NoMailboxForCpuIndex { index: 4, len: 4 }.into())
+        );
+        assert_eq!(manager.check_mailbox(4), None);
+    }
+
+    #[test]
+    fn test_mailbox_manager_rejects_a_second_pending_command() {
+        let manager = manager_with(4);
+        let command = ApCommand { procedure: 0x1000, argument: 0x2000 };
+
+        assert!(manager.send_command(2, command).is_ok());
+        // The slot already holds a command that the AP has not taken yet.
+        assert_eq!(manager.send_command(2, command), Err(MailboxError::CommandAlreadyPending { index: 2 }.into()));
+
+        // A busy slot and a missing slot are different failures.
+        assert_ne!(
+            manager.send_command(2, command),
+            manager.send_command(4, command),
+            "a pending command and a missing mailbox must stay distinguishable"
+        );
+    }
+
+    #[test]
+    fn test_mailbox_error_displays_each_variant() {
+        assert_eq!(format!("{}", MailboxError::NotInitialized), "the mailbox storage has not been published yet");
+        assert_eq!(format!("{}", MailboxError::AlreadyInitialized), "the mailbox storage was already published");
+        assert_eq!(
+            format!("{}", MailboxError::NoMailboxForCpuIndex { index: 4, len: 4 }),
+            "CPU index 4 has no mailbox slot among the 4 available"
+        );
+        assert_eq!(
+            format!("{}", MailboxError::CommandAlreadyPending { index: 2 }),
+            "the mailbox for CPU index 2 still holds a command the AP has not taken"
+        );
+    }
+
+    #[test]
+    fn test_mailbox_manager() {
+        let manager = manager_with(4);
+
+        // Send a command to the AP occupying slot index 1.
+        let command = ApCommand { procedure: 0x1000, argument: 0x2000 };
+        assert!(manager.send_command(1, command).is_ok());
+
+        // Check mailbox
+        let cmd = manager.check_mailbox(1);
+        assert_eq!(cmd, Some(command));
+
+        // Post response
+        manager.post_response(1, ApResponse::Success);
+
+        // Wait for response
+        let resp = manager.wait_response(1, 1000);
+        assert_eq!(resp, Some(ApResponse::Success));
+    }
+
+    #[test]
+    fn test_mailbox_reset_forces_empty() {
+        let mailbox = ApMailbox::new();
+
+        // Put the mailbox into a stuck, non-empty state: a command was sent and
+        // picked up for processing, but no response was ever posted (hung AP).
+        assert!(mailbox.send_command(ApCommand { procedure: 0x1000, argument: 7 }));
+        let _ = mailbox.take_command();
+
+        // A fresh command cannot be sent while stuck.
+        assert!(!mailbox.send_command(ApCommand { procedure: 0x2000, argument: 8 }));
+
+        // Reset forces the mailbox back to empty, so a new command succeeds.
+        mailbox.reset();
+        assert!(mailbox.send_command(ApCommand { procedure: 0x2000, argument: 8 }));
+    }
+
+    #[test]
+    fn test_manager_reset_all_scrubs_every_mailbox() {
+        let manager = manager_with(4);
+
+        // Leave two different slots' mailboxes stuck in non-empty states.
+        assert!(manager.send_command(1, ApCommand { procedure: 0x10, argument: 0 }).is_ok());
+        let _ = manager.check_mailbox(1); // -> CommandRunning
+        assert!(manager.send_command(2, ApCommand { procedure: 0x20, argument: 0 }).is_ok()); // -> CommandReady
+
+        // Neither can accept a new command while stuck.
+        assert!(manager.send_command(1, ApCommand { procedure: 0x11, argument: 0 }).is_err());
+        assert!(manager.send_command(2, ApCommand { procedure: 0x21, argument: 0 }).is_err());
+
+        // The BSP's leave-time sweep clears every mailbox at once.
+        manager.reset_all();
+
+        // Both slots are dispatchable again.
+        assert!(manager.send_command(1, ApCommand { procedure: 0x11, argument: 0 }).is_ok());
+        assert!(manager.send_command(2, ApCommand { procedure: 0x21, argument: 0 }).is_ok());
+    }
+
+    #[test]
+    fn test_response_encoding() {
+        let responses = [ApResponse::None, ApResponse::Success, ApResponse::Error(42), ApResponse::Busy];
+
+        for resp in responses {
+            let encoded = u64::from(resp);
+            let decoded = ApResponse::from(encoded);
+            assert_eq!(resp, decoded);
+        }
+    }
+}

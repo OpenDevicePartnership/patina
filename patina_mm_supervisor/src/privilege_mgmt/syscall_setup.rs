@@ -173,14 +173,46 @@ impl Default for SyscallInterface {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_cpl3_stack_calculation() {
-        let interface: SyscallInterface<8> = SyscallInterface::new();
+    fn test_syscall_setup_error_displays_each_variant() {
+        assert_eq!(format!("{}", SyscallSetupError::NotInitialized), "the syscall interface has not been initialized");
+        assert_eq!(
+            format!("{}", SyscallSetupError::AlreadyInitialized),
+            "the syscall interface is already initialized"
+        );
+        assert_eq!(format!("{}", SyscallSetupError::InvalidCpuIndex), "the CPU index exceeds the configured CPU count");
+        assert_eq!(
+            format!("{}", SyscallSetupError::StackAddressOverflow),
+            "the CPL3 stack top does not fit in a 64-bit address"
+        );
+    }
 
-        // Initialize with known values: num_cpus=4, cpl3_stack_base=0x10000, stack_size=0x4000
+    #[test]
+    fn test_new_interface_is_uninitialized() {
+        let interface = SyscallInterface::new();
+
+        assert!(!interface.is_initialized());
+        // No stack can be handed out before the CPL3 stack array is known.
+        assert_eq!(interface.get_cpl3_stack(0), Err(SyscallSetupError::NotInitialized));
+    }
+
+    #[test]
+    fn test_default_interface_is_uninitialized() {
+        let interface = SyscallInterface::default();
+
+        assert!(!interface.is_initialized());
+        assert_eq!(interface.get_cpl3_stack(0), Err(SyscallSetupError::NotInitialized));
+    }
+
+    #[test]
+    fn test_cpl3_stack_calculation() {
+        let interface = SyscallInterface::new();
+
+        // Initialize with known values: number_of_cores=4, cpl3_stack_base=0x10000, stack_size=0x4000
         interface.init(4, 0x10000, 0x4000).unwrap();
 
         // CPU 0: base + 0x4000 * 1 - 8 = 0x10000 + 0x4000 - 8 = 0x13FF8
@@ -191,15 +223,38 @@ mod tests {
     }
 
     #[test]
+    fn test_cpl3_stacks_stay_within_their_own_region() {
+        const BASE: u64 = 0x10000;
+        const SIZE: u64 = 0x4000;
+        let interface = SyscallInterface::new();
+        interface.init(4, BASE, SIZE as usize).unwrap();
+
+        // Each CPU's stack pointer must sit at the top of its own slot, so no two CPUs can ever
+        // share a Ring 3 stack.
+        for cpu in 0..4u64 {
+            let stack = interface.get_cpl3_stack(cpu as usize).unwrap();
+            let region_start = BASE + SIZE * cpu;
+            let region_end = region_start + SIZE;
+
+            assert!(stack >= region_start, "CPU {cpu} stack 0x{stack:x} below its region");
+            assert!(stack < region_end, "CPU {cpu} stack 0x{stack:x} past its region");
+            assert_eq!(stack, region_end - core::mem::size_of::<usize>() as u64);
+        }
+    }
+
+    #[test]
     fn test_init_twice_fails() {
-        let interface: SyscallInterface<8> = SyscallInterface::new();
+        let interface = SyscallInterface::new();
         assert!(interface.init(4, 0x10000, 0x4000).is_ok());
         assert_eq!(interface.init(4, 0x10000, 0x4000), Err(SyscallSetupError::AlreadyInitialized));
+
+        // The original configuration survives the rejected re-initialization.
+        assert_eq!(interface.get_cpl3_stack(0).unwrap(), 0x13FF8);
     }
 
     #[test]
     fn test_invalid_cpu_index() {
-        let interface: SyscallInterface<8> = SyscallInterface::new();
+        let interface = SyscallInterface::new();
         interface.init(4, 0x10000, 0x4000).unwrap();
 
         assert_eq!(interface.get_cpl3_stack(4), Err(SyscallSetupError::InvalidCpuIndex));
@@ -207,9 +262,21 @@ mod tests {
     }
 
     #[test]
-    fn test_max_cpus_exceeded() {
-        let interface: SyscallInterface<4> = SyscallInterface::new();
-        // Try to init with more CPUs than the const generic allows
-        assert_eq!(interface.init(8, 0x10000, 0x4000), Err(SyscallSetupError::InvalidCpuIndex));
+    fn test_cpl3_stack_pointer_reports_overflow() {
+        // A malformed stack base or size from the PassDown HOB must neither panic the supervisor
+        // nor wrap to a stack pointer outside the stack array.
+        let interface = SyscallInterface::new();
+        interface.init(2, u64::MAX - 0x100, 0x1000).unwrap();
+        assert_eq!(interface.get_cpl3_stack(0), Err(SyscallSetupError::StackAddressOverflow));
+
+        // The per-CPU offset (stack size times CPU number) overflows on its own.
+        let interface = SyscallInterface::new();
+        interface.init(2, 0x10000, usize::MAX).unwrap();
+        assert_eq!(interface.get_cpl3_stack(1), Err(SyscallSetupError::StackAddressOverflow));
+
+        // A zero stack size would put the stack top below the base.
+        let interface = SyscallInterface::new();
+        interface.init(1, 0, 0).unwrap();
+        assert_eq!(interface.get_cpl3_stack(0), Err(SyscallSetupError::StackAddressOverflow));
     }
 }

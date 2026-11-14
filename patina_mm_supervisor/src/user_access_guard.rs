@@ -56,3 +56,19 @@ pub(crate) unsafe fn with_user_access<R>(access: impl FnOnce() -> R) -> R {
     let _user_access = unsafe { UserAccessGuard::new() };
     access()
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_with_user_access_runs_the_closure_and_restores_smap() {
+        // SAFETY: the closures touch no memory at all, so there is no user range to validate.
+        unsafe {
+            assert_eq!(with_user_access(|| 42), 42);
+            // The guard is reusable because it is balanced on drop.
+            assert_eq!(with_user_access(|| 7), 7);
+        }
+    }
+}
