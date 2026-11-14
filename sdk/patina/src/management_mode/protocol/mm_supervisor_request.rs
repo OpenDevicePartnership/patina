@@ -33,6 +33,11 @@ pub const REVISION: u32 = 1;
 pub const MM_SUPERVISOR_REQUEST_HANDLER_GUID: BinaryGuid =
     BinaryGuid::from_string("8c633b23-1260-4ea6-830f-7ddc97382111");
 
+// GUID for gMmSupvUnblockRegionHobGuid
+// { 0x3def51c5, 0x228f, 0x481d, { 0x82, 0x1b, 0x32, 0xec, 0x4d, 0xf7, 0xd9, 0xc7 } }
+/// GUID for the MM Supervisor Unblock Region HOB.
+pub const MM_SUPV_UNBLOCK_REGION_HOB_GUID: BinaryGuid = BinaryGuid::from_string("3def51c5-228f-481d-821b-32ec4df7d9c7");
+
 /// MM Supervisor request header.
 ///
 /// This header is present at the start of every supervisor request buffer. It identifies
@@ -74,7 +79,7 @@ impl MmSupervisorRequestHeader {
 
     /// Reads a header from a byte slice.
     ///
-    /// Returns `None` if the slice is too small or misaligned.
+    /// Returns `None` if the slice is too small.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         Self::read_from_bytes(bytes.get(..Self::SIZE)?).ok()
     }
@@ -118,7 +123,7 @@ impl MmSupervisorVersionInfo {
 
     /// Reads version info from a byte slice.
     ///
-    /// Returns `None` if the slice is too small or misaligned.
+    /// Returns `None` if the slice is too small.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         Self::read_from_bytes(bytes.get(..Self::SIZE)?).ok()
     }
@@ -140,9 +145,7 @@ pub enum RequestType {
 }
 
 impl RequestType {
-    /// Tries to convert a raw u64 value into a `RequestType`.
-    ///
-    /// Returns `Err(value)` if the value does not correspond to a valid request type.
+    /// Highest valid `RequestType` value.
     pub const MAX_REQUEST_TYPE: u64 = Self::CommUpdate as u64;
 }
 

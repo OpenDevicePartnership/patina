@@ -129,9 +129,14 @@ pub(crate) const TSS_SELECTOR: u16 = 8 * 8; // TSS descriptor at index 8
 
 static mut SEPARATE_EXCEPTION_STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
 
-/// 64-bit task state segment containing the interrupt-stack table.
+/// 64-bit task state segment.
+///
+/// In 64-bit mode the TSS is not used for task switching. It holds the stack pointers the CPU
+/// loads on a privilege change (RSP0-RSP2) and on an interrupt whose IDT entry names an
+/// interrupt stack table (IST) slot. The layout matches the Intel SDM (104 bytes).
 #[repr(C, packed)]
-pub(crate) struct TaskStateSegment {
+#[derive(zerocopy_derive::FromBytes, zerocopy_derive::IntoBytes, zerocopy_derive::Immutable)]
+pub struct TaskStateSegment {
     reserved0: u32,
     privilege_stacks: [u64; 3],
     reserved1: u64,
@@ -142,7 +147,9 @@ pub(crate) struct TaskStateSegment {
 }
 
 impl TaskStateSegment {
-    pub(crate) const fn new(ist1: u64) -> Self {
+    /// Creates a TSS whose IST1 entry is `ist1`, with every other stack pointer zero and no I/O
+    /// permission bitmap.
+    pub const fn new(ist1: u64) -> Self {
         Self {
             reserved0: 0,
             privilege_stacks: [0; 3],
@@ -154,6 +161,22 @@ impl TaskStateSegment {
         }
     }
 
+    /// Returns RSP0, the stack pointer the CPU loads when it enters Ring 0 from a less
+    /// privileged ring.
+    pub fn rsp0(&self) -> u64 {
+        // Copy the packed array out by value, so no unaligned reference is created.
+        let privilege_stacks = self.privilege_stacks;
+        privilege_stacks[0]
+    }
+
+    /// Sets RSP0, the stack pointer the CPU loads when it enters Ring 0 from a less privileged
+    /// ring.
+    pub fn set_rsp0(&mut self, rsp0: u64) {
+        let mut privilege_stacks = self.privilege_stacks;
+        privilege_stacks[0] = rsp0;
+        self.privilege_stacks = privilege_stacks;
+    }
+
     #[cfg(test)]
     pub(crate) fn ist1(&self) -> u64 {
         // SAFETY: `addr_of!` does not create an unaligned reference to the packed field.
@@ -162,6 +185,7 @@ impl TaskStateSegment {
 }
 
 const _: () = assert!(core::mem::size_of::<TaskStateSegment>() == 104);
+const _: () = assert!(core::mem::offset_of!(TaskStateSegment, privilege_stacks) == 4);
 const _: () = assert!(core::mem::offset_of!(TaskStateSegment, interrupt_stacks) == 36);
 
 static mut TSS: TaskStateSegment = TaskStateSegment::new(0);
@@ -263,5 +287,18 @@ mod tests {
             }
         }
         assert_eq!(GDT.len(), 11);
+    }
+
+    #[test]
+    fn test_gdt_tss_rsp0_round_trips_without_touching_other_fields() {
+        let mut tss = TaskStateSegment::new(0x1000);
+        assert_eq!(tss.rsp0(), 0);
+
+        tss.set_rsp0(0xFFFF_8000_0000_2000);
+
+        assert_eq!(tss.rsp0(), 0xFFFF_8000_0000_2000);
+        assert_eq!(tss.ist1(), 0x1000);
+        let io_map_base = tss.io_map_base;
+        assert_eq!(usize::from(io_map_base), core::mem::size_of::<TaskStateSegment>());
     }
 }

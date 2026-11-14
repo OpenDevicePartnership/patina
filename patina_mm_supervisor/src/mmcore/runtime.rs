@@ -1,0 +1,1418 @@
+//! `MmSupervisorCore` Runtime Phase
+//!
+//! The dispatch loop the BSP runs and the holding pen the APs wait in, entered
+//! on every MMI after the first. Each core returns to its caller once the BSP has
+//! served the request and every AP has left the holding pen.
+//!
+//! ## License
+//!
+//! Copyright (c) Microsoft Corporation.
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+
+use patina::standard::efi;
+use patina::{
+    MemoryRange,
+    management_mode::{
+        MmCommBufferStatus,
+        supervisor::{MmUserRequest, UserCommandType},
+    },
+    pi::{mm_cis::EfiMmEntryContext, protocol::communication::EfiMmCommunicateHeader},
+};
+
+use super::{
+    cpu::ApState,
+    mailbox::{ApCommand, ApResponse},
+    request_target::RequestTarget,
+};
+use crate::{
+    MmSupervisorCore, PlatformInfo,
+    comm_buffer::CommBufferConfig,
+    handlers::DEFAULT_SUPERVISOR_MMI_HANDLERS,
+    intrinsics::is_bsp,
+    memory::page_ownership::{PageOwnership, query_address_ownership},
+    privilege_mgmt::{DEMOTED_ROUTINE_ARG_COUNT, invoke_demoted_routine},
+    state::{init_state, security_state},
+    user_access_guard::with_user_access,
+};
+
+/// Timeout for waiting for APs to arrive in the holding pen (1 second).
+const AP_ARRIVAL_TIMEOUT_US: u64 = 1_000_000;
+
+/// Timeout for waiting for released APs to acknowledge leaving the holding pen (1 second).
+const AP_EXIT_TIMEOUT_US: u64 = 1_000_000;
+
+/// Timeout for waiting for an AP to complete a dispatched procedure (10 seconds).
+const AP_TIMEOUT_US: u64 = 10_000_000;
+
+impl<P: PlatformInfo> MmSupervisorCore<P> {
+    /// Serves one MMI on a core that has finished initialization.
+    ///
+    /// `cpu_id` is the APIC ID; `cpu_index` is the dense, 0-based UEFI processor index that
+    /// selects this CPU's per-core resources (Ring 3 stack, mailbox).
+    ///
+    /// Implements the MP synchronization protocol:
+    /// 1. APs check in by setting their state to `InHoldingPen` and entering the holding pen
+    /// 2. BSP waits for every AP the MP Information HOB reports, all cores must be in MM before servicing a request
+    /// 3. BSP processes the pending request via `bsp_request_loop`
+    /// 4. BSP releases every AP via the per-CPU rendezvous semaphore
+    /// 5. BSP waits, bounded by `AP_EXIT_TIMEOUT_US`, for every released AP to acknowledge it has left
+    /// 6. Each AP clears its `InHoldingPen` state and acknowledges the BSP
+    pub(crate) fn enter_runtime(&'static self, cpu_id: u32, cpu_index: usize) {
+        let is_bsp = is_bsp();
+
+        if is_bsp {
+            // An AP checks in only after it has registered and finished per-core init, so a full
+            // holding pen means every core the MP Information HOB reports is in this MMI.
+            let expected_aps = self.number_of_cores().saturating_sub(1);
+
+            // Wait for every AP to check in (set state to InHoldingPen).
+            self.wait_for_ap_arrival(expected_aps);
+
+            // Every AP is in MM, so the request can be served.
+            log::trace!("BSP (CPU {cpu_id}) entering request serving routine...");
+            self.bsp_request_loop(cpu_index);
+
+            // Exit barrier: release every penned AP and wait for each to acknowledge it has left.
+            log::trace!("BSP (CPU {cpu_id}) releasing all APs from the holding pen...");
+            self.cpu_manager.release_all_aps();
+            let acknowledged = self.cpu_manager.wait_for_ap_exit_acks(expected_aps, AP_EXIT_TIMEOUT_US);
+            assert!(
+                acknowledged == expected_aps,
+                "MM Supervisor fail-secure: only {acknowledged}/{expected_aps} APs acknowledged leaving the holding \
+                 pen within the exit window; refusing to resume the platform with cores still in MM"
+            );
+
+            self.mailbox_manager.reset_all();
+        } else {
+            // AP: check in by marking state, then enter holding pen.
+            self.cpu_manager.set_ap_state(cpu_id, ApState::InHoldingPen);
+            log::trace!("AP (CPU {cpu_id}) checked in, entering holding pen...");
+            self.ap_holding_pen(cpu_id);
+
+            // Check out: clear the InHoldingPen state and acknowledge the BSP.
+            self.cpu_manager.set_ap_state(cpu_id, ApState::NotPresent);
+            self.cpu_manager.ack_exit_to_bsp();
+        }
+    }
+
+    /// Waits for every AP the MP Information HOB reports to check in to the holding pen.
+    ///
+    /// ## Panics
+    ///
+    /// Panics if any AP misses the arrival window. Serving a request with only some of the cores
+    /// in MM is not safe.
+    fn wait_for_ap_arrival(&self, expected_aps: usize) {
+        if expected_aps == 0 {
+            return;
+        }
+
+        let all_arrived = super::perf_timer::spin_until(AP_ARRIVAL_TIMEOUT_US, || {
+            self.cpu_manager.count_aps_in_state(ApState::InHoldingPen) >= expected_aps
+        });
+
+        if all_arrived {
+            log::trace!("All {expected_aps} AP(s) arrived");
+        } else {
+            // Every core must be in the holding pen before the BSP serves a request, so a core that
+            // misses the window is a security-fatal condition.
+            let arrived = self.cpu_manager.count_aps_in_state(ApState::InHoldingPen);
+            panic!(
+                "MM Supervisor fail-secure: only {arrived}/{expected_aps} APs rendezvoused within the arrival window; \
+                 refusing to service the request with a partial set of cores"
+            );
+        }
+    }
+
+    /// Serves the pending request, if any, on the BSP.
+    ///
+    /// Reads the user and supervisor `MmCommBufferStatus` mailboxes and lets
+    /// [`RequestTarget::select`] pick the target. A user request is handled by demoting to the
+    /// user entry point, with a synchronous request's buffer copied into the user internal buffer
+    /// first. A supervisor request goes
+    /// to the supervisor handlers. When neither mailbox is valid the MMI is asynchronous and still
+    /// takes the user path, so the user core's async handlers run.
+    ///
+    /// Returns the target that was served, or [`RequestTarget::None`] when the communication
+    /// buffers are not set up yet.
+    fn bsp_request_loop(&self, cpu_index: usize) -> RequestTarget {
+        let config = match security_state().comm_buffer_config() {
+            Some(config) => config,
+            None => {
+                return RequestTarget::None;
+            }
+        };
+
+        // Bail out only if neither status mailbox is wired up yet.
+        if config.user.status_address == 0 && config.supervisor.status_address == 0 {
+            return RequestTarget::None;
+        }
+
+        // A mailbox that is not published reads as an all-zero (idle) status.
+        let user_status = if config.user.status_address != 0 {
+            // SAFETY: `config.user.status_address` is non-zero here and names an `MmCommBufferStatus`
+            // in non-MM memory that init checked is mapped supervisor-only. Code outside MM can
+            // change it, so it is read once into a local copy and only that copy is used.
+            unsafe { core::ptr::read_volatile(config.user.status_address as *const MmCommBufferStatus) }
+        } else {
+            MmCommBufferStatus::new()
+        };
+        let supv_status = if config.supervisor.status_address != 0 {
+            // SAFETY: as above, for the supervisor mailbox at `config.supervisor.status_address`.
+            unsafe { core::ptr::read_volatile(config.supervisor.status_address as *const MmCommBufferStatus) }
+        } else {
+            MmCommBufferStatus::new()
+        };
+
+        let target = RequestTarget::select(&user_status, &supv_status);
+
+        log::trace!(
+            "Processing request: user_valid={}, supv_valid={}, target={:?}",
+            user_status.is_comm_buffer_valid,
+            supv_status.is_comm_buffer_valid,
+            target
+        );
+
+        match target {
+            RequestTarget::None => {}
+            RequestTarget::User => {
+                // A synchronous user MMI or an async dispatch.
+                self.process_user_request(config, &user_status, cpu_index);
+            }
+            RequestTarget::Supervisor => {
+                self.process_supervisor_request(config, cpu_index);
+            }
+        }
+
+        target
+    }
+
+    /// Handles a request for the user core.
+    ///
+    /// 1. Builds a fresh `EfiMmEntryContext` with the current CPU index and CPU count
+    /// 2. Builds an `MmUserRequest` with that context, status, and internal buffer address/capacity
+    /// 3. Writes the handoff into the supervisor-to-user data buffer
+    /// 4. For synchronous MMIs, copies the user comm buffer to the internal copy
+    /// 5. Demotes to the user entry point via `invoke_demoted_routine`
+    /// 6. On return, copies back the user comm buffer and reads the updated status
+    /// 7. Writes the status to the user mailbox, rejecting a response larger than the buffer
+    fn process_user_request(&self, config: &CommBufferConfig, status: &MmCommBufferStatus, cpu_index: usize) {
+        // A valid user comm buffer marks a synchronous request. Otherwise the MMI is asynchronous.
+        let sync_mmi = status.is_comm_buffer_valid != 0;
+        log::trace!("Processing User request on CPU {cpu_index} (synchronous: {sync_mmi})");
+
+        if config.supv_to_user_buffer == 0 {
+            log::error!("Supervisor-to-user data buffer not configured");
+            return;
+        }
+
+        let user_entry = match init_state().user_entry_point() {
+            Some(entry) if entry != 0 => entry,
+            _ => {
+                log::error!("User entry point not configured, cannot demote");
+                return;
+            }
+        };
+
+        let cpl3_stack = match self.syscall_interface.get_cpl3_stack(cpu_index) {
+            Ok(stack) => stack,
+            Err(err) => {
+                log::error!("Failed to get CPL3 stack for CPU {cpu_index}: {err}");
+                return;
+            }
+        };
+
+        // Only the CPU fields are filled in. The C structure's pointers (mm_startup_this_ap,
+        // cpu_save_state, cpu_save_state_size) have no meaning here: the user core reaches those
+        // services through syscalls.
+        let entry_context = EfiMmEntryContext {
+            mm_startup_this_ap: 0,
+            currently_executing_cpu: cpu_index as u64,
+            number_of_cpus: self.number_of_cores() as u64,
+            cpu_save_state_size: 0,
+            cpu_save_state: 0,
+        };
+
+        let request = MmUserRequest {
+            entry_context,
+            status: *status,
+            comm_buffer_address: config.user.internal_address,
+            comm_buffer_size: config.user.size,
+        };
+        let request_size = core::mem::size_of::<MmUserRequest>() as u64;
+
+        if config.supv_to_user_buffer_size < request_size {
+            log::error!(
+                "Supervisor-to-user buffer too small: {} < {} (request handoff)",
+                config.supv_to_user_buffer_size,
+                request_size
+            );
+            return;
+        }
+
+        // SAFETY: the supervisor allocated this user-owned buffer and verified above that it
+        // holds the whole handoff. The store while SMAP is lifted stays inside that allocation.
+        unsafe {
+            with_user_access(|| {
+                core::ptr::write_unaligned(config.supv_to_user_buffer as *mut MmUserRequest, request);
+            });
+        }
+
+        if sync_mmi {
+            // Ring 3 works on the internal copy of the user buffer.
+            // SAFETY: both buffers are the user-owned communication buffers published by MM IPL,
+            // and both are `config.user.size` bytes, so the copy made while SMAP is lifted
+            // stays inside those user ranges.
+            unsafe {
+                with_user_access(|| {
+                    core::ptr::copy_nonoverlapping(
+                        config.user.external_address as *const u8,
+                        config.user.internal_address as *mut u8,
+                        config.user.size as usize,
+                    );
+                });
+            }
+            log::trace!(
+                "Copied {} bytes from user buffer 0x{:x} to internal 0x{:x}",
+                config.user.size,
+                config.user.external_address,
+                config.user.internal_address
+            );
+        }
+
+        // Arguments to the user entry point: the command type, the supervisor-to-user buffer
+        // (the complete request handoff), and the size of that handoff.
+        // SAFETY: `user_entry` was validated to be non-zero above and points to the user
+        // module entry published by MM IPL. `cpl3_stack` is the per-CPU Ring 3 stack returned
+        // by `get_cpl3_stack`. The arg count (3) matches the three argument values passed.
+        let ret = unsafe {
+            invoke_demoted_routine(
+                cpu_index,
+                user_entry,
+                cpl3_stack,
+                DEMOTED_ROUTINE_ARG_COUNT,
+                UserCommandType::UserRequest as u64,
+                config.supv_to_user_buffer,
+                request_size,
+            )
+        };
+        log::trace!("Returned from user request on CPU {cpu_index} with value: 0x{ret:016x}");
+
+        // Copy the response back out to the caller's buffer.
+        if sync_mmi {
+            // SAFETY: as for the copy in, both buffers are the user-owned communication buffers
+            // published by MM IPL and both are `config.user.size` bytes.
+            unsafe {
+                with_user_access(|| {
+                    core::ptr::copy_nonoverlapping(
+                        config.user.internal_address as *const u8,
+                        config.user.external_address as *mut u8,
+                        config.user.size as usize,
+                    );
+                });
+            }
+        }
+
+        // Only status is read back. Ring 3 cannot change the supervisor's buffer configuration
+        // by editing the handoff's address or capacity.
+        // SAFETY: the buffer was verified above to hold an `MmUserRequest`, including its status.
+        let returned_status = unsafe {
+            with_user_access(|| {
+                core::ptr::addr_of!((*(config.supv_to_user_buffer as *const MmUserRequest)).status).read_unaligned()
+            })
+        };
+
+        // Clearing is_comm_buffer_valid marks the request as complete.
+        let mut final_status = returned_status;
+        final_status.is_comm_buffer_valid = 0;
+
+        // Ring 3 filled in `return_buffer_size`, and the non-MM caller uses it to read the
+        // response out of the communication buffer. If it runs past the end of that buffer, the
+        // supervisor cannot tell which bytes the user core meant, and truncating would return
+        // part of a response it never agreed to send. Report the failure and return nothing.
+        if final_status.return_buffer_size > config.user.size {
+            log::error!(
+                "User module reported a 0x{:x}-byte response for a 0x{:x}-byte communication buffer; rejecting",
+                final_status.return_buffer_size,
+                config.user.size
+            );
+            final_status.return_status = efi::Status::BAD_BUFFER_SIZE.as_usize() as u64;
+            final_status.return_buffer_size = 0;
+        }
+
+        // SAFETY: `config.user.status_address` is the user status mailbox from the comm buffer HOB, which
+        // is valid and writable.
+        unsafe {
+            let status_ptr = config.user.status_address as *mut MmCommBufferStatus;
+            core::ptr::write_volatile(status_ptr, final_status);
+        }
+    }
+
+    /// Handles a request for the supervisor.
+    ///
+    /// Matches the GUID in the [`EfiMmCommunicateHeader`] against the core's built-in handlers
+    /// and then the platform handlers from [`PlatformInfo::mmi_handlers`], and invokes the first
+    /// match. Steps:
+    ///
+    /// 0. Reject the request with `ACCESS_DENIED` if `ExitBootServices` has already been signaled
+    /// 1. Zero the internal buffer and copy the external supervisor buffer into it
+    /// 2. Parse the `EfiMmCommunicateHeader` (GUID and message length) from the internal buffer
+    /// 3. Validate message length does not exceed the buffer size
+    /// 4. Iterate the default handlers then [`PlatformInfo::mmi_handlers`] to find a handler
+    ///    matching the header GUID
+    /// 5. Call the handler with a pointer to the data payload and mutable size
+    /// 6. Refuse the request if the handler reported more than the payload space it was given
+    /// 7. Copy the internal buffer back to the external buffer
+    /// 8. Update the status buffer with return status and total response size
+    fn process_supervisor_request(&self, config: &CommBufferConfig, cpu_index: usize) {
+        log::trace!("Processing Supervisor request on CPU {cpu_index}...");
+
+        if init_state().is_at_runtime() {
+            log::error!("Supervisor buffer cannot be used for communication after ExitBootServices is signaled!!");
+            self.write_supv_status(config, efi::Status::ACCESS_DENIED, 0);
+            return;
+        }
+
+        let buffer_size = config.supervisor.size as usize;
+
+        // SAFETY: both supervisor buffers come from the comm region HOB set up during init. Each
+        // is `buffer_size` bytes and they do not overlap.
+        unsafe {
+            core::ptr::write_bytes(config.supervisor.internal_address as *mut u8, 0, buffer_size);
+            core::ptr::copy_nonoverlapping(
+                config.supervisor.external_address as *const u8,
+                config.supervisor.internal_address as *mut u8,
+                buffer_size,
+            );
+        }
+
+        // Parse the EfiMmCommunicateHeader from the internal buffer
+        if buffer_size < EfiMmCommunicateHeader::size() {
+            log::error!(
+                "Supervisor buffer too small for communicate header: {} < {}",
+                buffer_size,
+                EfiMmCommunicateHeader::size()
+            );
+            self.write_supv_status(config, efi::Status::BAD_BUFFER_SIZE, 0);
+            return;
+        }
+
+        // SAFETY: the buffer holds at least a header, checked above. The header is packed, so it
+        // is read unaligned.
+        let header =
+            unsafe { core::ptr::read_unaligned(config.supervisor.internal_address as *const EfiMmCommunicateHeader) };
+
+        let message_length = header.message_length();
+
+        // Validate message length doesn't exceed the buffer
+        if message_length > buffer_size.saturating_sub(EfiMmCommunicateHeader::size()) {
+            log::error!(
+                "Message length 0x{:x} exceeds available buffer space 0x{:x}",
+                message_length,
+                buffer_size - EfiMmCommunicateHeader::size()
+            );
+            self.write_supv_status(config, efi::Status::BAD_BUFFER_SIZE, 0);
+            return;
+        }
+
+        // The payload follows the header.
+        // SAFETY: `config.supervisor.internal_address` is a valid buffer of `buffer_size` bytes, and
+        // `buffer_size >= EfiMmCommunicateHeader::size()` was checked above, so offsetting by
+        // the header size stays within the same allocation.
+        let data_ptr = unsafe { (config.supervisor.internal_address as *mut u8).add(EfiMmCommunicateHeader::size()) };
+        let mut data_size = message_length;
+
+        let handler_guid = header.header_guid();
+        let handler = DEFAULT_SUPERVISOR_MMI_HANDLERS
+            .iter()
+            .chain(P::mmi_handlers().iter())
+            .find(|handler| handler.handler_guid == handler_guid);
+
+        // A handler may itself return `NOT_FOUND`, so the warning keys off the lookup, not the
+        // status.
+        let dispatch_status = if let Some(handler) = handler {
+            log::trace!(
+                "Dispatching supervisor request to handler '{}' (GUID: {:?})",
+                handler.name,
+                handler.handler_guid
+            );
+            // SAFETY: `data_ptr` points to the payload after the header, and `data_size` is the
+            // message length checked above to fit the internal buffer, which the supervisor owns.
+            unsafe { (handler.handle)(data_ptr, &mut data_size) }
+        } else {
+            log::warn!("No handler found for supervisor request GUID: {handler_guid:?}");
+            efi::Status::NOT_FOUND
+        };
+
+        // A handler reports its response length back through `data_size`. A value past the
+        // payload space it was given describes a response that was never written, so there is no
+        // prefix worth copying out: report the failure and return nothing rather than handing the
+        // non-MM caller a length that runs past the end of the communication buffer.
+        let max_data_size = buffer_size - EfiMmCommunicateHeader::size();
+        if data_size > max_data_size {
+            log::error!(
+                "Handler reported a 0x{data_size:x}-byte response for 0x{max_data_size:x} bytes of payload space; \
+                 rejecting"
+            );
+            self.write_supv_status(config, efi::Status::BAD_BUFFER_SIZE, 0);
+            return;
+        }
+
+        let total_response_size = data_size + EfiMmCommunicateHeader::size();
+
+        // SAFETY: both buffers are `buffer_size` bytes and an oversized `data_size` returned
+        // above, so `total_response_size` is at most `buffer_size` and the copy stays inside
+        // both allocations.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                config.supervisor.internal_address as *const u8,
+                config.supervisor.external_address as *mut u8,
+                total_response_size,
+            );
+        }
+        log::trace!(
+            "Copied {} bytes from internal buffer 0x{:x} back to external 0x{:x}",
+            total_response_size,
+            config.supervisor.internal_address,
+            config.supervisor.external_address
+        );
+
+        // Any handler failure is reported to the caller as NOT_FOUND.
+        let return_status =
+            if dispatch_status == efi::Status::SUCCESS { efi::Status::SUCCESS } else { efi::Status::NOT_FOUND };
+        self.write_supv_status(config, return_status, total_response_size as u64);
+    }
+
+    /// Writes the supervisor status mailbox: clears `is_comm_buffer_valid` and records the
+    /// return status and response size.
+    fn write_supv_status(&self, config: &CommBufferConfig, return_status: efi::Status, return_buffer_size: u64) {
+        // SAFETY: `config.supervisor.status_address` is the supervisor status mailbox from the comm region
+        // HOB, which is valid and writable.
+        unsafe {
+            let status_ptr = config.supervisor.status_address as *mut MmCommBufferStatus;
+            let updated = MmCommBufferStatus {
+                is_comm_buffer_valid: 0,
+                _padding: [0; 7],
+                return_status: return_status.as_usize() as u64,
+                return_buffer_size,
+            };
+            core::ptr::write_volatile(status_ptr, updated);
+        }
+    }
+
+    /// Runs the procedures the BSP posts to this AP's mailbox until the BSP releases this AP
+    /// through its rendezvous semaphore.
+    fn ap_holding_pen(&'static self, cpu_id: u32) {
+        // Each CPU owns the mailbox at its dense slot index.
+        let cpu_index = if let Some(idx) = self.cpu_manager.find_cpu_index(cpu_id) {
+            idx
+        } else {
+            log::error!("AP (CPU {cpu_id}) has no registered slot; skipping holding pen");
+            return;
+        };
+        log::trace!("AP (CPU {cpu_id}) in holding pen, polling mailbox...");
+
+        loop {
+            if let Some(command) = self.mailbox_manager.check_mailbox(cpu_index) {
+                log::trace!("AP (CPU {cpu_id}) received command: {command:?}");
+
+                let response = self.execute_ap_command(cpu_id, &command);
+                self.mailbox_manager.post_response(cpu_index, response);
+            }
+
+            if self.cpu_manager.take_release_by_index(cpu_index) {
+                break;
+            }
+            core::hint::spin_loop();
+        }
+
+        log::trace!("AP (CPU {cpu_id}) exiting holding pen");
+    }
+
+    /// Runs a command received by an AP, marking the AP busy while it runs.
+    fn execute_ap_command(&self, cpu_id: u32, command: &ApCommand) -> ApResponse {
+        let ApCommand { procedure, argument } = *command;
+        self.cpu_manager.set_ap_state(cpu_id, ApState::Busy);
+        let response = self.run_procedure_on_ap(cpu_id, procedure, argument);
+        self.cpu_manager.set_ap_state(cpu_id, ApState::InHoldingPen);
+        response
+    }
+
+    /// Runs a procedure on an AP, demoting to Ring 3 if the procedure is user-owned.
+    ///
+    /// This is the AP side of [`ApCommand`] and mirrors the C `ProcedureWrapper`: it
+    /// checks who owns the procedure's page and either calls it directly (supervisor-owned) or
+    /// demotes to Ring 3 (user-owned).
+    ///
+    /// Choosing the ring from the address is sound only because `handle_start_ap_proc` refuses a
+    /// procedure that is not user-owned, so nothing Ring 3 named can reach the supervisor branch.
+    fn run_procedure_on_ap(&self, cpu_id: u32, procedure: u64, argument: u64) -> ApResponse {
+        log::trace!("AP (CPU {cpu_id}) running procedure 0x{procedure:x} with arg 0x{argument:x}");
+
+        if procedure == 0 {
+            log::error!("AP (CPU {cpu_id}) received null procedure pointer");
+            return ApResponse::Error(efi::Status::INVALID_PARAMETER.as_usize() as u32);
+        }
+
+        let procedure_range = MemoryRange::new(procedure, core::mem::size_of::<usize>() as u64).ok();
+        let is_user_range = match procedure_range.and_then(|range| query_address_ownership(&range)) {
+            Some(PageOwnership::User) => true,
+            Some(PageOwnership::Supervisor) => false,
+            None => {
+                log::error!(
+                    "AP (CPU {cpu_id}) failed to query ownership for 0x{procedure:x} (unmapped or page table not ready)"
+                );
+                return ApResponse::Error(efi::Status::DEVICE_ERROR.as_usize() as u32);
+            }
+        };
+
+        if is_user_range {
+            let cpu_index = if let Some(idx) = self.cpu_manager.find_cpu_index(cpu_id) {
+                idx
+            } else {
+                log::error!("AP (CPU {cpu_id}) has no registered slot, cannot demote");
+                return ApResponse::Error(efi::Status::DEVICE_ERROR.as_usize() as u32);
+            };
+
+            let cpl3_stack = match self.syscall_interface.get_cpl3_stack(cpu_index) {
+                Ok(stack) => stack,
+                Err(err) => {
+                    log::error!("AP (CPU {cpu_id}) failed to get CPL3 stack: {err}");
+                    return ApResponse::Error(efi::Status::DEVICE_ERROR.as_usize() as u32);
+                }
+            };
+
+            let user_entry = match init_state().user_entry_point() {
+                Some(entry) if entry != 0 => entry,
+                _ => {
+                    log::error!("User entry point not configured, cannot demote AP (CPU {cpu_id})");
+                    return ApResponse::Error(efi::Status::DEVICE_ERROR.as_usize() as u32);
+                }
+            };
+
+            // The user core calls the procedure as void (EFIAPI *)(void *ProcedureArgument).
+            log::trace!(
+                "AP (CPU {cpu_id}) demoting to user: proc=0x{procedure:x}, stack=0x{cpl3_stack:x}, arg=0x{argument:x}"
+            );
+
+            // SAFETY: `user_entry` was validated to be non-zero above and points to the user
+            // module entry published by MM IPL. `cpl3_stack` is the per-CPU Ring 3 stack
+            // returned by `get_cpl3_stack`. The arg count (3) matches the three argument values
+            // passed.
+            let ret = unsafe {
+                invoke_demoted_routine(
+                    cpu_index,
+                    user_entry,
+                    cpl3_stack,
+                    DEMOTED_ROUTINE_ARG_COUNT,
+                    UserCommandType::UserApProcedure as u64,
+                    procedure,
+                    argument,
+                )
+            };
+
+            log::trace!("AP (CPU {cpu_id}) returned from demoted procedure: 0x{ret:x}");
+            ApResponse::Success
+        } else {
+            log::trace!("AP (CPU {cpu_id}) calling supervisor procedure directly at 0x{procedure:x}");
+
+            type EfiApProcedure = unsafe extern "efiapi" fn(*mut core::ffi::c_void);
+            // SAFETY: The procedure pointer was validated to be non-null above and points to a
+            // supervisor-owned (Ring 0) function following the `EfiApProcedure` ABI.
+            let proc_fn: EfiApProcedure = unsafe { core::mem::transmute(procedure) };
+            // SAFETY: `procedure` is a supervisor-owned (Ring 0) address validated by the BSP and
+            // matching the `EfiApProcedure` ABI, so calling it with the provided argument is sound.
+            unsafe { proc_fn(argument as *mut core::ffi::c_void) };
+
+            ApResponse::Success
+        }
+    }
+
+    /// Type-erased trampoline for AP startup, called from the syscall dispatcher.
+    ///
+    /// It is instantiated for the concrete `P: PlatformInfo` type and stored as a
+    /// `fn(u64, u64, u64) -> u64` through
+    /// [`InitState::set_ap_startup_fn`](crate::state::InitState::set_ap_startup_fn), which is how
+    /// the dispatcher reaches the supervisor without naming its generic parameters.
+    pub(crate) fn start_ap_procedure_trampoline(cpu_index: u64, procedure: u64, argument: u64) -> u64 {
+        let core = Self::instance();
+        core.start_ap_procedure(cpu_index, procedure, argument)
+    }
+
+    /// Validates a procedure and runs it on one AP, waiting for it to finish.
+    ///
+    /// Follows the C `InternalSmmStartupThisAp`:
+    /// 1. CPU index is below the core count the MP Information HOB reports
+    /// 2. CPU at that index is present (registered)
+    /// 3. CPU is not the BSP
+    /// 4. Procedure pointer is non-null
+    /// 5. Sends the command via the mailbox (fails if AP is busy)
+    /// 6. Waits for the AP to complete (blocking)
+    ///
+    /// Returns the EFI status as a `u64`.
+    pub(crate) fn start_ap_procedure(&self, cpu_index: u64, procedure: u64, argument: u64) -> u64 {
+        let cpu_index = cpu_index as usize;
+
+        // 1. Validate CPU index is below the core count
+        let number_of_cores = self.number_of_cores();
+        if cpu_index >= number_of_cores {
+            log::error!("START_AP: CpuIndex({cpu_index}) >= number_of_cores({number_of_cores})");
+            return efi::Status::INVALID_PARAMETER.as_usize() as u64;
+        }
+
+        // 2. Look up the APIC ID for this index
+        let cpu_id = if let Some(id) = self.cpu_manager.get_cpu_id_by_index(cpu_index) {
+            id
+        } else {
+            log::error!("START_AP: CpuIndex({cpu_index}) has no registered CPU");
+            return efi::Status::INVALID_PARAMETER.as_usize() as u64;
+        };
+
+        // 3. Check that the target is not the BSP
+        if self.cpu_manager.is_bsp(cpu_id) {
+            log::error!("START_AP: CpuIndex({cpu_index}) is the BSP, cannot start as AP");
+            return efi::Status::INVALID_PARAMETER.as_usize() as u64;
+        }
+
+        // 4. Validate procedure pointer is non-null
+        if procedure == 0 {
+            log::error!("START_AP: Null procedure pointer");
+            return efi::Status::INVALID_PARAMETER.as_usize() as u64;
+        }
+
+        // 5. Send the procedure to the AP via mailbox
+        //    This will fail if the AP's mailbox is not empty (AP is busy).
+        let command = ApCommand { procedure, argument };
+        if self.mailbox_manager.send_command(cpu_index, command).is_err() {
+            log::error!("START_AP: AP (CPU {cpu_id}, index {cpu_index}) is busy or mailbox unavailable");
+            return efi::Status::INVALID_PARAMETER.as_usize() as u64;
+        }
+
+        log::trace!("START_AP: Dispatched proc=0x{procedure:x} arg=0x{argument:x} to CPU {cpu_id} (index {cpu_index})");
+
+        // 6. Wait for the AP to finish, up to AP_TIMEOUT_US.
+        match self.mailbox_manager.wait_response(cpu_index, AP_TIMEOUT_US) {
+            Some(ApResponse::Success) => {
+                log::trace!("START_AP: AP (CPU {cpu_id}) completed successfully");
+                efi::Status::SUCCESS.as_usize() as u64
+            }
+            Some(ApResponse::Error(code)) => {
+                log::error!("START_AP: AP (CPU {cpu_id}) returned error: 0x{code:x}");
+                u64::from(code)
+            }
+            Some(ApResponse::Busy) => {
+                log::error!("START_AP: AP (CPU {cpu_id}) reported busy");
+                efi::Status::NOT_READY.as_usize() as u64
+            }
+            Some(ApResponse::None) | None => {
+                log::error!("START_AP: AP (CPU {cpu_id}) timed out or no response");
+                efi::Status::TIMEOUT.as_usize() as u64
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use crate::mmcore::cpu::ApState;
+    use crate::mmcore::mailbox::{ApCommand, ApResponse};
+    use crate::mmcore::request_target::RequestTarget;
+    use crate::state::{init_state, security_state};
+    use crate::test_support::publish_per_core_storage;
+    use crate::{MmSupervisorCore, comm_buffer::CommBufferConfig, comm_buffer::CommChannel};
+    use crate::{SupervisorMmiHandler, privilege_mgmt::mock};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use patina::Guid;
+    use patina::management_mode::{
+        MmCommBufferStatus,
+        supervisor::{MmUserRequest, UserCommandType},
+    };
+    use patina::pi::protocol::communication::EfiMmCommunicateHeader;
+    use patina::standard::efi;
+
+    /// GUID claimed by [`TestPlatform`]'s MMI handler; distinct from every default handler.
+    const TEST_HANDLER_GUID: efi::Guid =
+        efi::Guid::from_fields(0x1234_5678, 0x9abc, 0xdef0, 0x12, 0x34, &[0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0]);
+
+    /// Number of times [`test_mmi_handler`] has been invoked in this process.
+    static HANDLER_CALLS: AtomicUsize = AtomicUsize::new(0);
+    /// Payload size the handler reports back, and the status it returns.
+    static HANDLER_RESPONSE_SIZE: AtomicUsize = AtomicUsize::new(0);
+    static HANDLER_SHOULD_FAIL: AtomicUsize = AtomicUsize::new(0);
+
+    /// Records the call, stamps a byte into the payload, and resizes the response.
+    fn test_mmi_handler(comm_buffer: *mut u8, comm_buffer_size: &mut usize) -> efi::Status {
+        HANDLER_CALLS.fetch_add(1, Ordering::SeqCst);
+        if *comm_buffer_size > 0 {
+            // SAFETY: the dispatcher passes a pointer to `*comm_buffer_size` writable payload bytes.
+            unsafe { comm_buffer.write(0xAB) };
+        }
+        *comm_buffer_size = HANDLER_RESPONSE_SIZE.load(Ordering::SeqCst);
+        if HANDLER_SHOULD_FAIL.load(Ordering::SeqCst) == 0 { efi::Status::SUCCESS } else { efi::Status::DEVICE_ERROR }
+    }
+
+    static TEST_HANDLERS: &[SupervisorMmiHandler] = &[SupervisorMmiHandler {
+        name: "TestHandler",
+        handler_guid: patina::BinaryGuid(TEST_HANDLER_GUID),
+        handle: test_mmi_handler,
+    }];
+
+    struct TestPlatform;
+
+    impl crate::PlatformInfo for TestPlatform {
+        fn mmi_handlers() -> &'static [SupervisorMmiHandler] {
+            TEST_HANDLERS
+        }
+    }
+
+    type TestCore = MmSupervisorCore<TestPlatform>;
+
+    /// Owns the heap allocations a [`CommBufferConfig`] points at, keeping them alive for a test.
+    struct TestBuffers {
+        supv_external: Vec<u8>,
+        supv_internal: Vec<u8>,
+        user_external: Vec<u8>,
+        user_internal: Vec<u8>,
+        supv_to_user: Vec<u8>,
+        user_status: Box<MmCommBufferStatus>,
+        supv_status: Box<MmCommBufferStatus>,
+    }
+
+    impl TestBuffers {
+        fn new(comm_size: usize) -> Self {
+            Self {
+                supv_external: vec![0; comm_size],
+                supv_internal: vec![0; comm_size],
+                user_external: vec![0; comm_size],
+                user_internal: vec![0; comm_size],
+                supv_to_user: vec![0; 256],
+                user_status: Box::new(MmCommBufferStatus::new()),
+                supv_status: Box::new(MmCommBufferStatus::new()),
+            }
+        }
+
+        fn config(&mut self) -> CommBufferConfig {
+            CommBufferConfig {
+                supervisor: CommChannel {
+                    external_address: self.supv_external.as_mut_ptr() as u64,
+                    internal_address: self.supv_internal.as_mut_ptr() as u64,
+                    size: self.supv_external.len() as u64,
+                    status_address: core::ptr::from_mut(self.supv_status.as_mut()) as u64,
+                },
+                user: CommChannel {
+                    external_address: self.user_external.as_mut_ptr() as u64,
+                    internal_address: self.user_internal.as_mut_ptr() as u64,
+                    size: self.user_external.len() as u64,
+                    status_address: core::ptr::from_mut(self.user_status.as_mut()) as u64,
+                },
+                supv_to_user_buffer: self.supv_to_user.as_mut_ptr() as u64,
+                supv_to_user_buffer_size: self.supv_to_user.len() as u64,
+            }
+        }
+
+        /// Writes a communicate header plus `payload` into the external supervisor buffer.
+        fn write_supv_request(&mut self, guid: efi::Guid, message_length: usize, payload: &[u8]) {
+            let header = EfiMmCommunicateHeader::new(Guid::from_ref(&guid), message_length);
+            let header_size = EfiMmCommunicateHeader::size();
+            self.supv_external[..header_size].copy_from_slice(header.as_bytes());
+            self.supv_external[header_size..header_size + payload.len()].copy_from_slice(payload);
+        }
+    }
+
+    fn valid_status() -> MmCommBufferStatus {
+        MmCommBufferStatus { is_comm_buffer_valid: 1, ..MmCommBufferStatus::new() }
+    }
+
+    #[test]
+    fn test_wait_for_ap_arrival_returns_immediately_with_no_aps() {
+        let core = TestCore::new();
+        core.wait_for_ap_arrival(0);
+    }
+
+    #[test]
+    fn test_wait_for_ap_arrival_succeeds_once_every_ap_checks_in() {
+        let core = TestCore::new();
+        publish_per_core_storage(&core, 4);
+        assert_eq!(core.cpu_manager.register_cpu(0, 0, true), Ok(0));
+        assert_eq!(core.cpu_manager.register_cpu(1, 1, false), Ok(1));
+        assert_eq!(core.cpu_manager.register_cpu(2, 2, false), Ok(2));
+        assert!(core.cpu_manager.set_ap_state(1, ApState::InHoldingPen));
+        assert!(core.cpu_manager.set_ap_state(2, ApState::InHoldingPen));
+
+        core.wait_for_ap_arrival(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "fail-secure")]
+    fn test_wait_for_ap_arrival_halts_when_an_ap_is_missing() {
+        let core = TestCore::new();
+        publish_per_core_storage(&core, 4);
+        assert_eq!(core.cpu_manager.register_cpu(0, 0, true), Ok(0));
+        assert_eq!(core.cpu_manager.register_cpu(1, 1, false), Ok(1));
+
+        // The AP never reaches the holding pen, so the arrival window expires.
+        core.wait_for_ap_arrival(1);
+    }
+
+    #[test]
+    fn test_bsp_request_loop_returns_before_the_comm_buffer_is_published() {
+        // The PassDown HOB has not been processed, so there is no configuration to act on.
+        assert!(security_state().comm_buffer_config().is_none());
+        assert_eq!(TestCore::new().bsp_request_loop(0), RequestTarget::None);
+    }
+
+    #[test]
+    fn test_bsp_request_loop_dispatches_the_supervisor_mailbox() {
+        let mut buffers = TestBuffers::new(256);
+        *buffers.supv_status = valid_status();
+        buffers.write_supv_request(TEST_HANDLER_GUID, 4, &[1, 2, 3, 4]);
+        let config = buffers.config();
+        security_state().set_comm_buffer_config(config);
+
+        HANDLER_RESPONSE_SIZE.store(4, Ordering::SeqCst);
+        assert_eq!(TestCore::new().bsp_request_loop(0), RequestTarget::Supervisor);
+
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(buffers.supv_status.is_comm_buffer_valid, 0);
+        assert_eq!(buffers.supv_status.return_status, efi::Status::SUCCESS.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_bsp_request_loop_ignores_unpublished_status_mailboxes() {
+        let mut buffers = TestBuffers::new(256);
+        let mut config = buffers.config();
+        config.user.status_address = 0;
+        config.supervisor.status_address = 0;
+        security_state().set_comm_buffer_config(config);
+
+        assert_eq!(TestCore::new().bsp_request_loop(0), RequestTarget::None);
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_bsp_request_loop_treats_a_missing_user_mailbox_as_idle() {
+        let mut buffers = TestBuffers::new(256);
+        *buffers.supv_status = valid_status();
+        buffers.write_supv_request(TEST_HANDLER_GUID, 4, &[1, 2, 3, 4]);
+        let mut config = buffers.config();
+        // Only the supervisor channel is published; the user mailbox reads as all-zero.
+        config.user.status_address = 0;
+        security_state().set_comm_buffer_config(config);
+
+        HANDLER_RESPONSE_SIZE.store(4, Ordering::SeqCst);
+        assert_eq!(TestCore::new().bsp_request_loop(0), RequestTarget::Supervisor);
+
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_bsp_request_loop_routes_an_async_mmi_through_the_user_path() {
+        init_state().set_user_entry_point(0x4000);
+        let core = TestCore::new();
+        core.syscall_interface.init(4, 0x8000, 0x1000).expect("syscall interface initializes");
+
+        let mut buffers = TestBuffers::new(256);
+        let mut config = buffers.config();
+        // Neither mailbox is valid, so the request is an async MMI. Drop the supervisor
+        // mailbox so the user channel is the only published one.
+        config.supervisor.status_address = 0;
+        security_state().set_comm_buffer_config(config);
+
+        let calls = std::rc::Rc::new(core::cell::Cell::new(0));
+        let observed = calls.clone();
+        mock::set_handler(move |_, _, _, _, command, _, _| {
+            observed.set(observed.get() + 1);
+            assert_eq!(command, UserCommandType::UserRequest as u64);
+            0
+        });
+
+        assert_eq!(core.bsp_request_loop(0), RequestTarget::User);
+        mock::clear();
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_process_supervisor_request_rejects_a_buffer_too_small_for_a_header() {
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(EfiMmCommunicateHeader::size() - 1);
+        let config = buffers.config();
+
+        core.process_supervisor_request(&config, 0);
+        assert_eq!(buffers.supv_status.return_status, efi::Status::BAD_BUFFER_SIZE.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_process_supervisor_request_rejects_an_overlong_message() {
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(64);
+        // A message length larger than the payload space the buffer can hold.
+        buffers.write_supv_request(TEST_HANDLER_GUID, 1024, &[]);
+        let config = buffers.config();
+
+        core.process_supervisor_request(&config, 0);
+        assert_eq!(buffers.supv_status.return_status, efi::Status::BAD_BUFFER_SIZE.as_usize() as u64);
+        assert_eq!(buffers.supv_status.is_comm_buffer_valid, 0);
+    }
+
+    #[test]
+    fn test_process_supervisor_request_formats_its_buffer_size_rejections() {
+        // Both rejections report the shortfall through log::error!, and the second one does so
+        // with a plain subtraction. Those arguments are skipped when no logger is installed.
+        // The silent test logger makes them run and shows neither underflows while the build
+        // has overflow checks on.
+        crate::test_support::init_test_logger();
+
+        let core = TestCore::new();
+        let mut short = TestBuffers::new(EfiMmCommunicateHeader::size() - 1);
+        let short_config = short.config();
+        core.process_supervisor_request(&short_config, 0);
+        assert_eq!(short.supv_status.return_status, efi::Status::BAD_BUFFER_SIZE.as_usize() as u64);
+
+        let mut overlong = TestBuffers::new(64);
+        overlong.write_supv_request(TEST_HANDLER_GUID, 1024, &[]);
+        let overlong_config = overlong.config();
+        core.process_supervisor_request(&overlong_config, 0);
+        assert_eq!(overlong.supv_status.return_status, efi::Status::BAD_BUFFER_SIZE.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_process_supervisor_request_reports_an_unhandled_guid() {
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(256);
+        let unknown = efi::Guid::from_fields(0xdead_beef, 0, 0, 0, 0, &[0; 6]);
+        buffers.write_supv_request(unknown, 4, &[1, 2, 3, 4]);
+        let config = buffers.config();
+
+        core.process_supervisor_request(&config, 0);
+
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 0);
+        assert_eq!(buffers.supv_status.return_status, efi::Status::NOT_FOUND.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_process_supervisor_request_dispatches_to_a_platform_handler() {
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(256);
+        buffers.write_supv_request(TEST_HANDLER_GUID, 4, &[1, 2, 3, 4]);
+        let config = buffers.config();
+        HANDLER_RESPONSE_SIZE.store(8, Ordering::SeqCst);
+
+        core.process_supervisor_request(&config, 0);
+
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 1);
+        // The handler's payload edit is copied back to the external buffer.
+        assert_eq!(buffers.supv_external[EfiMmCommunicateHeader::size()], 0xAB);
+        assert_eq!(buffers.supv_status.return_status, efi::Status::SUCCESS.as_usize() as u64);
+        assert_eq!(buffers.supv_status.return_buffer_size, (8 + EfiMmCommunicateHeader::size()) as u64);
+    }
+
+    #[test]
+    fn test_process_supervisor_request_maps_a_handler_failure_to_not_found() {
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(256);
+        buffers.write_supv_request(TEST_HANDLER_GUID, 4, &[1, 2, 3, 4]);
+        let config = buffers.config();
+        HANDLER_RESPONSE_SIZE.store(4, Ordering::SeqCst);
+        HANDLER_SHOULD_FAIL.store(1, Ordering::SeqCst);
+
+        core.process_supervisor_request(&config, 0);
+
+        assert_eq!(buffers.supv_status.return_status, efi::Status::NOT_FOUND.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_process_supervisor_request_rejects_an_oversized_response() {
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(64);
+        buffers.write_supv_request(TEST_HANDLER_GUID, 4, &[1, 2, 3, 4]);
+        let config = buffers.config();
+        // A handler that reports more than it was given must not have that size reach the caller,
+        // which would use it to read past the end of the communication buffer.
+        HANDLER_RESPONSE_SIZE.store(1024, Ordering::SeqCst);
+
+        core.process_supervisor_request(&config, 0);
+
+        // Nothing is copied out and the caller is told why, rather than being handed a prefix of
+        // a response the handler never agreed to send.
+        assert_eq!(buffers.supv_status.return_status, efi::Status::BAD_BUFFER_SIZE.as_usize() as u64);
+        assert_eq!(buffers.supv_status.return_buffer_size, 0);
+    }
+
+    #[test]
+    fn test_process_supervisor_request_reports_an_oversized_response_without_overflowing() {
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(64);
+        buffers.write_supv_request(TEST_HANDLER_GUID, 4, &[1, 2, 3, 4]);
+        let config = buffers.config();
+        // Adding the header to this size would wrap an unchecked `usize`.
+        HANDLER_RESPONSE_SIZE.store(usize::MAX, Ordering::SeqCst);
+
+        core.process_supervisor_request(&config, 0);
+
+        assert_eq!(buffers.supv_status.return_status, efi::Status::BAD_BUFFER_SIZE.as_usize() as u64);
+        assert_eq!(buffers.supv_status.return_buffer_size, 0);
+    }
+
+    #[test]
+    fn test_process_supervisor_request_is_denied_after_exit_boot_services() {
+        assert!(init_state().mark_at_runtime());
+
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(256);
+        buffers.write_supv_request(TEST_HANDLER_GUID, 4, &[1, 2, 3, 4]);
+        let config = buffers.config();
+
+        core.process_supervisor_request(&config, 0);
+
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 0);
+        assert_eq!(buffers.supv_status.return_status, efi::Status::ACCESS_DENIED.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_write_supv_status_clears_validity_and_records_the_result() {
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(64);
+        *buffers.supv_status = valid_status();
+        let config = buffers.config();
+
+        core.write_supv_status(&config, efi::Status::UNSUPPORTED, 0x40);
+
+        assert_eq!(buffers.supv_status.is_comm_buffer_valid, 0);
+        assert_eq!(buffers.supv_status.return_status, efi::Status::UNSUPPORTED.as_usize() as u64);
+        assert_eq!(buffers.supv_status.return_buffer_size, 0x40);
+    }
+
+    #[test]
+    fn test_process_user_request_requires_the_supv_to_user_buffer() {
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(256);
+
+        let mut no_supv_to_user = buffers.config();
+        no_supv_to_user.supv_to_user_buffer = 0;
+        core.process_user_request(&no_supv_to_user, &valid_status(), 0);
+
+        // The early return leaves the user mailbox untouched.
+        assert_eq!(buffers.user_status.return_status, 0);
+    }
+
+    #[test]
+    fn test_process_user_request_requires_a_user_entry_point() {
+        // The user module entry point is only published once the HOB list is parsed.
+        assert!(init_state().user_entry_point().is_none());
+
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(256);
+        let config = buffers.config();
+
+        core.process_user_request(&config, &valid_status(), 0);
+        assert_eq!(buffers.user_status.return_status, 0);
+    }
+
+    #[test]
+    fn test_process_user_request_requires_a_ring3_stack() {
+        init_state().set_user_entry_point(0x4000);
+
+        // The syscall interface is uninitialized, so no CPL3 stack can be resolved.
+        let core = TestCore::new();
+        let mut buffers = TestBuffers::new(256);
+        let config = buffers.config();
+
+        core.process_user_request(&config, &valid_status(), 0);
+        assert_eq!(buffers.user_status.return_status, 0);
+    }
+
+    #[test]
+    fn test_process_user_request_requires_room_for_the_entire_handoff() {
+        init_state().set_user_entry_point(0x4000);
+        let core = TestCore::new();
+        core.syscall_interface.init(4, 0x8000, 0x1000).expect("syscall interface initializes");
+
+        let mut buffers = TestBuffers::new(256);
+        let mut config = buffers.config();
+        config.supv_to_user_buffer_size = size_of::<MmUserRequest>() as u64 - 1;
+
+        mock::set_handler(|_, _, _, _, _, _, _| panic!("a truncated handoff must not reach Ring 3"));
+
+        core.process_user_request(&config, &valid_status(), 0);
+        mock::clear();
+        assert_eq!(buffers.user_status.return_status, 0);
+        assert!(buffers.supv_to_user.iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn test_process_user_request_round_trips_a_synchronous_request() {
+        init_state().set_user_entry_point(0x4000);
+        let core = TestCore::new();
+        publish_per_core_storage(&core, 4);
+        core.syscall_interface.init(4, 0x8000, 0x1000).expect("syscall interface initializes");
+        core.number_of_cores.store(1, Ordering::Release);
+        assert_eq!(core.cpu_manager.register_cpu(0, 0, true), Ok(0));
+
+        let mut buffers = TestBuffers::new(256);
+        buffers.user_external[..4].copy_from_slice(&[1, 2, 3, 4]);
+        let mut config = buffers.config();
+        config.supv_to_user_buffer_size = size_of::<MmUserRequest>() as u64;
+        let supv_to_user = config.supv_to_user_buffer;
+
+        // The mock stands in for the transition from Ring 0 to Ring 3: it verifies the arguments,
+        // edits the internal buffer, and reports a status through the shared window.
+        mock::set_handler(move |_cpu, entry, _stack, arg_count, command, buffer, size| {
+            assert_eq!(entry, 0x4000);
+            assert_eq!(arg_count, 3);
+            assert_eq!(command, UserCommandType::UserRequest as u64);
+            assert_eq!(buffer, supv_to_user);
+            assert_eq!(size, size_of::<MmUserRequest>() as u64);
+
+            // SAFETY: the supervisor wrote the complete handoff and staged the internal buffer.
+            unsafe {
+                let request_ptr = buffer as *mut MmUserRequest;
+                let mut request = request_ptr.read_unaligned();
+                assert_eq!(request.entry_context.currently_executing_cpu, 0);
+                assert_eq!(request.entry_context.number_of_cpus, 1);
+                assert_eq!(request.status.is_comm_buffer_valid, 1);
+                assert_eq!(request.comm_buffer_address, config.user.internal_address);
+                assert_ne!(request.comm_buffer_address, config.user.external_address);
+                assert_eq!(request.comm_buffer_size, config.user.size);
+                let payload = core::slice::from_raw_parts_mut(request.comm_buffer_address as *mut u8, 4);
+                assert_eq!(payload, &[1, 2, 3, 4]);
+                payload.copy_from_slice(&[4, 3, 2, 1]);
+                request.status.return_status = efi::Status::SUCCESS.as_usize() as u64;
+                request.status.return_buffer_size = 4;
+                request.comm_buffer_address = 0;
+                request.comm_buffer_size = 0;
+                request_ptr.write_unaligned(request);
+            }
+            0
+        });
+
+        core.process_user_request(&config, &valid_status(), 0);
+        mock::clear();
+
+        // The request was staged into the internal buffer and the response copied back out.
+        assert_eq!(&buffers.user_internal[..4], &[4, 3, 2, 1]);
+        assert_eq!(&buffers.user_external[..4], &[4, 3, 2, 1]);
+        assert_eq!(buffers.user_status.is_comm_buffer_valid, 0);
+        assert_eq!(buffers.user_status.return_status, efi::Status::SUCCESS.as_usize() as u64);
+        assert_eq!(buffers.user_status.return_buffer_size, 4);
+    }
+
+    #[test]
+    fn test_process_user_request_rejects_an_oversized_response_from_ring_3() {
+        init_state().set_user_entry_point(0x4000);
+        let core = TestCore::new();
+        publish_per_core_storage(&core, 4);
+        core.syscall_interface.init(4, 0x8000, 0x1000).expect("syscall interface initializes");
+        assert_eq!(core.cpu_manager.register_cpu(0, 0, true), Ok(0));
+
+        let mut buffers = TestBuffers::new(256);
+        let config = buffers.config();
+        let supv_to_user = config.supv_to_user_buffer;
+
+        // Without the check, a user module that reports more than the communication buffer holds
+        // would send the non-MM caller reading past the end of it.
+        mock::set_handler(move |_cpu, _entry, _stack, _arg_count, _command, _buffer, _size| {
+            // SAFETY: the supervisor wrote the complete handoff into this buffer.
+            unsafe {
+                let request_ptr = supv_to_user as *mut MmUserRequest;
+                let mut request = request_ptr.read_unaligned();
+                request.status.return_status = efi::Status::SUCCESS.as_usize() as u64;
+                request.status.return_buffer_size = u64::MAX;
+                request.comm_buffer_size = u64::MAX;
+                request_ptr.write_unaligned(request);
+            }
+            0
+        });
+
+        core.process_user_request(&config, &valid_status(), 0);
+        mock::clear();
+
+        assert_eq!(buffers.user_status.return_status, efi::Status::BAD_BUFFER_SIZE.as_usize() as u64);
+        assert_eq!(buffers.user_status.return_buffer_size, 0);
+    }
+
+    #[test]
+    fn test_process_user_request_keeps_a_response_that_fits() {
+        init_state().set_user_entry_point(0x4000);
+        let core = TestCore::new();
+        publish_per_core_storage(&core, 4);
+        core.syscall_interface.init(4, 0x8000, 0x1000).expect("syscall interface initializes");
+        assert_eq!(core.cpu_manager.register_cpu(0, 0, true), Ok(0));
+
+        let mut buffers = TestBuffers::new(256);
+        let config = buffers.config();
+        let supv_to_user = config.supv_to_user_buffer;
+
+        // Exactly the buffer size is legitimate and must reach the caller untouched.
+        mock::set_handler(move |_cpu, _entry, _stack, _arg_count, _command, _buffer, _size| {
+            // SAFETY: the supervisor wrote the complete handoff into this buffer.
+            unsafe {
+                let status = core::ptr::addr_of_mut!((*(supv_to_user as *mut MmUserRequest)).status);
+                let mut updated = status.read_unaligned();
+                updated.return_buffer_size = 256;
+                status.write_unaligned(updated);
+            }
+            0
+        });
+
+        core.process_user_request(&config, &valid_status(), 0);
+        mock::clear();
+
+        assert_eq!(buffers.user_status.return_buffer_size, 256);
+    }
+
+    #[test]
+    fn test_process_user_request_skips_the_buffer_copy_for_an_async_mmi() {
+        init_state().set_user_entry_point(0x4000);
+        let core = TestCore::new();
+        core.syscall_interface.init(4, 0x8000, 0x1000).expect("syscall interface initializes");
+
+        let mut buffers = TestBuffers::new(256);
+        buffers.user_external[..4].copy_from_slice(&[1, 2, 3, 4]);
+        let config = buffers.config();
+
+        // An async MMI has no valid comm buffer, so nothing is staged for the user.
+        core.process_user_request(&config, &MmCommBufferStatus::new(), 0);
+
+        assert_eq!(&buffers.user_internal[..4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_ap_holding_pen_skips_an_unregistered_cpu() {
+        static CORE: TestCore = TestCore::new();
+        CORE.ap_holding_pen(9);
+    }
+
+    #[test]
+    fn test_ap_holding_pen_exits_once_released() {
+        static CORE: TestCore = TestCore::new();
+        publish_per_core_storage(&CORE, 4);
+        assert_eq!(CORE.cpu_manager.register_cpu(0, 0, true), Ok(0));
+        assert_eq!(CORE.cpu_manager.register_cpu(1, 1, false), Ok(1));
+        // The BSP has already signalled the exit barrier, so the pen drains on the first poll.
+        CORE.cpu_manager.release_all_aps();
+
+        CORE.ap_holding_pen(1);
+    }
+
+    #[test]
+    fn test_ap_holding_pen_services_a_pending_command_before_exiting() {
+        static CORE: TestCore = TestCore::new();
+        publish_per_core_storage(&CORE, 4);
+        assert_eq!(CORE.cpu_manager.register_cpu(0, 0, true), Ok(0));
+        assert_eq!(CORE.cpu_manager.register_cpu(1, 1, false), Ok(1));
+        // A null procedure is rejected by the AP, which still posts a response.
+        CORE.mailbox_manager.send_command(1, ApCommand { procedure: 0, argument: 0 }).unwrap();
+        CORE.cpu_manager.release_all_aps();
+
+        CORE.ap_holding_pen(1);
+
+        assert!(matches!(CORE.mailbox_manager.wait_response(1, 1_000), Some(ApResponse::Error(_))));
+        assert_eq!(CORE.cpu_manager.get_ap_state(1), Some(ApState::InHoldingPen));
+    }
+
+    #[test]
+    fn test_execute_ap_command_restores_the_holding_pen_state() {
+        let core = TestCore::new();
+        publish_per_core_storage(&core, 4);
+        assert_eq!(core.cpu_manager.register_cpu(1, 0, false), Ok(0));
+
+        let response = core.execute_ap_command(1, &ApCommand { procedure: 0, argument: 0 });
+
+        assert!(matches!(response, ApResponse::Error(_)));
+        assert_eq!(core.cpu_manager.get_ap_state(1), Some(ApState::InHoldingPen));
+    }
+
+    #[test]
+    fn test_run_procedure_on_ap_rejects_a_null_procedure() {
+        let core = TestCore::new();
+        let response = core.run_procedure_on_ap(1, 0, 0);
+        assert_eq!(response, ApResponse::Error(efi::Status::INVALID_PARAMETER.as_usize() as u32));
+    }
+
+    #[test]
+    fn test_run_procedure_on_ap_rejects_an_unmapped_procedure() {
+        // Without a page table the supervisor cannot prove which ring owns the procedure.
+        *security_state().lock_page_table() = None;
+
+        let core = TestCore::new();
+        let response = core.run_procedure_on_ap(1, 0x1000, 0);
+        assert_eq!(response, ApResponse::Error(efi::Status::DEVICE_ERROR.as_usize() as u32));
+    }
+
+    #[test]
+    fn test_start_ap_procedure_validates_the_target_cpu() {
+        let core = TestCore::new();
+        publish_per_core_storage(&core, 4);
+        let invalid = efi::Status::INVALID_PARAMETER.as_usize() as u64;
+
+        // Before the core count is known, every index is out of range.
+        assert_eq!(core.start_ap_procedure(0, 0x1000, 0), invalid);
+
+        core.number_of_cores.store(2, Ordering::Release);
+        assert_eq!(core.cpu_manager.register_cpu(0, 0, true), Ok(0));
+        assert_eq!(core.cpu_manager.register_cpu(1, 1, false), Ok(1));
+
+        // Index 0 is the BSP, which cannot be told to run an AP procedure.
+        assert_eq!(core.start_ap_procedure(0, 0x1000, 0), invalid);
+        // Beyond the core count.
+        assert_eq!(core.start_ap_procedure(2, 0x1000, 0), invalid);
+        // A null procedure pointer.
+        assert_eq!(core.start_ap_procedure(1, 0, 0), invalid);
+    }
+
+    #[test]
+    fn test_start_ap_procedure_rejects_an_unpopulated_slot() {
+        let core = TestCore::new();
+        publish_per_core_storage(&core, 4);
+        // Registering out of order leaves slot 0 empty even though index 0 is in range.
+        core.number_of_cores.store(2, Ordering::Release);
+        assert_eq!(core.cpu_manager.register_cpu(7, 1, false), Ok(1));
+
+        assert_eq!(core.start_ap_procedure(0, 0x1000, 0), efi::Status::INVALID_PARAMETER.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_start_ap_procedure_rejects_a_busy_mailbox() {
+        let core = TestCore::new();
+        publish_per_core_storage(&core, 4);
+        core.number_of_cores.store(2, Ordering::Release);
+        assert_eq!(core.cpu_manager.register_cpu(0, 0, true), Ok(0));
+        assert_eq!(core.cpu_manager.register_cpu(1, 1, false), Ok(1));
+        // Occupy the mailbox so the dispatch has nowhere to post.
+        core.mailbox_manager.send_command(1, ApCommand { procedure: 0x2000, argument: 0 }).unwrap();
+
+        assert_eq!(core.start_ap_procedure(1, 0x1000, 0), efi::Status::INVALID_PARAMETER.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_start_ap_procedure_reports_the_ap_response() {
+        static CORE: TestCore = TestCore::new();
+        publish_per_core_storage(&CORE, 4);
+        CORE.number_of_cores.store(2, Ordering::Release);
+        assert_eq!(CORE.cpu_manager.register_cpu(0, 0, true), Ok(0));
+        assert_eq!(CORE.cpu_manager.register_cpu(1, 1, false), Ok(1));
+
+        for (posted, expected) in [
+            (ApResponse::Success, efi::Status::SUCCESS.as_usize() as u64),
+            (ApResponse::Error(0x1234), 0x1234),
+            (ApResponse::Busy, efi::Status::NOT_READY.as_usize() as u64),
+            (ApResponse::None, efi::Status::TIMEOUT.as_usize() as u64),
+        ] {
+            // Stand in for the AP: drain the command and answer it.
+            let responder = std::thread::spawn(move || {
+                while CORE.mailbox_manager.check_mailbox(1).is_none() {
+                    core::hint::spin_loop();
+                }
+                CORE.mailbox_manager.post_response(1, posted);
+            });
+
+            assert_eq!(CORE.start_ap_procedure(1, 0x1000, 0x5678), expected);
+            responder.join().expect("responder thread completes");
+            CORE.mailbox_manager.reset_all();
+        }
+    }
+}

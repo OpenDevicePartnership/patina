@@ -64,11 +64,13 @@ words:
   - coverity
   - cpuid
   - csodimm
+  - cstar
   - ctable
   - ctypes
   - cudimm
   - cuviper
   - deassertion
+  - debugctl
   - depex
   - deque
   - descs
@@ -97,6 +99,7 @@ words:
   - expressx
   - fastrlp
   - feprom
+  - fmask
   - fnent
   - funty
   - fvmain
@@ -122,6 +125,7 @@ words:
   - impls
   - inmodule
   - intid
+  - iommu
   - irouter
   - iscsi
   - isenabler
@@ -140,15 +144,20 @@ words:
   - lpddr
   - lrdimm
   - lrpair
+  - lstar
   - lzmatest
   - maxnp
+  - maxphyaddr
   - mdbook
   - mdscr
+  - mmbase
+  - mmcore
   - mmiport
   - mmram
   - mpidr
   - mrdimm
   - msdia
+  - mtrrcap
   - mtrrs
   - nestedfv
   - nocapture
@@ -205,16 +214,21 @@ words:
   - rwlock
   - sgram
   - smbus
+  - smbase
+  - smbases
   - smcport
   - smiport
+  - smmrevid
   - smram
   - socketm
   - socketr
   - sodimm
   - srimm
+  - swapgs
   - swmmis
   - syscall
   - syscalls
+  - sysenter
   - sysreg
   - sysret
   - tiano
@@ -228,8 +242,10 @@ words:
   - unaccepte
   - unarray
   - uncacheable
+  - unconfigured
   - uncontained
   - uncrustify
+  - unmapping
   - unmaps
   - unrecovered
   - unreg
