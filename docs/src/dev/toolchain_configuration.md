@@ -15,6 +15,9 @@ Patina in CI. It [is recommended](../integrate/patina_dxe_core_requirements.md#3
 copy this `.cargo/config.toml` to match Patina's toolchain configuration exactly. Patina enforces the same version
 is being used in a `build.rs` file.
 
+The version check is skipped when `DOCS_RS` is set since docs.rs builds documentation from the published crate without
+the platform's `.cargo/config.toml`. However, normal platform builds still require that the configuration version match.
+
 >**Note:** Platforms still have the flexibility to change toolchain configuration as needed in this setup, they just
 > need to ensure the config version is the same as what Patina is expecting. Platforms choosing to diverge from the
 > known good Patina config accept the risk of unexpected behavior stemming from these modifications.
