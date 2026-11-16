@@ -101,7 +101,10 @@ impl SmbiosProtocol {
     /// # Safety
     ///
     /// This function is only safe to call from the C UEFI protocol layer where the
-    /// caller guarantees that `record` points to a complete, valid SMBIOS record.
+    /// caller guarantees that `record` points to a complete, valid SMBIOS record and
+    /// `smbios_handle` points to a valid `SmbiosHandle`. `*smbios_handle` is read as the
+    /// requested handle, where `SMBIOS_HANDLE_PI_RESERVED` (0xFFFE) means auto-assign, and
+    /// is set to the assigned handle on success.
     #[cfg_attr(coverage, coverage(off))] // FFI function - tested via integration tests
     extern "efiapi" fn add_ext(
         protocol: *const SmbiosProtocol,
@@ -174,7 +177,7 @@ impl SmbiosProtocol {
         let Ok((header, _)) = SmbiosTableHeader::mut_from_prefix(&mut record_bytes) else {
             return efi::Status::INVALID_PARAMETER;
         };
-        // SAFETY: smbios_handle is checked for null above.
+        // SAFETY: smbios_handle pointer is guaranteed valid by caller
         header.handle = unsafe { smbios_handle.read_unaligned() };
 
         // Add the record. `Smbios::add_from_bytes` already republishes the table on success, so there is
@@ -407,14 +410,19 @@ mod tests {
         use std::boxed::Box;
 
         let mut record = create_test_bios_info_record();
-        record[2..4].copy_from_slice(&0u16.to_le_bytes());
+        let (header, _) = SmbiosTableHeader::mut_from_prefix(&mut record).unwrap();
+        header.handle = 0;
 
+        let assigned_handle: SmbiosHandle = 0x0005;
         let mut smbios_mock = MockSmbios::new();
         smbios_mock
             .expect_add_from_bytes()
             .once()
-            .withf(|_, bytes| u16::from_le_bytes([bytes[2], bytes[3]]) == SMBIOS_HANDLE_PI_RESERVED)
-            .returning(|_, _| Ok(0x0005));
+            .withf(|_, bytes| {
+                SmbiosTableHeader::read_from_prefix(bytes)
+                    .is_ok_and(|(header, _)| header.handle == SMBIOS_HANDLE_PI_RESERVED)
+            })
+            .returning(move |_, _| Ok(assigned_handle));
 
         let internal = SmbiosProtocolInternal::new(3, 9, Service::mock(Box::new(smbios_mock)));
         let mut handle = SMBIOS_HANDLE_PI_RESERVED;
@@ -426,7 +434,7 @@ mod tests {
         );
 
         assert_eq!(status, efi::Status::SUCCESS);
-        assert_eq!(handle, 0x0005);
+        assert_eq!(handle, assigned_handle);
     }
 
     #[test]
