@@ -356,7 +356,7 @@ impl MpDispatcher for MpSupport {
         timer: &'static dyn ArchTimerFunctionality,
     ) -> Result<Self, EfiError> {
         let bootstrap_allocation = memory_manager
-            .allocate_zero_pages(
+            .allocate_pages(
                 ap_bootstrap::PAGE_COUNT,
                 AllocationOptions::new().with_strategy(PageAllocationStrategy::MaxAddress(ap_bootstrap::MAX_ADDRESS)),
             )
@@ -380,7 +380,7 @@ impl MpDispatcher for MpSupport {
         }
 
         let park_allocation = memory_manager
-            .allocate_zero_pages(
+            .allocate_pages(
                 park::PAGE_COUNT,
                 AllocationOptions::new()
                     .with_alignment(park::ALIGNMENT)
@@ -724,7 +724,7 @@ mod tests {
     #[test]
     fn test_mp_support_initialize_maps_bootstrap_allocation_failure() {
         let mut memory = MockMemoryManager::new();
-        memory.expect_allocate_zero_pages().once().returning(|_, _| Err(MemoryError::NoAvailableMemory));
+        memory.expect_allocate_pages().once().returning(|_, _| Err(MemoryError::NoAvailableMemory));
         let timer = Box::leak(Box::new(MockArchTimerFunctionality::new()));
 
         assert!(matches!(MpSupport::initialize(&memory, timer), Err(EfiError::OutOfResources)));
