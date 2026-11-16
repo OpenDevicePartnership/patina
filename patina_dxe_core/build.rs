@@ -12,6 +12,16 @@ use std::{env, process};
 const PATINA_CONFIG_VERSION: &str = "1";
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=DOCS_RS");
+    println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
+    println!("cargo:rerun-if-env-changed=PATINA_CONFIG_VERSION");
+
+    // docs.rs builds the published crate without the platform's .cargo/config.toml,
+    // so the version check is skipped in that case.
+    if env::var_os("DOCS_RS").is_some() {
+        return;
+    }
+
     let version = env::var_os("PATINA_CONFIG_VERSION").unwrap_or_default();
 
     let rustflags = env::var_os("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
@@ -27,8 +37,4 @@ fn main() {
         );
         process::exit(1);
     }
-
-    // Only rerun this when the rustflags or the config version changes
-    println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
-    println!("cargo:rerun-if-env-changed=PATINA_CONFIG_VERSION");
 }
