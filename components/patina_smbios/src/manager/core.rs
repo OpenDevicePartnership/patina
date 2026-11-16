@@ -31,6 +31,9 @@ use crate::{
 
 use super::record::SmbiosRecord;
 
+/// Highest valid structure handle for SMBIOS 2.1+ (0xFF00-0xFFFF are reserved); held by the End-of-Table record.
+const SMBIOS_HANDLE_MAX: SmbiosHandle = 0xFEFF;
+
 /// SMBIOS 3.0 entry point structure (64-bit)
 /// Per SMBIOS 3.0+ specification section 5.2.2
 #[repr(C, packed)]
@@ -105,7 +108,8 @@ impl SmbiosManager {
 
         Ok(Self {
             records: RefCell::new(Vec::new()),
-            used_handles: RefCell::new(BTreeSet::new()),
+            // Reserved up front for the End-of-Table record added in `allocate_buffers`.
+            used_handles: RefCell::new(BTreeSet::from([SMBIOS_HANDLE_MAX])),
             major_version,
             minor_version,
             entry_point_64: RefCell::new(None),
@@ -130,7 +134,6 @@ impl SmbiosManager {
     /// # Errors
     ///
     /// Returns `SmbiosError::AllocationFailed` if buffer allocation fails.
-    /// Returns `SmbiosError::HandleExhausted` if unable to allocate handle for Type 127.
     pub(crate) fn allocate_buffers(
         &self,
         memory_manager: &dyn patina::component::service::memory::MemoryManager,
@@ -163,9 +166,10 @@ impl SmbiosManager {
         // Automatically add Type 127 End-of-Table marker to ensure SMBIOS compliance
         // This is added directly to records to bypass the add_from_bytes validation
         // which rejects Type 127 to prevent external callers from adding it
-        let type127 = Type127EndOfTable::new();
+        let mut type127 = Type127EndOfTable::new();
+        type127.header.handle = SMBIOS_HANDLE_MAX;
         let bytes = type127.to_bytes();
-        let header = SmbiosTableHeader::new(127, 4, self.alloc_new_smbios_handle()?);
+        let header = SmbiosTableHeader::new(127, 4, SMBIOS_HANDLE_MAX);
         let record = SmbiosRecord::new(header, None, bytes, 0);
         self.records.borrow_mut().push(record);
 
@@ -283,7 +287,7 @@ impl SmbiosManager {
 
     /// This function is called when the request handle is NOT FFFE.
     ///
-    /// Checks if the handle is within valid range (0..FFFE) and its availability.
+    /// Checks if the handle is within valid range (0x0000-0xFEFF) and its availability.
     ///
     /// # Arguments
     ///
@@ -298,7 +302,7 @@ impl SmbiosManager {
     /// If the handle is not within valid range, returns `SmbiosError::HandleOutOfRange`.
     /// If the handle is already in use, returns `SmbiosError::HandleInUse`.
     fn add_request_handle(&self, request_handle: &SmbiosHandle) -> Result<SmbiosHandle, SmbiosError> {
-        if !(0..SMBIOS_HANDLE_PI_RESERVED).contains(request_handle) {
+        if !(0..=SMBIOS_HANDLE_MAX).contains(request_handle) {
             log::error!("add_request_handle - HandleOutOfRange");
             return Err(SmbiosError::HandleOutOfRange);
         }
@@ -327,7 +331,7 @@ impl SmbiosManager {
     ///
     /// If there is no available handle, return `SmbiosError::HandleExhausted`.
     fn alloc_new_smbios_handle(&self) -> Result<SmbiosHandle, SmbiosError> {
-        for handle in 0..SMBIOS_HANDLE_PI_RESERVED {
+        for handle in 0..=SMBIOS_HANDLE_MAX {
             if self.used_handles.borrow_mut().insert(handle) {
                 return Ok(handle);
             }
@@ -690,8 +694,12 @@ impl SmbiosManager {
 
     /// Remove an SMBIOS record
     pub fn remove(&self, smbios_handle: SmbiosHandle) -> Result<(), SmbiosError> {
-        if !(0..SMBIOS_HANDLE_PI_RESERVED).contains(&smbios_handle) {
+        if !(0..=SMBIOS_HANDLE_MAX).contains(&smbios_handle) {
             return Err(SmbiosError::HandleOutOfRange);
+        }
+
+        if smbios_handle == SMBIOS_HANDLE_MAX {
+            return Err(SmbiosError::Type127Managed);
         }
 
         let pos = self
@@ -816,7 +824,7 @@ mod tests {
         let mut record_data = vec![
             0,    // Type 0 (BIOS Information)
             0x1A, // Length = 26 bytes (4-byte header + 22 bytes structured data)
-            0xFF, 0xFE, // Handle = SMBIOS_HANDLE_PI_RESERVED
+            0xFE, 0xFF, // Handle = SMBIOS_HANDLE_PI_RESERVED
             // Structured data fields (22 bytes total):
             1, // vendor (string index 1)
             2, // bios_version (string index 2)
@@ -1291,10 +1299,17 @@ mod tests {
     #[test]
     fn test_add_from_bytes_with_max_handle() {
         let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
-        let header = SmbiosTableHeader::new(1, 4, 0xFEFF);
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_MAX - 1);
         let record_bytes = build_test_record_with_strings(&header, &[]);
-        let result = manager.add_from_bytes(None, &record_bytes);
-        assert!(result.is_ok());
+        assert!(manager.add_from_bytes(None, &record_bytes).is_ok());
+
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_MAX);
+        let record_bytes = build_test_record_with_strings(&header, &[]);
+        assert_eq!(manager.add_from_bytes(None, &record_bytes), Err(SmbiosError::HandleInUse));
+
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_MAX + 1);
+        let record_bytes = build_test_record_with_strings(&header, &[]);
+        assert_eq!(manager.add_from_bytes(None, &record_bytes), Err(SmbiosError::HandleOutOfRange));
     }
 
     #[test]
@@ -1914,14 +1929,36 @@ mod tests {
 
         manager.allocate_buffers(memory_manager).expect("allocate_buffers failed");
 
-        // Remove the Type 127 that was added by allocate_buffers
-        let records = manager.records.borrow();
-        let type127_handle = records[0].header.handle;
-        drop(records);
-        manager.remove(type127_handle).expect("remove failed");
+        manager.records.borrow_mut().clear();
 
         // Now build_table_data should fail with NoRecordsAvailable
         let result = manager.build_table_data();
         assert_eq!(result.err(), Some(SmbiosError::NoRecordsAvailable));
+    }
+
+    #[test]
+    fn test_end_of_table_uses_max_handle() {
+        use patina::component::service::memory::StdMemoryManager;
+        extern crate std;
+        use std::boxed::Box;
+
+        let manager = SmbiosManager::new(3, 9).expect("failed to create manager");
+        let memory_manager: &'static dyn patina::component::service::memory::MemoryManager =
+            Box::leak(Box::new(StdMemoryManager::new()));
+        manager.allocate_buffers(memory_manager).expect("allocate_buffers failed");
+
+        {
+            let records = manager.records.borrow();
+            let type127 = &records[0];
+            let handle = type127.header.handle;
+            assert_eq!(handle, SMBIOS_HANDLE_MAX);
+            assert_eq!(type127.data[2..4], SMBIOS_HANDLE_MAX.to_le_bytes());
+        }
+
+        assert_eq!(manager.remove(SMBIOS_HANDLE_MAX), Err(SmbiosError::Type127Managed));
+
+        let header = SmbiosTableHeader::new(1, 4, SMBIOS_HANDLE_PI_RESERVED);
+        let record_bytes = build_test_record_with_strings(&header, &[]);
+        assert_eq!(manager.add_from_bytes(None, &record_bytes), Ok(0));
     }
 }
