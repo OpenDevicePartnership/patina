@@ -147,14 +147,16 @@ impl SmbiosManager {
         let table_allocation = memory_manager
             .allocate_pages(table_pages, AllocationOptions::new().with_memory_type(EfiMemoryType::ACPIReclaimMemory))
             .map_err(|_| SmbiosError::AllocationFailed)?;
-        let table_slice: &mut [u8] = table_allocation.leak_as_slice();
+        #[allow(deprecated)]
+        let table_slice = table_allocation.leak_as_uninitialized_slice::<u8>();
         let table_addr = table_slice.as_ptr() as u64;
 
         // Allocate entry point buffer (1 page is plenty)
         let ep_allocation = memory_manager
             .allocate_pages(1, AllocationOptions::new().with_memory_type(EfiMemoryType::ACPIReclaimMemory))
             .map_err(|_| SmbiosError::AllocationFailed)?;
-        let ep_slice: &mut [u8] = ep_allocation.leak_as_slice();
+        #[allow(deprecated)]
+        let ep_slice = ep_allocation.leak_as_uninitialized_slice::<u8>();
         let ep_addr = ep_slice.as_ptr() as u64;
 
         *self.table_buffer_addr.borrow_mut() = Some(table_addr);
@@ -397,13 +399,16 @@ impl SmbiosManager {
         // Step 3: Copy all records to the pre-allocated buffer
         // Records Vec maintains invariant: Type 127 is always last
         // So we can just copy in order
-        // SAFETY: table_address points to pre-allocated buffer with size >= total_table_size
-        let table_slice = unsafe { core::slice::from_raw_parts_mut(table_address as *mut u8, total_table_size) };
+        // SAFETY: table_address points to exclusively writable, pre-allocated storage
+        // with size >= total_table_size. MaybeUninit permits bytes not yet written.
+        let table_slice = unsafe {
+            core::slice::from_raw_parts_mut(table_address as *mut core::mem::MaybeUninit<u8>, total_table_size)
+        };
         let mut offset = 0;
 
         for record in records.iter() {
             let record_bytes = record.data.as_slice();
-            table_slice[offset..offset + record_bytes.len()].copy_from_slice(record_bytes);
+            table_slice[offset..offset + record_bytes.len()].write_copy_of_slice(record_bytes);
             offset += record_bytes.len();
         }
 
@@ -425,11 +430,15 @@ impl SmbiosManager {
 
         // Step 5: Copy entry point to pre-allocated buffer
         let ep_bytes = entry_point.as_bytes();
-        // SAFETY: ep_address points to pre-allocated buffer with size >= Smbios30EntryPoint
+        // SAFETY: ep_address points to exclusively writable, pre-allocated storage
+        // with size >= Smbios30EntryPoint. The copy initializes all published bytes.
         let ep_slice = unsafe {
-            core::slice::from_raw_parts_mut(ep_address as *mut u8, core::mem::size_of::<Smbios30EntryPoint>())
+            core::slice::from_raw_parts_mut(
+                ep_address as *mut core::mem::MaybeUninit<u8>,
+                core::mem::size_of::<Smbios30EntryPoint>(),
+            )
         };
-        ep_slice.copy_from_slice(ep_bytes);
+        ep_slice.write_copy_of_slice(ep_bytes);
 
         Ok((table_address, ep_address, entry_point))
     }
