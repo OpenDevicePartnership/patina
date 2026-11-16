@@ -355,10 +355,8 @@ impl MemoryProtectionPolicy {
                 {
                     // if the legacy region is not system memory, we should not map it
                     if descriptor.memory_type == GcdMemoryType::SystemMemory {
-                        size = match address + descriptor.length as usize {
-                            end_addr if end_addr > LEGACY_BIOS_WB_ADDRESS => LEGACY_BIOS_WB_ADDRESS - address,
-                            _ => descriptor.length as usize,
-                        };
+                        size = ((descriptor.base_address + descriptor.length).min(LEGACY_BIOS_WB_ADDRESS as u64)
+                            - address as u64) as usize;
 
                         // set_memory_space_attributes will set both the GCD and paging attributes
                         match gcd.set_memory_space_attributes(
@@ -395,10 +393,7 @@ impl MemoryProtectionPolicy {
                     {
                         Ok(descriptor) => {
                             let attributes = descriptor.attributes & !efi::MEMORY_XP;
-                            len = match descriptor.base_address + descriptor.length {
-                                end if end > range.end => range.end - addr,
-                                _ => descriptor.length,
-                            };
+                            len = (descriptor.base_address + descriptor.length).min(range.end) - addr;
 
                             // We need to ensure we are operating on page aligned addresses and lengths, as the image(s) that
                             // were allocated here may not be page aligned. We don't share pools across types, so this is safe.
@@ -1074,6 +1069,88 @@ mod tests {
 
     #[test]
     #[cfg(feature = "compatibility_mode_allowed")]
+    fn test_activate_compatibility_mode_preserves_non_loader_attributes() {
+        use crate::allocator;
+        use crate::test_support::{MockPageTable, MockPageTableWrapper};
+        use std::{cell::RefCell, rc::Rc};
+
+        with_locked_state(|| {
+            GCD.init(48, 16);
+            // SAFETY: The test buffer provides backing storage for the GCD memory blocks.
+            let mem = unsafe { test_support::get_memory(spin_locked_gcd::MEMORY_BLOCK_SLICE_SIZE * 10) };
+            let address = align_up(mem.as_ptr() as usize, UEFI_PAGE_SIZE).unwrap();
+            // SAFETY: The aligned address and length refer to test-owned storage for initializing the GCD.
+            unsafe {
+                GCD.init_memory_blocks(
+                    GcdMemoryType::SystemMemory,
+                    address,
+                    spin_locked_gcd::MEMORY_BLOCK_SLICE_SIZE * 10,
+                    efi::MEMORY_WB,
+                    efi::CACHE_ATTRIBUTE_MASK | efi::MEMORY_ACCESS_MASK,
+                )
+                .unwrap();
+            }
+
+            let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+            GCD.add_test_page_table(Box::new(MockPageTableWrapper::new(mock_table)));
+
+            allocator::core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_CODE, 4, 0, None).unwrap();
+            allocator::core_allocate_pool(efi::LOADER_CODE, 2 * UEFI_PAGE_SIZE).unwrap();
+            allocator::core_allocate_pool(efi::LOADER_DATA, 2 * UEFI_PAGE_SIZE).unwrap();
+            allocator::core_allocate_pages(efi::ALLOCATE_ANY_PAGES, efi::BOOT_SERVICES_DATA, 4, 0, None).unwrap();
+
+            let mut loader_ranges = allocator::get_memory_ranges_for_memory_type(efi::LOADER_CODE);
+            loader_ranges.extend(allocator::get_memory_ranges_for_memory_type(efi::LOADER_DATA));
+            let loader_range = &loader_ranges[0];
+            let image = loader_range.start;
+            GCD.set_memory_space_attributes(
+                loader_range.start as usize,
+                (loader_range.end - loader_range.start) as usize,
+                efi::MEMORY_WB,
+            )
+            .unwrap();
+            GCD.set_memory_space_attributes(
+                loader_range.start as usize,
+                UEFI_PAGE_SIZE,
+                efi::MEMORY_WB | efi::MEMORY_XP,
+            )
+            .unwrap();
+
+            let mut descriptors = Vec::with_capacity(GCD.memory_descriptor_count() + 10);
+            GCD.get_memory_descriptors(&mut descriptors, |descriptor, _| {
+                descriptor.memory_type == GcdMemoryType::SystemMemory
+            })
+            .unwrap();
+            let mut before = Vec::new();
+            for descriptor in descriptors {
+                for page in
+                    (descriptor.base_address..descriptor.base_address + descriptor.length).step_by(UEFI_PAGE_SIZE)
+                {
+                    before.push((page, descriptor.attributes));
+                }
+            }
+
+            MemoryProtectionPolicy::activate_compatibility_mode(&GCD, image as usize, 2, "legacy_app.efi").unwrap();
+
+            let mut changed_loader_pages = 0;
+            let mut preserved_non_loader_pages = 0;
+            for (page, attributes) in before {
+                let descriptor = GCD.get_memory_descriptor_for_address(page, |_, _| true).unwrap();
+                if loader_ranges.iter().any(|range| range.contains(&page)) {
+                    assert_eq!(descriptor.attributes, attributes & !efi::MEMORY_XP, "loader page {page:#x}");
+                    changed_loader_pages += usize::from(attributes & efi::MEMORY_XP != 0);
+                } else {
+                    assert_eq!(descriptor.attributes, attributes, "non-loader page {page:#x}");
+                    preserved_non_loader_pages += 1;
+                }
+            }
+            assert!(changed_loader_pages > 0);
+            assert!(preserved_non_loader_pages > 0);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "compatibility_mode_allowed")]
     fn test_activate_compatibility_mode_twice_only_updates_image() {
         use crate::{
             allocator,
@@ -1208,6 +1285,15 @@ mod tests {
             let mock_page_table = Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table)));
             GCD.add_test_page_table(mock_page_table);
 
+            GCD.set_memory_space_attributes(0, 2 * UEFI_PAGE_SIZE, efi::MEMORY_WB | efi::MEMORY_XP).unwrap();
+            GCD.set_memory_space_attributes(2 * UEFI_PAGE_SIZE, UEFI_PAGE_SIZE, efi::MEMORY_WB).unwrap();
+            GCD.set_memory_space_attributes(
+                3 * UEFI_PAGE_SIZE,
+                0xA0000 - 3 * UEFI_PAGE_SIZE,
+                efi::MEMORY_UC | efi::MEMORY_XP,
+            )
+            .unwrap();
+
             let policy = &GCD.memory_protection_policy;
 
             // 1. Default attributes should be MEMORY_XP before activation
@@ -1266,6 +1352,13 @@ mod tests {
             let desc =
                 GCD.get_memory_descriptor_for_address(0, |d, _| d.memory_type != GcdMemoryType::NonExistent).unwrap();
             assert_eq!(desc.attributes & efi::CACHE_ATTRIBUTE_MASK, efi::MEMORY_WB);
+
+            for address in (0..0xA0000).step_by(UEFI_PAGE_SIZE) {
+                let descriptor = GCD.get_memory_descriptor_for_address(address as u64, |_, _| true).unwrap();
+                let expected =
+                    if address < 3 * UEFI_PAGE_SIZE { efi::MEMORY_WB } else { efi::MEMORY_UC | efi::MEMORY_XP };
+                assert_eq!(descriptor.attributes, expected, "legacy page {address:#x}");
+            }
 
             // 5. Legacy BIOS region (0xA0000) should be mapped if system memory
             let legacy_desc =
