@@ -23,16 +23,13 @@ use zerocopy_derive::*;
 use crate::{
     error::SmbiosError,
     service::{
-        SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH, SmbiosHandle, SmbiosRecordsIter, SmbiosTableHeader,
-        SmbiosType,
+        SMBIOS_HANDLE_MAX, SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH, SmbiosHandle, SmbiosRecordsIter,
+        SmbiosTableHeader, SmbiosType,
     },
     smbios_record::{SmbiosRecordStructure, Type127EndOfTable},
 };
 
 use super::record::SmbiosRecord;
-
-/// Highest valid structure handle for SMBIOS 2.1+ (0xFF00-0xFFFF are reserved); held by the End-of-Table record.
-const SMBIOS_HANDLE_MAX: SmbiosHandle = 0xFEFF;
 
 /// SMBIOS 3.0 entry point structure (64-bit)
 /// Per SMBIOS 3.0+ specification section 5.2.2
@@ -166,8 +163,7 @@ impl SmbiosManager {
         // Automatically add Type 127 End-of-Table marker to ensure SMBIOS compliance
         // This is added directly to records to bypass the add_from_bytes validation
         // which rejects Type 127 to prevent external callers from adding it
-        let mut type127 = Type127EndOfTable::new();
-        type127.header.handle = SMBIOS_HANDLE_MAX;
+        let type127 = Type127EndOfTable::new();
         let bytes = type127.to_bytes();
         let header = SmbiosTableHeader::new(127, 4, SMBIOS_HANDLE_MAX);
         let record = SmbiosRecord::new(header, None, bytes, 0);

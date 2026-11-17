@@ -237,7 +237,7 @@
 extern crate alloc;
 use crate::{
     error::SmbiosError,
-    service::{SMBIOS_HANDLE_PI_RESERVED, SMBIOS_STRING_MAX_LENGTH, SmbiosTableHeader},
+    service::{SMBIOS_HANDLE_MAX, SMBIOS_STRING_MAX_LENGTH, SmbiosTableHeader},
     smbios_types::*,
 };
 use alloc::{string::String, vec::Vec};
@@ -791,7 +791,7 @@ pub(crate) struct Type127EndOfTable {
 impl Type127EndOfTable {
     /// Create a new End-of-Table marker
     pub fn new() -> Self {
-        Self { header: SmbiosTableHeader::new(127, 4, SMBIOS_HANDLE_PI_RESERVED), string_pool: Vec::new() }
+        Self { header: SmbiosTableHeader::new(127, 4, SMBIOS_HANDLE_MAX), string_pool: Vec::new() }
     }
 }
 
@@ -949,7 +949,7 @@ mod tests {
         assert_eq!(type127.header.length, 4);
         // Copy to avoid unaligned reference
         let handle = type127.header.handle;
-        assert_eq!(handle, SMBIOS_HANDLE_PI_RESERVED);
+        assert_eq!(handle, SMBIOS_HANDLE_MAX);
         assert_eq!(type127.string_pool.len(), 0);
         assert!(type127.validate().is_ok());
         assert_eq!(Type127EndOfTable::RECORD_TYPE, 127);
