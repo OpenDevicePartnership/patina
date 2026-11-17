@@ -225,10 +225,11 @@ The `reserved_range` set on each per-type `SpinLockedFixedSizeBlockAllocator` en
 
 ### Statistics Tracking
 
-`core_allocate_pages()` and `core_free_pages()` record each operation in the bin manager for special memory types only
-(runtime, reserved, ACPI, and PAL types that persist into the OS). Non-special types like `BootServicesCode` and
-`BootServicesData` are skipped. Their allocations do not affect bin descriptors or BDS recommendations, so tracking them
-would be pure overhead.
+Each per-type allocator records bin statistics in `notify_page_allocation()` and `notify_pages_freed()`. These are
+called whenever the allocator gets pages from or returns pages to the GCD: page allocations and frees, pool expansion,
+and large pool allocations and frees. Only special memory types are recorded (runtime, reserved, ACPI, and PAL types
+that persist into the OS). Non-special types like `BootServicesCode` and `BootServicesData` are skipped. Their
+allocations do not affect bin descriptors or BDS recommendations, so tracking them would be pure overhead.
 
 For tracked types:
 
@@ -236,9 +237,8 @@ For tracked types:
 - If `current_number_of_pages` exceeds the previous peak, the memory type information entry is updated.
   BDS can use this value to recommend a larger bin size for the next boot.
 
-Internal allocator expansion (pool growth, Rust heap allocations) is not individually tracked in the bin
-statistics. This is consistent with edk2, where pool allocations are only visible through the page-level
-expansion events they trigger.
+Pool allocations served from pages the allocator already owns are not recorded again. This is consistent with edk2,
+where pool allocations are only visible through the page-level expansion events they trigger.
 
 ### GetMemoryMap() Bin Descriptors
 
