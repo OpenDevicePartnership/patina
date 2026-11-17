@@ -105,12 +105,13 @@ impl PrivateImageData {
             .with_memory_type(EfiMemoryType::from_efi(image_info.image_code_type)?)
             .with_alignment(section_alignment);
 
-        let bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_boxed_slice::<u8>();
+        #[allow(deprecated)]
+        let bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_uninitialized_boxed_slice::<u8>();
 
         image_info.image_base = bytes.as_ptr() as *mut c_void;
 
         let image_data = PrivateImageData {
-            image_buffer: Buffer::Owned(bytes),
+            image_buffer: Buffer::OwnedUninitialized(bytes),
             image_info: Box::new(image_info),
             hii_resource_section: None,
             entry_point: unimplemented_entry_point,
@@ -146,7 +147,7 @@ impl PrivateImageData {
 
     /// Locates and copies the HII resource section from the image into a dedicated buffer.
     fn load_resource_section(&mut self, image: &[u8]) -> Result<(), EfiError> {
-        let loaded_image = self.image_buffer.as_ref();
+        let loaded_image = self.image_buffer.as_ref().ok_or(EfiError::LoadError)?;
 
         let result = pecoff::load_resource_section(&self.pe_info, image).map_err(|err| {
             let pe_file_name = self.pe_info.filename_or("Unknown");
@@ -178,9 +179,17 @@ impl PrivateImageData {
 
         let options = AllocationOptions::new().with_memory_type(memory_type).with_alignment(alignment);
 
-        let mut bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_boxed_slice::<u8>();
+        #[allow(deprecated)]
+        let mut bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_uninitialized_boxed_slice::<u8>();
+        if bytes.len() < resource_section.len() {
+            return Err(EfiError::LoadError);
+        }
 
-        bytes.get_mut(..resource_section.len()).ok_or(EfiError::LoadError)?.copy_from_slice(resource_section);
+        let (payload, padding) = bytes.split_at_mut(resource_section.len());
+        payload.write_copy_of_slice(resource_section);
+        padding.fill(core::mem::MaybeUninit::new(0));
+        // SAFETY: Copying the resource payload and zeroing the padding initialized every byte.
+        let bytes = unsafe { bytes.assume_init() };
 
         self.hii_resource_section = Some(bytes);
         Ok(())
@@ -188,14 +197,27 @@ impl PrivateImageData {
 
     /// Loads the image into memory from the provided buffer, accounting for section virtual addresses and size.
     fn load_image(&mut self, image: &[u8]) -> Result<(), EfiError> {
-        let bytes = self.image_buffer.as_mut().ok_or(EfiError::LoadError)?;
-
-        if let Err(e) = pecoff::load_image(&self.pe_info, image, bytes) {
+        let mut bytes = match core::mem::replace(&mut self.image_buffer, Buffer::Borrowed(&[])) {
+            Buffer::OwnedUninitialized(bytes) => bytes,
+            Buffer::Owned(bytes) => {
+                let (pointer, allocator) = Box::into_raw_with_allocator(bytes);
+                // SAFETY: MaybeUninit<u8> has the same layout as u8 and accepts initialized bytes.
+                // The pointer and allocator retain exclusive ownership of the same allocation.
+                unsafe { Box::from_raw_in(pointer as *mut [core::mem::MaybeUninit<u8>], allocator) }
+            }
+            borrowed @ Buffer::Borrowed(_) => {
+                self.image_buffer = borrowed;
+                return Err(EfiError::LoadError);
+            }
+        };
+        if let Err(e) = pecoff::load_image(&self.pe_info, image, &mut bytes) {
+            self.image_buffer = Buffer::OwnedUninitialized(bytes);
             let file_name = self.pe_info.filename_or("Unknown");
             log::error!("core_load_pe_image failed: {file_name} load_image returned status: {e:?}");
             return Err(EfiError::LoadError);
         }
-
+        // SAFETY: A successful load_image initialized every byte, including gaps and padding.
+        self.image_buffer = Buffer::Owned(unsafe { bytes.assume_init() });
         Ok(())
     }
 
@@ -365,7 +387,7 @@ impl PrivateImageData {
 
     /// Attempts to activate compatability mode for this image, if allowed by the platform.
     fn activate_compatibility_mode(&self) -> Result<(), EfiError> {
-        let bytes = self.image_buffer.as_ref();
+        let bytes = &self.image_buffer;
         // we are trying to load an application image that is not NX compatible, likely a bootloader
         // if we are configured to allow compatibility mode, we need to activate it now. Otherwise, just continue
         // to load the image
@@ -647,6 +669,7 @@ unsafe impl Send for ImageData {}
 mod dispatch {
     #[allow(clippy::wildcard_imports)]
     use super::*;
+    use core::mem::MaybeUninit;
     pub(super) use corosensei::Yielder;
     use corosensei::{
         Coroutine, CoroutineResult,
@@ -664,7 +687,7 @@ mod dispatch {
 
     // define a stack structure for coroutine support.
     pub(super) struct ImageStack {
-        pub(super) stack: Box<[u8], PageFree>,
+        pub(super) stack: Box<[MaybeUninit<u8>], PageFree>,
     }
 
     impl ImageStack {
@@ -673,7 +696,10 @@ mod dispatch {
             // allocate an extra page for the stack guard page.
             let page_count = uefi_size_to_pages!(len) + 1;
 
-            let stack = CoreMemoryManager.allocate_pages(page_count, AllocationOptions::default())?.into_boxed_slice();
+            #[allow(deprecated)]
+            let stack = CoreMemoryManager
+                .allocate_pages(page_count, AllocationOptions::default())?
+                .into_uninitialized_boxed_slice::<u8>();
 
             let base_address = stack.as_ptr() as efi::PhysicalAddress;
             // attempt to set the memory space attributes for the stack guard page.
@@ -700,11 +726,11 @@ mod dispatch {
         }
 
         #[allow(unused)]
-        pub(super) fn guard(&self) -> &[u8] {
+        pub(super) fn guard(&self) -> &[MaybeUninit<u8>] {
             self.stack.get(..UEFI_PAGE_SIZE).expect("stack is always > UEFI_PAGE_SIZE")
         }
 
-        pub(super) fn body(&self) -> &[u8] {
+        pub(super) fn body(&self) -> &[MaybeUninit<u8>] {
             self.stack.get(UEFI_PAGE_SIZE..).expect("stack is always > UEFI_PAGE_SIZE")
         }
     }
@@ -1343,7 +1369,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
 
         for image in private_data.private_image_data.values_mut() {
             // If the image was successfully added to the private_image_data map, then it must have a valid image buffer.
-            let buffer = image.image_buffer.as_ref();
+            let buffer = &image.image_buffer;
             if image.pe_info.image_type == pecoff::EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
                 let cache_attrs =
                     dxe_services::core_get_memory_space_descriptor(buffer.as_ptr() as efi::PhysicalAddress)
@@ -1713,24 +1739,43 @@ fn efi_status_to_image_error(status: efi::Status) -> ImageError {
 
 /// A buffer of bytes that is either owned or borrowed.
 enum Buffer {
-    /// Bytes allocated with the page allocator and owned by this struct.
+    /// Bytes allocated with the page allocator that are not yet fully initialized.
+    OwnedUninitialized(Box<[core::mem::MaybeUninit<u8>], PageFree>),
+    /// Initialized bytes allocated with the page allocator and owned by this struct.
     Owned(Box<[u8], PageFree>),
     /// Immutable bytes borrowed from elsewhere.
     Borrowed(&'static [u8]),
 }
 
 impl Buffer {
-    fn as_ref(&self) -> &[u8] {
+    fn len(&self) -> usize {
         match self {
-            Buffer::Owned(boxed) => boxed.as_ref(),
-            Buffer::Borrowed(slice) => slice,
+            Buffer::OwnedUninitialized(bytes) => bytes.len(),
+            Buffer::Owned(bytes) => bytes.len(),
+            Buffer::Borrowed(slice) => slice.len(),
+        }
+    }
+
+    fn as_ptr(&self) -> *const u8 {
+        match self {
+            Buffer::OwnedUninitialized(bytes) => bytes.as_ptr().cast(),
+            Buffer::Owned(bytes) => bytes.as_ptr(),
+            Buffer::Borrowed(slice) => slice.as_ptr(),
+        }
+    }
+
+    fn as_ref(&self) -> Option<&[u8]> {
+        match self {
+            Buffer::Owned(bytes) => Some(bytes),
+            Buffer::OwnedUninitialized(_) => None,
+            Buffer::Borrowed(slice) => Some(slice),
         }
     }
 
     fn as_mut(&mut self) -> Option<&mut [u8]> {
         match self {
-            Buffer::Owned(boxed) => Some(boxed.as_mut()),
-            Buffer::Borrowed(_) => None,
+            Buffer::Owned(bytes) => Some(bytes),
+            Buffer::OwnedUninitialized(_) | Buffer::Borrowed(_) => None,
         }
     }
 }
@@ -1878,7 +1923,7 @@ mod tests {
 
             let private_data = PI_DISPATCHER.image_data.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
-            let image_buf_len = image_data.image_buffer.as_ref().len();
+            let image_buf_len = image_data.image_buffer.len();
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
@@ -2128,7 +2173,7 @@ mod tests {
 
             let private_data = PI_DISPATCHER.image_data.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
-            let image_buf_len = image_data.image_buffer.as_ref().len();
+            let image_buf_len = image_data.image_buffer.len();
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
@@ -2207,7 +2252,7 @@ mod tests {
 
             let private_data = PI_DISPATCHER.image_data.lock();
             let image_data = private_data.private_image_data.get(&image_handle).unwrap();
-            let image_buf_len = image_data.image_buffer.as_ref().len();
+            let image_buf_len = image_data.image_buffer.len();
             assert_eq!(image_buf_len, image_data.image_info.image_size as usize);
             assert_eq!(image_data.image_info.image_data_type, efi::BOOT_SERVICES_DATA);
             assert_eq!(image_data.image_info.image_code_type, efi::BOOT_SERVICES_CODE);
@@ -3140,14 +3185,16 @@ mod tests {
 
             // Hold the top of memory while the image is allocated so that the image lands below it, then release it
             // and allocate a neighbor at exactly the first address after the image.
+            #[allow(deprecated)]
             let top = CoreMemoryManager
                 .allocate_pages(0x20, AllocationOptions::new().with_memory_type(data_type))
                 .unwrap()
-                .into_boxed_slice::<u8>();
+                .into_uninitialized_boxed_slice::<u8>();
             let private_info = PrivateImageData::new(image_info, pe_info).unwrap();
             let image_end = private_info.image_info.image_base as u64 + private_info.image_info.image_size;
             drop(top);
 
+            #[allow(deprecated)]
             let neighbor = CoreMemoryManager
                 .allocate_pages(
                     0x20,
@@ -3156,7 +3203,7 @@ mod tests {
                     ),
                 )
                 .unwrap()
-                .into_boxed_slice::<u8>();
+                .into_uninitialized_boxed_slice::<u8>();
 
             let before = dxe_services::core_get_memory_space_descriptor(image_end).unwrap();
 
@@ -3229,13 +3276,33 @@ mod tests {
             protocol.image_code_type = efi::BOOT_SERVICES_CODE;
             protocol.image_data_type = efi::BOOT_SERVICES_DATA;
 
-            let image_info = PrivateImageData::new(protocol, pe_info).unwrap();
+            let mut image_info = PrivateImageData::new(protocol, pe_info).unwrap();
+            assert!(image_info.image_buffer.as_ref().is_none());
+            assert!(image_info.image_buffer.as_mut().is_none());
+            let address = image_info.image_buffer.as_ptr();
+            assert!(image_info.load_image(&[]).is_err());
+            assert!(image_info.image_buffer.as_ref().is_none());
+            assert!(image_info.image_buffer.as_mut().is_none());
+            image_info.load_image(&image).unwrap();
+            assert!(image_info.image_buffer.as_ref().is_some());
+            assert!(image_info.image_buffer.as_mut().is_some());
+            assert_eq!(image_info.image_buffer.as_ptr(), address);
+            image_info.load_image(&image).unwrap();
+            assert!(matches!(&image_info.image_buffer, Buffer::Owned(_)));
+            assert_eq!(image_info.image_buffer.as_ptr(), address);
+            assert!(image_info.load_image(&[]).is_err());
+            assert!(matches!(&image_info.image_buffer, Buffer::OwnedUninitialized(_)));
+            assert!(image_info.image_buffer.as_ref().is_none());
+            assert!(image_info.image_buffer.as_mut().is_none());
+            assert_eq!(image_info.image_buffer.as_ptr(), address);
+            image_info.load_image(&image).unwrap();
+            assert_eq!(image_info.image_buffer.as_ptr(), address);
             match image_info.image_buffer {
                 super::Buffer::Owned(buffer) => {
                     // Validate that we are aligned to the custom alignment
                     assert_eq!(buffer.as_ptr() as usize % CUSTOM_ALIGNMENT as usize, 0);
                 }
-                super::Buffer::Borrowed(_) => {
+                super::Buffer::OwnedUninitialized(_) | super::Buffer::Borrowed(_) => {
                     panic!("Expected owned buffer for loaded image");
                 }
             }
@@ -3723,9 +3790,9 @@ mod tests {
         // Map the PE sections to their virtual addresses so that parse_mapped() reads the loaded
         // image in memory (as the DXE Core is expected to be loaded in memory by the DXE loader).
         let pe_info = UefiPeInfo::parse(&raw_image).expect("failed to parse PE for mapping");
-        let mut mapped_image: Vec<u8> = vec![0u8; pe_info.size_of_image as usize];
-        crate::pecoff::load_image(&pe_info, &raw_image, &mut mapped_image).expect("failed to load/map PE image");
-        let image = Box::leak(mapped_image.into_boxed_slice());
+        let storage = vec![core::mem::MaybeUninit::uninit(); pe_info.size_of_image as usize].into_boxed_slice();
+        let image =
+            crate::pecoff::load_image(&pe_info, &raw_image, Box::leak(storage)).expect("failed to load/map PE image");
 
         extern "efiapi" fn entry_point(_: *mut c_void, _: *mut efi::SystemTable) -> efi::Status {
             efi::Status::SUCCESS

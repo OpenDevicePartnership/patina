@@ -204,11 +204,15 @@ fn core_reload(image: &[u8], out: &mut dyn core::fmt::Write) {
     };
 
     // Step 2: load the image.
-    let loaded_image = alloc.leak_as_slice::<u8>();
-    if let Err(error) = pecoff::load_image(&pe_info, image, loaded_image) {
-        let _ = writelncrlf!(out, "Failed to load image. {:?}", error);
-        return;
-    }
+    #[allow(deprecated)]
+    let loaded_image = alloc.leak_as_uninitialized_slice::<u8>();
+    let loaded_image = match pecoff::load_image(&pe_info, image, loaded_image) {
+        Ok(loaded_image) => loaded_image,
+        Err(error) => {
+            let _ = writelncrlf!(out, "Failed to load image. {:?}", error);
+            return;
+        }
+    };
 
     // Step 3: relocate the image.
     let loaded_image_addr = loaded_image.as_ptr() as usize;
