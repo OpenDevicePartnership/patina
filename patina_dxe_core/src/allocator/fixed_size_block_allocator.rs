@@ -69,20 +69,6 @@ fn retained_pool_size(layout: Layout) -> Option<usize> {
     align_up(layout.size().max(1), UEFI_PAGE_SIZE).ok()
 }
 
-// Pool pages come directly from the GCD, so they must be added to the memory bin statistics here.
-// The global allocator can run while the bin lock is held, so check the type before locking.
-fn record_bin_allocation(memory_type: efi::MemoryType, pages: usize) {
-    if MemoryBinManager::is_special_type(memory_type) {
-        super::MEMORY_BIN_MANAGER.lock().record_allocation(memory_type, pages as u64);
-    }
-}
-
-fn record_bin_free(memory_type: efi::MemoryType, pages: usize) {
-    if MemoryBinManager::is_special_type(memory_type) {
-        super::MEMORY_BIN_MANAGER.lock().record_free(memory_type, pages as u64);
-    }
-}
-
 // Slice::get() is not const on stable Rust
 #[allow(clippy::indexing_slicing)]
 const fn block_sizes_divide_alignment() -> bool {
@@ -368,11 +354,7 @@ impl FixedSizeBlockAllocator {
             self.retired_page_cursor = NonNull::new(alloc_node_ptr).map(|node| (node, 0));
         }
 
-        if self.in_reserved_range(alloc_node_ptr.addr() as efi::PhysicalAddress) {
-            self.stats.reserved_used += new_region.len();
-        } else {
-            self.stats.claimed_pages += uefi_size_to_pages!(new_region.len());
-        }
+        self.notify_page_allocation(new_region);
 
         self.retire_new_region(alloc_node_ptr)
     }
@@ -876,21 +858,32 @@ impl FixedSizeBlockAllocator {
         Ok(())
     }
 
-    /// Tracks page allocations for record keeping
+    /// Tracks pages allocated from the GCD in the allocator and memory bin statistics.
     pub fn notify_page_allocation(&mut self, allocation: NonNull<[u8]>) {
         if self.in_reserved_range(allocation.addr().get() as efi::PhysicalAddress) {
             self.stats.reserved_used += allocation.len();
         } else {
             self.stats.claimed_pages += uefi_size_to_pages!(allocation.len());
         }
+
+        // The global allocator can run while the bin lock is held, so check the type before locking.
+        if MemoryBinManager::is_special_type(self.memory_type) {
+            super::MEMORY_BIN_MANAGER
+                .lock()
+                .record_allocation(self.memory_type, uefi_size_to_pages!(allocation.len()) as u64);
+        }
     }
 
-    /// Tracks page freeing for record keeping
+    /// Tracks pages returned to the GCD in the allocator and memory bin statistics.
     pub fn notify_pages_freed(&mut self, address: efi::PhysicalAddress, pages: usize) {
         if self.in_reserved_range(address) {
             self.stats.reserved_used = self.stats.reserved_used.saturating_sub(pages * UEFI_PAGE_SIZE);
         } else {
             self.stats.claimed_pages = self.stats.claimed_pages.saturating_sub(pages);
+        }
+
+        if MemoryBinManager::is_special_type(self.memory_type) {
+            super::MEMORY_BIN_MANAGER.lock().record_free(self.memory_type, pages as u64);
         }
     }
 
@@ -1449,9 +1442,6 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                     return Err(AllocError);
                 };
 
-                // Retired pages remain owned by the allocator, so count the expansion once.
-                record_bin_allocation(allocator.memory_type(), required_pages);
-
                 let new_pages = new_pages.ok_or(AllocError)?;
                 let active_start = align_up(new_pages.start, user_alignment).map_err(|_| AllocError)?;
                 let active_end =
@@ -1522,7 +1512,6 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                 let allocation =
                     NonNull::slice_from_raw_parts(NonNull::new(start_address as *mut u8).ok_or(AllocError)?, size);
                 allocator.notify_page_allocation(allocation);
-                record_bin_allocation(allocator.memory_type(), uefi_size_to_pages!(size));
 
                 Ok(NonNull::slice_from_raw_parts(user_addr, layout.size()))
             }
@@ -1582,7 +1571,6 @@ unsafe impl Allocator for SpinLockedFixedSizeBlockAllocator {
                 debug_assert!(false, "Failed to free pages for large allocation");
             } else {
                 allocator.notify_pages_freed(base.get() as efi::PhysicalAddress, pages);
-                record_bin_free(allocator.memory_type(), pages);
             }
             return;
         };

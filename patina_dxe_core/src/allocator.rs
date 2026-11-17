@@ -766,11 +766,6 @@ pub fn core_allocate_pages(
         _ => {}
     }
 
-    // Record the allocation in the memory bin manager for bin statistics tracking.
-    if res.is_ok() {
-        MEMORY_BIN_MANAGER.lock().record_allocation(memory_type, pages as u64);
-    }
-
     res
 }
 
@@ -849,11 +844,6 @@ pub unsafe fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Res
             MemoryAttributesTable::install();
         }
         _ => {}
-    }
-
-    // Record the free in the memory bin manager for bin statistics tracking.
-    if res.is_ok() {
-        MEMORY_BIN_MANAGER.lock().record_free(memory_type, pages as u64);
     }
 
     res
