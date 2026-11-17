@@ -1729,11 +1729,15 @@ mod tests {
                 );
 
                 let first = core_allocate_pool(memory_type, 16).unwrap();
-                let second = core_allocate_pool(memory_type, 16).unwrap();
-                let backing_pages = uefi_size_to_pages!(LOW_TRAFFIC_RUNTIME_ALLOC_MIN_EXPANSION);
+                let allocator = core_get_allocator(memory_type).unwrap();
+                // Expansion size depends on the architecture granularity and FSB metadata.
+                let backing_pages = uefi_size_to_pages!(allocator.stats().reserved_used);
+                assert!(backing_pages > 0);
                 assert_eq!(bin_usage(memory_type), (backing_pages as u64, backing_pages as u32));
 
-                let allocator = core_get_allocator(memory_type).unwrap();
+                let second = core_allocate_pool(memory_type, 16).unwrap();
+                assert_eq!(bin_usage(memory_type), (backing_pages as u64, backing_pages as u32));
+
                 let reserved = allocator.reserved_range().unwrap();
                 assert!(reserved.contains(&(first as efi::PhysicalAddress)));
                 assert!(reserved.contains(&(second as efi::PhysicalAddress)));
