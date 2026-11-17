@@ -1657,7 +1657,6 @@ mod tests {
         (*base, *max)
     }
 
-    // Test-only helper; not included in firmware builds.
     fn bin_usage(memory_type: efi::MemoryType) -> (u64, u32) {
         let manager = MEMORY_BIN_MANAGER.lock();
         let peak = manager
