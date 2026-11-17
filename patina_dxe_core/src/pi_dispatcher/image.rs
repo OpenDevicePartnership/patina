@@ -54,6 +54,10 @@ use crate::{
 };
 
 use efi::Guid;
+#[cfg(feature = "unstable-sbom")]
+use patina::{uefi::acpi_table::sbom::SbomTableEntry, vendor_protocols::sbom::PROTOCOL_GUID as SBOM_PROTOCOL_GUID};
+#[cfg(feature = "unstable-sbom")]
+use zerocopy::IntoBytes;
 
 /// PE/COFF Specification Machine Types
 #[cfg(target_arch = "x86_64")]
@@ -77,6 +81,8 @@ struct PrivateImageData {
     image_buffer: Buffer,
     image_info: Box<efi::protocols::loaded_image::Protocol>,
     hii_resource_section: Option<Box<[u8], PageFree>>,
+    #[cfg(feature = "unstable-sbom")]
+    sbom_section: Option<Box<[u8]>>,
     entry_point: efi::ImageEntryPoint,
     started: bool,
     exit_data: Option<ExitData>,
@@ -113,6 +119,8 @@ impl PrivateImageData {
             image_buffer: Buffer::Owned(bytes),
             image_info: Box::new(image_info),
             hii_resource_section: None,
+            #[cfg(feature = "unstable-sbom")]
+            sbom_section: None,
             entry_point: unimplemented_entry_point,
             started: false,
             exit_data: None,
@@ -135,6 +143,8 @@ impl PrivateImageData {
             image_buffer: Buffer::Borrowed(image_buffer),
             image_info: Box::new(image_info),
             hii_resource_section: None,
+            #[cfg(feature = "unstable-sbom")]
+            sbom_section: None,
             entry_point,
             started: true,
             exit_data: None,
@@ -186,6 +196,33 @@ impl PrivateImageData {
         Ok(())
     }
 
+    /// Retains one SBOM entry from the source image, ignoring invalid optional metadata.
+    #[cfg(feature = "unstable-sbom")]
+    fn load_sbom_section(&mut self, image: &[u8]) {
+        let file_name = self.pe_info.filename_or("Unknown");
+        let section = match pecoff::get_section(".sbom", &self.pe_info, image) {
+            Ok(Some(section)) => section,
+            Ok(None) => return,
+            Err(error) => {
+                log::warn!("Ignoring unreadable .sbom section in {file_name}: {error:?}");
+                return;
+            }
+        };
+        let (entry, remaining) = match SbomTableEntry::parse_prefix(section) {
+            Ok(entry) => entry,
+            Err(error) => {
+                log::warn!("Ignoring invalid .sbom entry in {file_name}: {error}");
+                return;
+            }
+        };
+        if remaining.iter().any(|byte| *byte != 0) {
+            log::warn!("Ignoring .sbom entry with nonzero trailing data in {file_name}");
+            return;
+        }
+        let bytes: Box<[u8]> = entry.as_bytes().into();
+        self.sbom_section = Some(bytes);
+    }
+
     /// Loads the image into memory from the provided buffer, accounting for section virtual addresses and size.
     fn load_image(&mut self, image: &[u8]) -> Result<(), EfiError> {
         let bytes = self.image_buffer.as_mut().ok_or(EfiError::LoadError)?;
@@ -226,7 +263,7 @@ impl PrivateImageData {
     }
 
     /// Installs all necessary protocols for this image, returning the new image handle.
-    fn install(&self) -> Result<efi::Handle, EfiError> {
+    fn install(&mut self) -> Result<efi::Handle, EfiError> {
         let handle = core_install_protocol_interface(
             None,
             efi::protocols::loaded_image::PROTOCOL_GUID,
@@ -236,6 +273,12 @@ impl PrivateImageData {
         if let Err(error) = self.install_additional_interfaces(handle) {
             let _ = self.uninstall(handle);
             return Err(error);
+        }
+
+        #[cfg(feature = "unstable-sbom")]
+        if let Some(sbom_section) = self.sbom_section.take() {
+            // Published SBOM data outlives the image so ReadyToBoot can include unloaded images.
+            Box::leak(sbom_section);
         }
 
         Ok(handle)
@@ -256,6 +299,15 @@ impl PrivateImageData {
             )?;
         }
 
+        #[cfg(feature = "unstable-sbom")]
+        if let Some(sbom_section) = &self.sbom_section {
+            core_install_protocol_interface(
+                Some(handle),
+                SBOM_PROTOCOL_GUID.into_inner(),
+                sbom_section.as_ptr().cast_mut().cast::<c_void>(),
+            )?;
+        }
+
         if self.pe_info.image_type == pecoff::EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER {
             runtime::add_runtime_image(
                 self.image_info.image_base,
@@ -268,7 +320,7 @@ impl PrivateImageData {
         Ok(())
     }
 
-    /// Uninstalls all protocols associated with this image from the specified handle.
+    /// Uninstalls image protocols, preserving successfully published SBOM data.
     ///
     /// Returns an Err if any uninstall operation fails.
     fn uninstall(&self, handle: efi::Handle) -> Result<(), EfiError> {
@@ -306,6 +358,20 @@ impl PrivateImageData {
             && !matches!(err, EfiError::NotFound | EfiError::InvalidParameter)
         {
             log::warn!("Failed to uninstall HII package list protocol for handle {handle:?}: {err}");
+            result = Err(err);
+        }
+
+        #[cfg(feature = "unstable-sbom")]
+        // Before successful installation, the image still owns SBOM data for rollback.
+        if let Some(sbom_section) = &self.sbom_section
+            && let Err(err) = core_uninstall_protocol_interface(
+                handle,
+                SBOM_PROTOCOL_GUID.into_inner(),
+                sbom_section.as_ptr().cast_mut().cast::<c_void>(),
+            )
+            && !matches!(err, EfiError::NotFound | EfiError::InvalidParameter)
+        {
+            log::warn!("Failed to uninstall SBOM protocol for handle {handle:?}: {err}");
             result = Err(err);
         }
 
@@ -1466,6 +1532,9 @@ fn core_load_pe_image(
 
     private_info.load_resource_section(image)?;
 
+    #[cfg(feature = "unstable-sbom")]
+    private_info.load_sbom_section(image);
+
     // If we are not NX compatible and a EFI Application, we need to attempt to activate compatibility mode.
     // Compatability mode may or may not actually activate depending on how we are configured.
     // Otherwise apply the memory protections.
@@ -1834,6 +1903,173 @@ mod tests {
                 .cast::<c_void>(),
         )
         .expect("loaded image protocol should install")
+    }
+
+    #[cfg(feature = "unstable-sbom")]
+    fn set_test_sbom_section(image_data: &mut PrivateImageData, length: usize) {
+        image_data.pe_info.sections = vec![goblin::pe::section_table::SectionTable {
+            name: *b".sbom\0\0\0",
+            virtual_size: length as u32,
+            size_of_raw_data: length as u32,
+            pointer_to_raw_data: 0,
+            ..Default::default()
+        }];
+    }
+
+    #[cfg(feature = "unstable-sbom")]
+    fn test_sbom_entry_bytes() -> Vec<u8> {
+        vec![4, 10, 0, 3, 0, 0, 0, 0, 2, 0, b'a', b'b', b'c']
+    }
+
+    #[cfg(feature = "unstable-sbom")]
+    #[test]
+    fn test_private_image_data_sbom_survives_uninstall_and_drop() {
+        with_locked_state(|| {
+            let mut image_data = create_test_private_image_data();
+            let expected = test_sbom_entry_bytes();
+            let mut source = expected.clone();
+            source.resize(16, 0);
+            set_test_sbom_section(&mut image_data, source.len());
+            image_data.load_sbom_section(&source);
+            let owned = image_data.sbom_section.as_ref().unwrap();
+            assert_eq!(owned.as_ref(), &expected);
+            assert_ne!(owned.as_ptr(), source.as_ptr());
+            let allocation = core::ptr::from_ref(owned.as_ref()).cast_mut();
+            let pointer = owned.as_ptr().cast_mut().cast::<c_void>();
+            source.fill(0xFF);
+            let handle = image_data.install().unwrap();
+            assert!(image_data.sbom_section.is_none());
+            let interface = PROTOCOL_DB.get_interface_for_handle(handle, SBOM_PROTOCOL_GUID.into_inner()).unwrap();
+            assert_eq!(interface, pointer);
+            assert!(PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::loaded_image::PROTOCOL_GUID).is_ok());
+            // SAFETY: The interface points to the retained, validated complete entry.
+            let entry = unsafe { SbomTableEntry::from_raw(interface.cast()) }.unwrap();
+            assert_eq!(&entry.payload, b"abc");
+            image_data.uninstall(handle).unwrap();
+            assert!(image_data.uninstall(handle).is_ok());
+            drop(image_data);
+            assert!(PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::loaded_image::PROTOCOL_GUID).is_err());
+            assert!(
+                PROTOCOL_DB
+                    .get_interface_for_handle(handle, efi::protocols::loaded_image_device_path::PROTOCOL_GUID)
+                    .is_err()
+            );
+            assert_eq!(
+                PROTOCOL_DB.get_interface_for_handle(handle, SBOM_PROTOCOL_GUID.into_inner()).unwrap(),
+                interface
+            );
+            assert_eq!(entry.as_bytes(), &expected);
+            core_uninstall_protocol_interface(handle, SBOM_PROTOCOL_GUID.into_inner(), interface).unwrap();
+            // SAFETY: The protocol is no longer installed or borrowed; reclaim the leaked test allocation.
+            unsafe { drop(Box::from_raw(allocation)) };
+        });
+    }
+
+    #[cfg(feature = "unstable-sbom")]
+    #[test]
+    fn test_private_image_data_sbom_survives_dispatcher_unload() {
+        with_locked_state(|| {
+            let dispatcher = PiDispatcher::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            dispatcher.init(&create_dxe_core_hob(), SYSTEM_TABLE.lock().as_mut().unwrap());
+            let mut image_data = create_test_private_image_data();
+            let source = test_sbom_entry_bytes();
+            set_test_sbom_section(&mut image_data, source.len());
+            image_data.load_sbom_section(&source);
+            let allocation = core::ptr::from_ref(image_data.sbom_section.as_ref().unwrap().as_ref()).cast_mut();
+            let handle = image_data.install().unwrap();
+            let interface = PROTOCOL_DB.get_interface_for_handle(handle, SBOM_PROTOCOL_GUID.into_inner()).unwrap();
+            dispatcher.image_data.lock().private_image_data.insert(handle, image_data);
+
+            dispatcher.unload_image(handle, false).unwrap();
+
+            assert!(!dispatcher.image_data.lock().private_image_data.contains_key(&handle));
+            assert!(PROTOCOL_DB.get_interface_for_handle(handle, efi::protocols::loaded_image::PROTOCOL_GUID).is_err());
+            assert_eq!(
+                PROTOCOL_DB.get_interface_for_handle(handle, SBOM_PROTOCOL_GUID.into_inner()).unwrap(),
+                interface
+            );
+            // SAFETY: Successful installation retains the complete validated entry after image unload.
+            assert_eq!(unsafe { SbomTableEntry::from_raw(interface.cast()) }.unwrap().as_bytes(), &source);
+            assert_eq!(dispatcher.unload_image(handle, false), Err(efi::Status::INVALID_PARAMETER));
+
+            core_uninstall_protocol_interface(handle, SBOM_PROTOCOL_GUID.into_inner(), interface).unwrap();
+            // SAFETY: The protocol is no longer installed or borrowed; reclaim the leaked test allocation.
+            unsafe { drop(Box::from_raw(allocation)) };
+        });
+    }
+
+    #[cfg(feature = "unstable-sbom")]
+    #[test]
+    fn test_private_image_data_sbom_absent_or_invalid_is_not_published() {
+        with_locked_state(|| {
+            let mut invalid_revision = test_sbom_entry_bytes();
+            invalid_revision[0] = 3;
+            let mut invalid_length = test_sbom_entry_bytes();
+            invalid_length[1] = 9;
+            let mut nonzero_padding = test_sbom_entry_bytes();
+            nonzero_padding.push(1);
+            let mut truncated = test_sbom_entry_bytes();
+            truncated.pop();
+            let mut oversized = test_sbom_entry_bytes();
+            oversized[3..7].copy_from_slice(&u32::MAX.to_le_bytes());
+            for source in [vec![], vec![0; 9], invalid_revision, invalid_length, nonzero_padding, truncated, oversized]
+            {
+                let mut image_data = create_test_private_image_data();
+                set_test_sbom_section(&mut image_data, source.len());
+                image_data.load_sbom_section(&source);
+                assert!(image_data.sbom_section.is_none());
+                let handle = image_data.install().unwrap();
+                assert!(PROTOCOL_DB.get_interface_for_handle(handle, SBOM_PROTOCOL_GUID.into_inner()).is_err());
+                image_data.uninstall(handle).unwrap();
+            }
+            let mut image_data = create_test_private_image_data();
+            image_data.pe_info.sections.clear();
+            image_data.load_sbom_section(&[]);
+            assert!(image_data.sbom_section.is_none());
+            set_test_sbom_section(&mut image_data, 13);
+            image_data.load_sbom_section(&[]);
+            assert!(image_data.sbom_section.is_none());
+        });
+    }
+
+    #[cfg(feature = "unstable-sbom")]
+    #[test]
+    fn test_private_image_data_sbom_empty_payload_is_published() {
+        with_locked_state(|| {
+            let mut image_data = create_test_private_image_data();
+            let source = vec![4, 10, 0, 0, 0, 0, 0, 0, 2, 0];
+            set_test_sbom_section(&mut image_data, source.len());
+            image_data.load_sbom_section(&source);
+            let allocation = core::ptr::from_ref(image_data.sbom_section.as_ref().unwrap().as_ref()).cast_mut();
+            let handle = image_data.install().unwrap();
+            let interface = PROTOCOL_DB.get_interface_for_handle(handle, SBOM_PROTOCOL_GUID.into_inner()).unwrap();
+            // SAFETY: The core validated and retained the entire entry allocation.
+            assert!(unsafe { SbomTableEntry::from_raw(interface.cast()) }.unwrap().payload.is_empty());
+            image_data.uninstall(handle).unwrap();
+            drop(image_data);
+            core_uninstall_protocol_interface(handle, SBOM_PROTOCOL_GUID.into_inner(), interface).unwrap();
+            // SAFETY: The protocol is no longer installed or borrowed; reclaim the leaked test allocation.
+            unsafe { drop(Box::from_raw(allocation)) };
+        });
+    }
+
+    #[cfg(feature = "unstable-sbom")]
+    #[test]
+    fn test_private_image_data_sbom_uninstall_after_external_removal() {
+        with_locked_state(|| {
+            let mut image_data = create_test_private_image_data();
+            let source = test_sbom_entry_bytes();
+            set_test_sbom_section(&mut image_data, source.len());
+            image_data.load_sbom_section(&source);
+            let allocation = core::ptr::from_ref(image_data.sbom_section.as_ref().unwrap().as_ref()).cast_mut();
+            let handle = image_data.install().unwrap();
+            let interface = PROTOCOL_DB.get_interface_for_handle(handle, SBOM_PROTOCOL_GUID.into_inner()).unwrap();
+            core_uninstall_protocol_interface(handle, SBOM_PROTOCOL_GUID.into_inner(), interface).unwrap();
+            image_data.uninstall(handle).unwrap();
+            drop(image_data);
+            // SAFETY: The protocol was externally removed and the image no longer owns this allocation.
+            unsafe { drop(Box::from_raw(allocation)) };
+        });
     }
 
     #[test]
@@ -2920,6 +3156,8 @@ mod tests {
                 image_buffer: bytes,
                 image_info: Box::new(image_info),
                 hii_resource_section: None,
+                #[cfg(feature = "unstable-sbom")]
+                sbom_section: None,
                 entry_point: dummy_entry,
                 started: false,
                 exit_data: None,
@@ -3356,6 +3594,13 @@ mod tests {
     fn test_private_image_data_install_cleans_up_when_additional_interfaces_fail() {
         with_locked_state(|| {
             let mut image_data = create_test_private_image_data();
+            #[cfg(feature = "unstable-sbom")]
+            {
+                let source = test_sbom_entry_bytes();
+                set_test_sbom_section(&mut image_data, source.len());
+                image_data.load_sbom_section(&source);
+                assert!(image_data.sbom_section.is_some());
+            }
             image_data.pe_info.image_type = pecoff::EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER;
             image_data.relocation_data.push(RelocationBlock {
                 block_header: crate::pecoff::relocation::BaseRelocationBlockHeader { page_rva: 0, block_size: 0 },
@@ -3363,6 +3608,9 @@ mod tests {
             });
 
             assert_eq!(image_data.install(), Err(EfiError::Unsupported));
+            #[cfg(feature = "unstable-sbom")]
+            assert!(image_data.sbom_section.is_some());
+            drop(image_data);
             assert_eq!(
                 PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image::PROTOCOL_GUID)),
                 Err(EfiError::NotFound)
@@ -3371,6 +3619,8 @@ mod tests {
                 PROTOCOL_DB.locate_handles(Some(efi::protocols::loaded_image_device_path::PROTOCOL_GUID)),
                 Err(EfiError::NotFound)
             );
+            #[cfg(feature = "unstable-sbom")]
+            assert_eq!(PROTOCOL_DB.locate_handles(Some(SBOM_PROTOCOL_GUID.into_inner())), Err(EfiError::NotFound));
         });
     }
 
@@ -3421,7 +3671,7 @@ mod tests {
 
             let pe_info = UefiPeInfo::parse(&image).unwrap();
 
-            let image_data = PrivateImageData::new(protocol, pe_info).unwrap();
+            let mut image_data = PrivateImageData::new(protocol, pe_info).unwrap();
 
             let handle = image_data.install().unwrap();
 
@@ -3457,7 +3707,7 @@ mod tests {
 
             let pe_info = UefiPeInfo::parse(&image).unwrap();
 
-            let image_data = PrivateImageData::new(protocol, pe_info).unwrap();
+            let mut image_data = PrivateImageData::new(protocol, pe_info).unwrap();
 
             let handle = image_data.install().unwrap();
             core_install_protocol_interface(
@@ -3496,7 +3746,7 @@ mod tests {
 
             let pe_info = UefiPeInfo::parse(&image).unwrap();
 
-            let image_data = PrivateImageData::new(protocol, pe_info).unwrap();
+            let mut image_data = PrivateImageData::new(protocol, pe_info).unwrap();
 
             let handle = image_data.install().unwrap();
             assert_eq!(image_data.uninstall(handle), Ok(()));

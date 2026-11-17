@@ -11,3 +11,5 @@
 //!
 
 pub mod hid_io;
+#[cfg(feature = "unstable-sbom")]
+pub mod sbom;
