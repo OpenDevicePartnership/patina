@@ -57,6 +57,11 @@ where
         }
     }
 
+    /// Initialize serial port.
+    pub fn init(&self) {
+        let _ = self.serial_port.init();
+    }
+
     /// Switches the logger to blocking (spinning) serial acquisition, consuming and returning `self`.
     ///
     /// In blocking mode, each record is written under a logger-level lock so concurrent cores
@@ -138,6 +143,7 @@ mod tests {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let sink = buffer.clone();
         let mut mock = MockSerialIO::new();
+        mock.expect_init().times(1).returning(|| ());
         mock.expect_write().returning(move |bytes| sink.lock().extend_from_slice(bytes));
         (mock, buffer)
     }
@@ -150,6 +156,7 @@ mod tests {
         ] {
             let (mock, buffer) = recording_serial();
             let logger = Logger::new(format, &[], LevelFilter::Trace, mock);
+            logger.init();
             let args = format_args!("hello");
             logger.log(&log::Record::builder().args(args).level(level).target("test").build());
             assert_eq!(String::from_utf8(buffer.lock().clone()).expect("valid utf8"), expected);
@@ -175,9 +182,11 @@ mod tests {
     #[test]
     fn test_serial_logger_disabled_noop() {
         let mut mock = MockSerialIO::new();
+        mock.expect_init().times(1).returning(|| ());
         mock.expect_write().never();
         mock.expect_flush().times(1).returning(|| ());
         let logger = Logger::new(Format::Standard, &[], LevelFilter::Warn, mock);
+        logger.init();
 
         let args = format_args!("should be filtered out");
         logger.log(&log::Record::builder().args(args).level(Level::Info).target("test").build());
@@ -196,6 +205,7 @@ mod tests {
     fn test_serial_logger_blocking_writes_intact_record() {
         let (mock, buffer) = recording_serial();
         let logger = Logger::new(Format::Standard, &[], LevelFilter::Trace, mock).with_blocking();
+        logger.init();
         assert!(logger.blocking);
 
         let args = format_args!("hello");
@@ -215,6 +225,7 @@ mod tests {
 
         let (mock, buffer) = recording_serial();
         let logger = Logger::new(Format::Standard, &[], LevelFilter::Trace, mock).with_blocking();
+        logger.init();
 
         thread::scope(|scope| {
             for message in ["aaaa", "bbbb"] {
