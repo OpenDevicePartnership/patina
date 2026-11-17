@@ -38,7 +38,7 @@ pub enum SmbiosError {
     RecordNotFound,
 
     // Handle management errors
-    /// All available handles have been exhausted (reached 0xFFFE limit)
+    /// All available handles have been exhausted (reached 0xFEFF limit)
     HandleExhausted,
     /// String index is out of range for the specified record
     StringIndexOutOfRange,
@@ -64,7 +64,7 @@ pub enum SmbiosError {
     UnsupportedVersion,
 
     // Record type errors
-    /// Type 127 End-of-Table marker is automatically managed and cannot be added manually
+    /// Type 127 End-of-Table marker is automatically managed and cannot be added or removed manually
     Type127Managed,
 
     // Table integrity errors
@@ -102,8 +102,10 @@ impl From<SmbiosError> for patina::error::EfiError {
             | SmbiosError::InvalidStringPoolTermination
             | SmbiosError::StringIndexOutOfRange
             | SmbiosError::Type127Managed
-            | SmbiosError::HandleInUse
             | SmbiosError::HandleOutOfRange => patina::error::EfiError::InvalidParameter,
+
+            // PI spec: Add() returns EFI_ALREADY_STARTED when the requested handle is in use
+            SmbiosError::HandleInUse => patina::error::EfiError::AlreadyStarted,
 
             // Not found errors map to NOT_FOUND
             SmbiosError::NoRecordsAvailable | SmbiosError::RecordNotFound => patina::error::EfiError::NotFound,
@@ -204,7 +206,7 @@ mod tests {
         assert_eq!(efi_err, patina::error::EfiError::InvalidParameter);
 
         let efi_err: patina::error::EfiError = SmbiosError::HandleInUse.into();
-        assert_eq!(efi_err, patina::error::EfiError::InvalidParameter);
+        assert_eq!(efi_err, patina::error::EfiError::AlreadyStarted);
 
         let efi_err: patina::error::EfiError = SmbiosError::HandleOutOfRange.into();
         assert_eq!(efi_err, patina::error::EfiError::InvalidParameter);

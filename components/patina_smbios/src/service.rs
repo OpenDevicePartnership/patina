@@ -32,6 +32,9 @@ use mockall::automock;
 /// SMBIOS record handle type (16-bit identifier)
 pub type SmbiosHandle = u16;
 
+/// Highest valid structure handle for SMBIOS 2.1+ (0xFF00-0xFFFF are reserved); held by the End-of-Table record.
+pub(crate) const SMBIOS_HANDLE_MAX: SmbiosHandle = 0xFEFF;
+
 /// SMBIOS record type
 pub type SmbiosType = u8;
 
