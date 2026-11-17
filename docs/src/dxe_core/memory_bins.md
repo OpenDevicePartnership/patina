@@ -199,6 +199,10 @@ a pool of pages obtained from the GCD. Two allocation paths must respect bin bou
    allocator expansion call `GCD.allocate_memory_space()` directly from within the `SpinLockedFixedSizeBlockAllocator`,
    bypassing `core_allocate_pages()`.
 
+Because the second path bypasses `core_allocate_pages()`, bin statistics are not recorded there. Both paths record
+them in the per-type allocator's `notify_page_allocation()` and `notify_pages_freed()`, which run whenever the
+allocator gets pages from or returns pages to the GCD. See [Statistics Tracking](#statistics-tracking).
+
 Two mechanisms ensure allocations land in bins and bins are protected:
 
 #### GCD Ownership Protection
