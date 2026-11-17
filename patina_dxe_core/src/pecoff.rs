@@ -9,6 +9,7 @@
 extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
+use core::mem::MaybeUninit;
 use patina::{UEFI_PAGE_SIZE, align_up, log_debug_assert};
 use scroll::{LE, Pread, Pwrite};
 
@@ -252,48 +253,69 @@ impl UefiPeInfo {
     }
 }
 
-/// Attempts to load the image into the specified bytes buffer.
+/// Loads an image into uninitialized storage, initializing the entire destination on success.
 ///
-/// Copies the provided image, section by section, into the zero'd out buffer after copying the
-/// headers, returning an error if it failed.
+/// Headers and section payloads are copied first, then unmapped bytes and page padding are zeroed.
 ///
-/// ## Errors
+/// # Errors
 ///
-/// Returns [`Parse`](error::Error::Parse) error if reading data from the image failed.
-///
-/// Returns [`Goblin`](error::Error::Goblin) error if parsing the PE32 header
-/// failed. Contains the exact parsing [`Error`](goblin::error::Error).
-///
-/// Returns [`BufferTooShort`](error::Error::BufferTooShort) error if either of the buffers provided are
-/// not large enough to contain the image as specified by the image header.
-///
-/// ## Panics
-///
-/// Panics if the `loaded_image` buffer is not the same length as the image.
-pub fn load_image(pe_info: &UefiPeInfo, image: &[u8], loaded_image: &mut [u8]) -> error::Result<()> {
-    loaded_image.fill(0);
-
+/// Returns [`BufferTooShort`](error::Error::BufferTooShort) if either buffer is too small
+/// for the specified headers or sections. On error the destination may remain partially uninitialized.
+pub fn load_image<'a>(
+    pe_info: &UefiPeInfo,
+    image: &[u8],
+    loaded_image: &'a mut [MaybeUninit<u8>],
+) -> error::Result<&'a mut [u8]> {
     let size_of_headers = pe_info.size_of_headers;
-    let dst =
+    let headers =
         loaded_image.get_mut(..size_of_headers).ok_or(error::Error::BufferTooShort(size_of_headers, "loaded_image"))?;
-    let src = image.get(..size_of_headers).ok_or(error::Error::BufferTooShort(size_of_headers, "image"))?;
-    dst.copy_from_slice(src);
+    let source = image.get(..size_of_headers).ok_or(error::Error::BufferTooShort(size_of_headers, "image"))?;
+    headers.write_copy_of_slice(source);
 
     for section in &pe_info.sections {
         let mut size = section.virtual_size;
         if size == 0 || size > section.size_of_raw_data {
             size = section.size_of_raw_data;
         }
-
-        let dst = loaded_image
-            .get_mut((section.virtual_address as usize)..(section.virtual_address as usize + size as usize))
+        let destination = loaded_image
+            .get_mut(section.virtual_address as usize..section.virtual_address as usize + size as usize)
             .ok_or(error::Error::BufferTooShort(size as usize, "loaded_image"))?;
-        let src = image
-            .get((section.pointer_to_raw_data as usize)..(section.pointer_to_raw_data as usize + size as usize))
+        let source = image
+            .get(section.pointer_to_raw_data as usize..section.pointer_to_raw_data as usize + size as usize)
             .ok_or(error::Error::BufferTooShort(size as usize, "image"))?;
-        dst.copy_from_slice(src);
+        destination.write_copy_of_slice(source);
     }
-    Ok(())
+
+    let mut initialized_end = size_of_headers;
+    while initialized_end < loaded_image.len() {
+        let mut next_start = loaded_image.len();
+        let mut next_end = initialized_end;
+        for section in &pe_info.sections {
+            let mut size = section.virtual_size;
+            if size == 0 || size > section.size_of_raw_data {
+                size = section.size_of_raw_data;
+            }
+            let start = section.virtual_address as usize;
+            let end = start + size as usize;
+            if start <= initialized_end {
+                next_end = next_end.max(end);
+            } else if size != 0 {
+                next_start = next_start.min(start);
+            }
+        }
+        if next_end > initialized_end {
+            initialized_end = next_end;
+        } else {
+            loaded_image
+                .get_mut(initialized_end..next_start)
+                .ok_or(error::Error::BufferTooShort(next_start, "loaded_image"))?
+                .fill(MaybeUninit::new(0));
+            initialized_end = next_start;
+        }
+    }
+
+    // SAFETY: Headers and section payloads were copied, and all uncovered ranges were zeroed.
+    Ok(unsafe { loaded_image.assume_init_mut() })
 }
 
 /// Attempts to relocate the image to the specified destination.
@@ -705,9 +727,9 @@ mod tests {
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
-        let mut loaded_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
+        let mut storage = vec![MaybeUninit::uninit(); image_info.size_of_image as usize];
 
-        load_image(&image_info, image, &mut loaded_image).unwrap();
+        let loaded_image = load_image(&image_info, image, &mut storage).unwrap();
         assert_eq!(loaded_image.len(), image_info.size_of_image as usize);
 
         let loaded_image_reference = include_bytes!("../resources/test/pe32/test_image_loaded.bin");
@@ -718,15 +740,60 @@ mod tests {
     }
 
     #[test]
+    fn test_load_image_matches_reference_and_zeroes_padding() {
+        let image = include_bytes!("../resources/test/pe32/test_image.pe32");
+        let pe_info = UefiPeInfo::parse(image).unwrap();
+        let reference = include_bytes!("../resources/test/pe32/test_image_loaded.bin");
+        let mut storage = vec![MaybeUninit::new(0xA5); reference.len() + UEFI_PAGE_SIZE];
+
+        let loaded_image = load_image(&pe_info, image, &mut storage).unwrap();
+
+        let (loaded, padding) = loaded_image.split_at(reference.len());
+        assert_eq!(loaded, reference);
+        assert!(padding.iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn test_load_image_handles_unordered_overlapping_sections() {
+        let mut pe_info = UefiPeInfo { size_of_headers: 2, ..Default::default() };
+        for (virtual_address, size, pointer_to_raw_data) in [(12, 2, 2), (4, 4, 4), (6, 4, 8), (15, 0, 0)] {
+            pe_info.sections.push(goblin::pe::section_table::SectionTable {
+                virtual_address,
+                virtual_size: size,
+                size_of_raw_data: size,
+                pointer_to_raw_data,
+                ..Default::default()
+            });
+        }
+        let image = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        let expected = [1, 2, 0, 0, 5, 6, 9, 10, 11, 12, 0, 0, 3, 4, 0, 0];
+        let mut storage = [MaybeUninit::uninit(); 16];
+
+        let loaded = load_image(&pe_info, &image, &mut storage).unwrap();
+
+        assert_eq!(loaded, &expected);
+    }
+
+    #[test]
+    fn test_load_image_does_not_initialize_storage_on_error() {
+        let pe_info = UefiPeInfo { size_of_headers: 2, ..Default::default() };
+        let mut storage = [MaybeUninit::new(0xA5); 16];
+
+        assert!(matches!(load_image(&pe_info, &[], &mut storage), Err(error::Error::BufferTooShort(..))));
+        // SAFETY: The sentinel initialized every byte before the failed load.
+        assert_eq!(unsafe { storage.assume_init_ref() }, &[0xA5; 16]);
+    }
+
+    #[test]
     fn pe_load_image_should_have_same_image_info() {
         test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let mut image_info = UefiPeInfo::parse(image).unwrap();
 
-        let mut loaded_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
+        let mut storage = vec![MaybeUninit::uninit(); image_info.size_of_image as usize];
 
-        load_image(&image_info, image, &mut loaded_image).unwrap();
-        let loaded_image_info = UefiPeInfo::parse(&loaded_image).unwrap();
+        let loaded_image = load_image(&image_info, image, &mut storage).unwrap();
+        let loaded_image_info = UefiPeInfo::parse(loaded_image).unwrap();
 
         //debug information is not included when loading an image in the present implementation, so filename will not be present.
         image_info.filename = None;
@@ -740,10 +807,10 @@ mod tests {
         let pe_info = UefiPeInfo::parse(image).unwrap();
         let edit_image = &image[0..image.len() - 0x1000];
 
-        let mut loaded_image: Vec<u8> = vec![0; pe_info.size_of_image as usize];
-        match load_image(&pe_info, edit_image, &mut loaded_image) {
+        let mut storage = vec![MaybeUninit::uninit(); pe_info.size_of_image as usize];
+        match load_image(&pe_info, edit_image, &mut storage) {
             Err(error::Error::BufferTooShort(..)) => {}
-            Ok(()) => panic!("Expected BufferTooShort error"),
+            Ok(_) => panic!("Expected BufferTooShort error"),
             Err(e) => panic!("Expected BufferTooShort error, got {e:?}"),
         }
     }
@@ -755,15 +822,15 @@ mod tests {
 
         let image_info = UefiPeInfo::parse(image).unwrap();
 
-        let mut relocated_once = vec![0; image_info.size_of_image as usize];
-        let mut relocated_twice = vec![0; image_info.size_of_image as usize];
+        let mut once_storage = vec![MaybeUninit::uninit(); image_info.size_of_image as usize];
+        let mut twice_storage = vec![MaybeUninit::uninit(); image_info.size_of_image as usize];
 
-        load_image(&image_info, image, &mut relocated_once).unwrap();
-        load_image(&image_info, image, &mut relocated_twice).unwrap();
+        let relocated_once = load_image(&image_info, image, &mut once_storage).unwrap();
+        let relocated_twice = load_image(&image_info, image, &mut twice_storage).unwrap();
 
-        let blocks = relocate_image(&image_info, 0x0FFF_FFFF, &mut relocated_once, &Vec::new()).unwrap();
-        let blocks = relocate_image(&image_info, 0x0FFF_FFFF, &mut relocated_twice, &blocks).unwrap();
-        relocate_image(&image_info, 0x0FFF_FFFF, &mut relocated_twice, &blocks).unwrap();
+        let blocks = relocate_image(&image_info, 0x0FFF_FFFF, relocated_once, &Vec::new()).unwrap();
+        let blocks = relocate_image(&image_info, 0x0FFF_FFFF, relocated_twice, &blocks).unwrap();
+        relocate_image(&image_info, 0x0FFF_FFFF, relocated_twice, &blocks).unwrap();
 
         assert_eq!(relocated_once, relocated_twice);
     }
@@ -774,11 +841,11 @@ mod tests {
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
-        let mut relocated_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
+        let mut storage = vec![MaybeUninit::uninit(); image_info.size_of_image as usize];
 
-        load_image(&image_info, image, &mut relocated_image).unwrap();
+        let relocated_image = load_image(&image_info, image, &mut storage).unwrap();
 
-        relocate_image(&image_info, 0x04158000, &mut relocated_image, &Vec::new()).unwrap();
+        relocate_image(&image_info, 0x04158000, relocated_image, &Vec::new()).unwrap();
 
         // the reference "test_image_relocated.bin" was generated by calling pe32_load_image and pe32_relocate_image
         // to generate a loaded image buffer and then dumping ito a file. This ensures that future changes to the code
@@ -796,13 +863,13 @@ mod tests {
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
 
-        let mut relocated_image: Vec<u8> = vec![0; image_info.size_of_image as usize];
+        let mut storage = vec![MaybeUninit::uninit(); image_info.size_of_image as usize];
 
-        load_image(&image_info, image, &mut relocated_image).unwrap();
+        let relocated_image = load_image(&image_info, image, &mut storage).unwrap();
 
-        let blocks = relocate_image(&image_info, 0x04158000, &mut relocated_image, &Vec::new()).unwrap();
+        let blocks = relocate_image(&image_info, 0x04158000, relocated_image, &Vec::new()).unwrap();
 
-        let mut reclocated_image_copy = relocated_image.clone();
+        let mut reclocated_image_copy = relocated_image.to_vec();
 
         let blocks = relocate_image(&image_info, 0x80000415, &mut reclocated_image_copy, &blocks).unwrap();
 
@@ -818,8 +885,8 @@ mod tests {
         test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
-        let mut loaded_image = vec![0; image_info.size_of_image as usize];
-        load_image(&image_info, image, &mut loaded_image).unwrap();
+        let mut storage = vec![MaybeUninit::uninit(); image_info.size_of_image as usize];
+        let loaded_image = load_image(&image_info, image, &mut storage).unwrap();
 
         // Cut the image short at the reloc dir
         let reloc_addr = image_info.reloc_dir.unwrap().virtual_address;
@@ -835,8 +902,8 @@ mod tests {
         test_support::init_test_logger();
         let image = include_bytes!("../resources/test/pe32/test_image.pe32");
         let image_info = UefiPeInfo::parse(image).unwrap();
-        let mut loaded_image = vec![0; image_info.size_of_image as usize];
-        load_image(&image_info, image, &mut loaded_image).unwrap();
+        let mut storage = vec![MaybeUninit::uninit(); image_info.size_of_image as usize];
+        let loaded_image = load_image(&image_info, image, &mut storage).unwrap();
 
         // Corrupt the first relocation entry's type nibble (top 4 bits of the u16
         // `type_and_offset`) to IMAGE_REL_BASED_HIGH (0x1).
@@ -846,7 +913,7 @@ mod tests {
         let corrupted = (entry & 0x0FFF) | (0x1 << 12);
         loaded_image[first_entry_offset..first_entry_offset + 2].copy_from_slice(&corrupted.to_le_bytes());
 
-        let result = relocate_image(&image_info, 0x7CC5_8000, &mut loaded_image, &Vec::new());
+        let result = relocate_image(&image_info, 0x7CC5_8000, loaded_image, &Vec::new());
         assert!(matches!(result, Err(error::Error::UnsupportedRelocation(0x1))), "unexpected result: {result:?}");
     }
 
@@ -904,14 +971,15 @@ mod tests {
         // tested here.
         let test_msvc_image_buffer = include_bytes!("../resources/test/pe32/test_image_msvc_hii.pe32");
         let test_msvc_image_info = UefiPeInfo::parse(test_msvc_image_buffer).unwrap();
-        let mut test_msvc_loaded_image: Vec<u8> = vec![0; test_msvc_image_info.size_of_image as usize];
-        load_image(&test_msvc_image_info, test_msvc_image_buffer, &mut test_msvc_loaded_image).unwrap();
+        let mut msvc_storage = vec![MaybeUninit::uninit(); test_msvc_image_info.size_of_image as usize];
+        let test_msvc_loaded_image =
+            load_image(&test_msvc_image_info, test_msvc_image_buffer, &mut msvc_storage).unwrap();
         assert_eq!(test_msvc_loaded_image.len(), test_msvc_image_info.size_of_image as usize);
 
         let test_file_gcc_image = include_bytes!("../resources/test/pe32/test_image_gcc_hii.pe32");
         let test_gcc_image_info = UefiPeInfo::parse(test_file_gcc_image).unwrap();
-        let mut test_gcc_loaded_image: Vec<u8> = vec![0; test_gcc_image_info.size_of_image as usize];
-        load_image(&test_gcc_image_info, test_file_gcc_image, &mut test_gcc_loaded_image).unwrap();
+        let mut gcc_storage = vec![MaybeUninit::uninit(); test_gcc_image_info.size_of_image as usize];
+        let test_gcc_loaded_image = load_image(&test_gcc_image_info, test_file_gcc_image, &mut gcc_storage).unwrap();
         assert_eq!(test_gcc_loaded_image.len(), test_gcc_image_info.size_of_image as usize);
 
         let ref_file = include_bytes!("../resources/test/pe32/test_image_hii_section.bin");
@@ -1234,7 +1302,7 @@ mod tests {
 
         assert!(image_info.filename.is_none());
 
-        let mut loaded_image = vec![0; image_info.size_of_image as usize];
-        load_image(&image_info, image, &mut loaded_image).unwrap();
+        let mut storage = vec![MaybeUninit::uninit(); image_info.size_of_image as usize];
+        load_image(&image_info, image, &mut storage).unwrap();
     }
 }

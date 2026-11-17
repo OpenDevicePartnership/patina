@@ -1,8 +1,8 @@
 //! Fuzz target for PE/COFF image loading and relocation.
 //!
 //! This follows the order in which the Patina DXE Core processes an image that parsed successfully: it reads the HII
-//! resource section from the source image, copies the headers and sections into a zeroed buffer of `SizeOfImage`
-//! bytes, and then applies relocation fixups for the address the image was allocated at. The relocation step is
+//! resource section from the source image, loads the headers and sections into a buffer of `SizeOfImage` bytes
+//! through the uninitialized-storage API, and then applies relocation fixups for its allocated address. The relocation step is
 //! repeated for a second address, passing the blocks from the first, because that is how the DXE Core moves an
 //! image again (for example when runtime images are relocated for `SetVirtualAddressMap()`).
 //!
@@ -25,6 +25,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use patina_dxe_core::fuzz::pecoff::{self, UefiPeInfo};
+use std::mem::MaybeUninit;
 
 /// The largest `SizeOfImage` the target will allocate a buffer for.
 ///
@@ -58,6 +59,13 @@ impl GuardedImage {
     fn image(&mut self) -> &mut [u8] {
         let end = self.arena.len() - GUARD_LEN;
         &mut self.arena[GUARD_LEN..end]
+    }
+
+    fn image_uninit(&mut self) -> &mut [MaybeUninit<u8>] {
+        let image = self.image();
+        // SAFETY: MaybeUninit<u8> has the same layout as u8. The exclusive borrow is preserved,
+        // and the loader only writes initialized bytes, leaving the backing arena valid on error too.
+        unsafe { std::slice::from_raw_parts_mut(image.as_mut_ptr().cast(), image.len()) }
     }
 
     fn assert_guards_intact(&self, step: &str) {
@@ -113,17 +121,19 @@ fuzz_target!(|data: &[u8]| {
 
     let mut arena = GuardedImage::new(size);
     arena.image().fill(IMAGE_FILL);
-    let loaded = pecoff::load_image(&pe_info, data, arena.image());
-    arena.assert_guards_intact("load_image");
+    let loaded = pecoff::load_image(&pe_info, data, arena.image_uninit());
     if loaded.is_err() {
+        arena.assert_guards_intact("load_image (error)");
         return;
     }
 
     // The loaded image must not depend on what the buffer held before: a byte that load_image does not write would
     // show up as a difference from a load into a buffer with a different fill.
-    let mut zeroed = vec![0u8; size];
-    pecoff::load_image(&pe_info, data, &mut zeroed).expect("load_image succeeded once, so it must succeed again");
-    assert!(arena.image() == &zeroed[..], "load_image left bytes of the buffer that it did not write");
+    let mut zeroed = vec![MaybeUninit::new(0); size];
+    let zeroed_image =
+        pecoff::load_image(&pe_info, data, &mut zeroed).expect("load_image succeeded once, so it must succeed again");
+    assert!(loaded.unwrap() == zeroed_image, "load_image left bytes of the buffer that it did not write");
+    arena.assert_guards_intact("load_image");
     drop(zeroed);
 
     let first = load_address(data, 1);
