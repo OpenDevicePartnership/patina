@@ -13,7 +13,7 @@
 extern crate alloc;
 use super::{AllocationStatistics, AllocationStrategy, DEFAULT_ALLOCATION_STRATEGY, PageAllocator};
 
-use crate::{gcd::SpinLockedGcd, tpl_mutex};
+use crate::{gcd::SpinLockedGcd, memory_bin::MemoryBinManager, tpl_mutex};
 
 use alloc::vec::Vec;
 use core::{
@@ -354,11 +354,7 @@ impl FixedSizeBlockAllocator {
             self.retired_page_cursor = NonNull::new(alloc_node_ptr).map(|node| (node, 0));
         }
 
-        if self.in_reserved_range(alloc_node_ptr.addr() as efi::PhysicalAddress) {
-            self.stats.reserved_used += new_region.len();
-        } else {
-            self.stats.claimed_pages += uefi_size_to_pages!(new_region.len());
-        }
+        self.notify_page_allocation(new_region);
 
         self.retire_new_region(alloc_node_ptr)
     }
@@ -862,21 +858,32 @@ impl FixedSizeBlockAllocator {
         Ok(())
     }
 
-    /// Tracks page allocations for record keeping
+    /// Tracks pages allocated from the GCD in the allocator and memory bin statistics.
     pub fn notify_page_allocation(&mut self, allocation: NonNull<[u8]>) {
         if self.in_reserved_range(allocation.addr().get() as efi::PhysicalAddress) {
             self.stats.reserved_used += allocation.len();
         } else {
             self.stats.claimed_pages += uefi_size_to_pages!(allocation.len());
         }
+
+        // The global allocator can run while the bin lock is held, so check the type before locking.
+        if MemoryBinManager::is_special_type(self.memory_type) {
+            super::MEMORY_BIN_MANAGER
+                .lock()
+                .record_allocation(self.memory_type, uefi_size_to_pages!(allocation.len()) as u64);
+        }
     }
 
-    /// Tracks page freeing for record keeping
+    /// Tracks pages returned to the GCD in the allocator and memory bin statistics.
     pub fn notify_pages_freed(&mut self, address: efi::PhysicalAddress, pages: usize) {
         if self.in_reserved_range(address) {
             self.stats.reserved_used = self.stats.reserved_used.saturating_sub(pages * UEFI_PAGE_SIZE);
         } else {
             self.stats.claimed_pages = self.stats.claimed_pages.saturating_sub(pages);
+        }
+
+        if MemoryBinManager::is_special_type(self.memory_type) {
+            super::MEMORY_BIN_MANAGER.lock().record_free(self.memory_type, pages as u64);
         }
     }
 

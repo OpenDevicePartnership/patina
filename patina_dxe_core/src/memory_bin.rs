@@ -191,6 +191,11 @@ impl MemoryBinManager {
         self.initialized
     }
 
+    /// Returns whether a memory type is tracked without acquiring the global bin-manager lock.
+    pub(crate) fn is_special_type(memory_type: efi::MemoryType) -> bool {
+        DEFAULT_STATISTICS.get(memory_type as usize).is_some_and(|stats| stats.special)
+    }
+
     /// Returns the allocation granularity for the given memory type.
     pub const fn granularity_for_type(memory_type: efi::MemoryType) -> usize {
         match memory_type {
