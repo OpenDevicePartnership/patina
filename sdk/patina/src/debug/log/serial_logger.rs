@@ -57,6 +57,11 @@ where
         }
     }
 
+    /// Initialize serial port.
+    pub fn init(&self) {
+        let _ = self.serial_port.init();
+    }
+
     /// Switches the logger to blocking (spinning) serial acquisition, consuming and returning `self`.
     ///
     /// In blocking mode, each record is written under a logger-level lock so concurrent cores
