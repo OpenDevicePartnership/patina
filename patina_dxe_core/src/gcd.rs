@@ -387,43 +387,44 @@ impl MemoryProtectionPolicy {
             for range in &loader_mem_ranges {
                 let mut addr = range.start;
                 while addr < range.end {
-                    let mut len = UEFI_PAGE_SIZE as u64;
-                    match gcd
-                        .get_memory_descriptor_for_address(addr, |d, _| d.memory_type != GcdMemoryType::NonExistent)
+                    let mut len;
+                    if let Ok(descriptor) =
+                        gcd.get_memory_descriptor_for_address(addr, |d, _| d.memory_type != GcdMemoryType::NonExistent)
                     {
-                        Ok(descriptor) => {
-                            let attributes = descriptor.attributes & !efi::MEMORY_XP;
-                            len = (descriptor.base_address + descriptor.length).min(range.end) - addr;
+                        let attributes = descriptor.attributes & !efi::MEMORY_XP;
+                        len = (descriptor.base_address + descriptor.length).min(range.end) - addr;
 
-                            // We need to ensure we are operating on page aligned addresses and lengths, as the image(s) that
-                            // were allocated here may not be page aligned. We don't share pools across types, so this is safe.
-                            (addr, len) = if let Ok((aligned_addr, aligned_len)) =
-                                align_range(addr, len, UEFI_PAGE_SIZE as u64)
-                            {
-                                (aligned_addr, aligned_len)
-                            } else {
-                                log_debug_assert!(
-                                    "Failed to align address {addr:#x?} + {len:#x?} to page size, compatibility mode may fail",
-                                );
-
-                                // If we can't align the address, we can't set the attributes, so try the next range
-                                addr += len;
-                                continue;
-                            };
-
-                            if gcd.set_memory_space_attributes(addr as usize, len as usize, attributes).is_err() {
-                                log_debug_assert!(
-                                    "Failed to set memory space attributes for range {addr:#x?} - {len:#x?}, compatibility mode may fail",
-                                );
-                            }
-                        }
-                        _ => {
+                        // We need to ensure we are operating on page aligned addresses and lengths, as the image(s) that
+                        // were allocated here may not be page aligned. We don't share pools across types, so this is safe.
+                        (addr, len) = if let Ok((aligned_addr, aligned_len)) =
+                            align_range(addr, len, UEFI_PAGE_SIZE as u64)
+                        {
+                            (aligned_addr, aligned_len)
+                        } else {
                             log_debug_assert!(
-                                "Failed to get memory space descriptor for range {:#x?} - {:#x?}, compatibility mode may fail",
-                                range.start,
-                                range.end,
+                                "Failed to align address {addr:#x?} + {len:#x?} to page size, compatibility mode may fail",
+                            );
+
+                            // If we can't align the address, we can't set the attributes, so try the next range
+                            addr += len;
+                            continue;
+                        };
+
+                        if gcd.set_memory_space_attributes(addr as usize, len as usize, attributes).is_err() {
+                            log_debug_assert!(
+                                "Failed to set memory space attributes for range {addr:#x?} - {len:#x?}, compatibility mode may fail",
                             );
                         }
+                    } else {
+                        log_debug_assert!(
+                            "Failed to get memory space descriptor for range {:#x?} - {:#x?}, compatibility mode may fail",
+                            range.start,
+                            range.end,
+                        );
+                        // if any part of the range isn't in the GCD, this is an issue we should catch in DEBUG
+                        // builds, however, it is possible we can still boot with this, so we should try page by
+                        // page until we find a valid GCD entry and fixup attributes on whatever we can.
+                        len = UEFI_PAGE_SIZE as u64;
                     }
                     addr += len;
                 }
