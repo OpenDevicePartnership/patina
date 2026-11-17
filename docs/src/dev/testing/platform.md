@@ -60,6 +60,37 @@ fn my_test1() -> Result { todo!() }
 fn my_test2() -> Result { todo!() }
 ```
 
+### Component-Owned Tests
+
+Use `#[requires(component = ComponentType)]` for a test that is only applicable when a specific component is
+registered:
+
+```rust
+# extern crate patina;
+# extern crate patina_test;
+use patina::component::component;
+use patina_test::{error::Result, patina_test};
+
+struct ComponentUnderTest;
+
+#[component]
+impl ComponentUnderTest {
+    fn entry_point(self) -> patina::error::Result<()> {
+        Ok(())
+    }
+}
+
+#[patina_test]
+#[requires(component = ComponentUnderTest)]
+fn component_test() -> Result {
+    Ok(())
+}
+```
+
+The test is omitted when no instance of `ComponentUnderTest` is registered with the platform's Patina DXE Core. If an
+instance is registered, the test's triggers are scheduled normally, but the test body does not execute until the
+component executes.
+
 ### Test Triggers
 
 There are three supported trigger types for patina_test tests.

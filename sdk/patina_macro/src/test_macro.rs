@@ -12,12 +12,13 @@
 use std::collections::HashMap;
 
 use quote::{ToTokens, format_ident, quote};
-use syn::{Attribute, ItemFn, Meta, Token, parse::Parser, punctuated::Punctuated, spanned::Spanned};
+use syn::{Attribute, ItemFn, Meta, Token, Type, parse::Parser, punctuated::Punctuated, spanned::Spanned};
 
 const KEY_SHOULD_FAIL: &str = "should_fail";
 const KEY_FAIL_MSG: &str = "fail_msg";
 const KEY_SKIP: &str = "skip";
 const KEY_TRIGGER: &str = "trigger";
+const KEY_COMPONENT_ID: &str = "component_id";
 
 pub fn patina_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let mut item = match syn::parse2::<ItemFn>(stream) {
@@ -57,8 +58,10 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
     map.insert(KEY_FAIL_MSG, quote! {None});
     map.insert(KEY_SKIP, quote! {false});
     map.insert(KEY_TRIGGER, quote! { &[patina_test::__private_api::TestTrigger::Manual] });
+    map.insert(KEY_COMPONENT_ID, quote! {None});
 
     let mut triggers = Vec::new();
+    let mut component_seen = false;
 
     let mut result = Ok(());
     item.attrs.retain(|attr| {
@@ -88,6 +91,23 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
                 }
             };
         }
+        if attr.path().is_ident("requires") {
+            if component_seen {
+                result = Err(syn::Error::new(
+                    attr.span(),
+                    "Only one #[requires(component = ComponentType)] attribute is supported.",
+                ));
+                return false;
+            }
+            match parse_requires_attr(attr) {
+                Ok(tokens) => {
+                    map.insert(KEY_COMPONENT_ID, tokens);
+                    component_seen = true;
+                }
+                Err(error) => result = Err(error),
+            }
+            return false;
+        }
         true
     });
 
@@ -98,6 +118,28 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
     }
 
     result.map(|()| map)
+}
+
+fn parse_requires_attr(attr: &Attribute) -> syn::Result<proc_macro2::TokenStream> {
+    let Meta::List(list) = &attr.meta else {
+        return Err(syn::Error::new(attr.span(), "Expected #[requires(component = ComponentType)]."));
+    };
+
+    let requirements = Punctuated::<Meta, Token![,]>::parse_terminated.parse2(list.tokens.clone())?;
+    if requirements.len() != 1 {
+        return Err(syn::Error::new(attr.span(), "Expected #[requires(component = ComponentType)]."));
+    }
+    let Some(Meta::NameValue(requirement)) = requirements.first() else {
+        return Err(syn::Error::new(attr.span(), "Expected #[requires(component = ComponentType)]."));
+    };
+    if !requirement.path.is_ident("component") {
+        return Err(syn::Error::new(requirement.path.span(), "Only the `component` requirement is supported."));
+    }
+
+    let component = syn::parse2::<Type>(requirement.value.to_token_stream())?;
+    Ok(quote! {
+        Some(|| core::any::TypeId::of::<#component>())
+    })
 }
 
 /// Adds an `#[allow(dead_code)]` attribute to the function to prevent warnings.
@@ -182,6 +224,8 @@ fn generate_expanded_test_case(
     let fail_msg = test_case_config.get(KEY_FAIL_MSG).expect("All configuration should have a default value set.");
     let skip = test_case_config.get(KEY_SKIP).expect("All configuration should have a default value set.");
     let trigger = test_case_config.get(KEY_TRIGGER).expect("All configuration should have a default value set.");
+    let component_id =
+        test_case_config.get(KEY_COMPONENT_ID).expect("All configuration should have a default value set.");
 
     let expanded = quote! {
         #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
@@ -190,6 +234,7 @@ fn generate_expanded_test_case(
         static #struct_name: patina_test::__private_api::TestCase =
         patina_test::__private_api::TestCase {
             name: concat!(module_path!(), "::", stringify!(#fn_name)),
+            component_id: #component_id,
             triggers: #trigger,
             skip: #skip,
             should_fail: #should_fail,
@@ -237,6 +282,7 @@ mod tests {
                 #[allow(non_upper_case_globals)]
                 static __my_test_case_TestCase: patina_test::__private_api::TestCase = patina_test::__private_api::TestCase {
                     name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                    component_id: None,
                     triggers: &[patina_test::__private_api::TestTrigger::Manual],
                     skip: false,
                     should_fail: false,
@@ -270,6 +316,7 @@ mod tests {
             static __my_test_case_TestCase: patina_test::__private_api::TestCase =
             patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                component_id: None,
                 triggers: &[patina_test::__private_api::TestTrigger::Manual],
                 skip: true,
                 should_fail: false,
@@ -320,6 +367,131 @@ mod tests {
 
         let attr = syn::parse_quote! { #[skip("message", "junk")] };
         assert!(::std::panic::catch_unwind(|| parse_skip_attr(&attr)).is_err());
+    }
+
+    #[test]
+    fn test_parse_requires_attr() {
+        let attr = syn::parse_quote! { #[requires(component = crate::MyComponent)] };
+        let component = parse_requires_attr(&attr).unwrap();
+        let expected = quote! { Some(|| core::any::TypeId::of::<crate::MyComponent>()) };
+        assert_eq!(component.to_string(), expected.to_string());
+
+        let attr = syn::parse_quote! { #[requires(crate::MyComponent)] };
+        assert!(parse_requires_attr(&attr).is_err());
+
+        let attr = syn::parse_quote! { #[requires(service = crate::MyService)] };
+        assert!(parse_requires_attr(&attr).is_err());
+
+        let attr = syn::parse_quote! { #[requires = "MyComponent"] };
+        assert!(parse_requires_attr(&attr).is_err());
+    }
+
+    #[test]
+    fn test_parse_requires_attr_rejects_malformed_requirements() {
+        let expected = "Expected #[requires(component = ComponentType)].";
+
+        let attr = syn::parse_quote! { #[requires()] };
+        assert_eq!(parse_requires_attr(&attr).unwrap_err().to_string(), expected);
+
+        let attr = syn::parse_quote! { #[requires(component = crate::A, component = crate::B)] };
+        assert_eq!(parse_requires_attr(&attr).unwrap_err().to_string(), expected);
+
+        let attr = syn::parse_quote! { #[requires(component)] };
+        assert_eq!(parse_requires_attr(&attr).unwrap_err().to_string(), expected);
+
+        let attr = syn::parse_quote! { #[requires(service = crate::MyService)] };
+        assert_eq!(
+            parse_requires_attr(&attr).unwrap_err().to_string(),
+            "Only the `component` requirement is supported."
+        );
+
+        let attr = syn::parse_quote! { #[requires(component = 42)] };
+        assert!(parse_requires_attr(&attr).is_err());
+
+        let attr = syn::parse_quote! { #[requires(component = , )] };
+        assert!(parse_requires_attr(&attr).is_err());
+    }
+
+    #[test]
+    fn test_with_duplicate_component_requirement() {
+        let stream = quote! {
+            #[patina_test]
+            #[requires(component = MyComponent)]
+            #[requires(component = OtherComponent)]
+            fn my_test_case() -> Result {
+                assert!(true);
+            }
+        };
+
+        let expanded = patina_test2(stream).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("Only one #[requires(component = ComponentType)] attribute is supported."));
+        assert!(!expanded.contains("TestCase"));
+    }
+
+    #[test]
+    fn test_with_invalid_component_requirement() {
+        let stream = quote! {
+            #[patina_test]
+            #[requires(service = MyService)]
+            fn my_test_case() -> Result {
+                assert!(true);
+            }
+        };
+
+        let expanded = patina_test2(stream).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("Only the `component` requirement is supported."));
+        assert!(!expanded.contains("TestCase"));
+    }
+
+    #[test]
+    fn test_feature_off_strips_component_requirement() {
+        let stream = quote! {
+            #[patina_test]
+            #[requires(component = MyComponent)]
+            fn my_test_case() -> Result {
+                assert!(true);
+            }
+        };
+
+        let expanded = patina_test_feature_off(stream).to_string();
+        assert!(!expanded.contains("requires"));
+        assert!(!expanded.contains("TestCase"));
+        assert!(expanded.contains("allow (dead_code)"));
+    }
+
+    #[test]
+    fn test_feature_off_reports_errors() {
+        let stream = quote! { struct NotAFunction; };
+        let expanded = patina_test_feature_off(stream).to_string();
+        assert!(expanded.contains("compile_error"));
+
+        let stream = quote! {
+            #[requires(service = MyService)]
+            fn my_test_case() -> Result {
+                assert!(true);
+            }
+        };
+        let expanded = patina_test_feature_off(stream).to_string();
+        assert!(expanded.contains("compile_error"));
+        assert!(expanded.contains("Only the `component` requirement is supported."));
+    }
+
+    #[test]
+    fn test_with_component_requirement() {
+        let stream = quote! {
+            #[patina_test]
+            #[requires(component = MyComponent)]
+            fn my_test_case() -> Result {
+                assert!(true);
+            }
+        };
+
+        let expanded = patina_test2(stream);
+        let expanded = expanded.to_string();
+        assert!(expanded.contains("TypeId :: of :: < MyComponent >"));
+        assert!(!expanded.contains("requires"));
     }
 
     #[test]
@@ -393,11 +565,12 @@ mod tests {
         assert_eq!(test_fn.attrs.len(), 1);
 
         // Test proper configuration
-        assert_eq!(tc_cfg.len(), 4); // If we add more attributes, this breaks, and we know to add more to the test.
+        assert_eq!(tc_cfg.len(), 5); // If we add more attributes, this breaks, and we know to add more to the test.
 
         assert_eq!(tc_cfg.get(KEY_SHOULD_FAIL).unwrap().to_string(), "true");
         assert_eq!(tc_cfg.get(KEY_FAIL_MSG).unwrap().to_string(), "Some (\"Expected Error\")");
         assert_eq!(tc_cfg.get(KEY_SKIP).unwrap().to_string(), "true");
+        assert_eq!(tc_cfg.get(KEY_COMPONENT_ID).unwrap().to_string(), "None");
         assert_eq!(
             tc_cfg.get(KEY_TRIGGER).unwrap().to_string(),
             "& [patina_test :: __private_api :: TestTrigger :: Manual]"
@@ -461,6 +634,7 @@ mod tests {
             static __my_test_case_TestCase: patina_test::__private_api::TestCase =
             patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                component_id: None,
                 triggers: &[patina_test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE)],
                 skip: true,
                 should_fail: true,
@@ -497,6 +671,7 @@ mod tests {
             static __my_test_case_TestCase: patina_test::__private_api::TestCase =
             patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                component_id: None,
                 triggers: &[
                     patina_test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE),
                     patina_test::__private_api::TestTrigger::Timer(1000000),
@@ -530,6 +705,7 @@ mod tests {
         config.insert(KEY_FAIL_MSG, quote! {Some("Expected Error")});
         config.insert(KEY_SKIP, quote! {false});
         config.insert(KEY_TRIGGER, quote! { patina_test::__private_api::TestTrigger::Manual });
+        config.insert(KEY_COMPONENT_ID, quote! {None});
 
         let expanded = generate_expanded_test_case(&item, &config);
 
@@ -540,6 +716,7 @@ mod tests {
             static __my_test_case_TestCase: patina_test::__private_api::TestCase =
             patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                component_id: None,
                 triggers: patina_test::__private_api::TestTrigger::Manual,
                 skip: false,
                 should_fail: true,

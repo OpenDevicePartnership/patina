@@ -19,6 +19,9 @@ should feel very similar to writing normal Rust unit tests with some additional 
    change when/how often a test is triggered. See the [patina_test] macro documentation for more details.
 5. Test dependencies can be injected as function parameters, and the test framework will resolve them from the
    component storage system. The test will not run if the dependency cannot be resolved.
+6. A test that is only applicable when a particular component is registered can use
+   `#[requires(component = ComponentType)]`. The test is reported as skipped when no instance of that component type
+   is registered with the platform's Patina DXE Core and does not execute until the component executes.
 
 ## Running Tests
 
@@ -56,6 +59,7 @@ use patina::component::service::{
     Service,
     uefi_services::timing::TimingServices,
 };
+use patina::component::component;
 use patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID;
 
 #[cfg_attr(target_arch = "aarch64", patina_test)]
@@ -88,6 +92,21 @@ fn failing_test_case_with_msg() -> Result {
 #[skip]
 fn skipped_test_case() -> Result {
    todo!()
+}
+
+struct ComponentUnderTest;
+
+#[component]
+impl ComponentUnderTest {
+  fn entry_point(self) -> patina::error::Result<()> {
+    Ok(())
+  }
+}
+
+#[patina_test]
+#[requires(component = ComponentUnderTest)]
+fn component_test_case() -> Result {
+  Ok(())
 }
 
 #[patina_test]
