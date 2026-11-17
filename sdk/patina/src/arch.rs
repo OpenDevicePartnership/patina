@@ -41,6 +41,7 @@ pub use arch_impl::{
 /// Enables CPU interrupts on the current architecture. This is only exposed to core modules
 /// due to its inherent risk of misuse. Most components should use TPLs to manage execution priority.
 #[cfg(feature = "core")]
+#[track_caller]
 pub fn enable_interrupts() {
     arch_impl::enable_interrupts();
 }
@@ -48,6 +49,7 @@ pub fn enable_interrupts() {
 /// Disables CPU interrupts on the current architecture. This is only exposed to core modules
 /// due to its inherent risk of misuse. Most components should use TPLs to manage execution priority.
 #[cfg(feature = "core")]
+#[track_caller]
 pub fn disable_interrupts() {
     arch_impl::disable_interrupts();
 }
@@ -59,6 +61,7 @@ pub fn disable_interrupts() {
 ///
 /// This function is only intended for low-level operations, and should not be used in
 /// components. Components should use the TPL (Task Priority Level) to manage interrupts.
+#[track_caller]
 pub(crate) fn with_interrupts_disabled<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,

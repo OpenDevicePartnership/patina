@@ -56,6 +56,7 @@ fn check_cpl0(name: &str) -> bool {
 /// # Panics
 ///
 /// Debug builds panic outside CPL 0.
+#[track_caller]
 pub fn virtual_address_bits() -> u32 {
     check_cpl0("virtual_address_bits");
     let cr4: u64;
@@ -94,6 +95,7 @@ pub unsafe fn io_out8(port: u16, value: u8) {
 /// # Panics
 ///
 /// Debug builds panic outside CPL 0.
+#[track_caller]
 pub unsafe fn read_msr(msr: u32) -> u64 {
     check_cpl0("read_msr");
     let low: u32;
@@ -121,6 +123,7 @@ pub unsafe fn read_msr(msr: u32) -> u64 {
 /// # Panics
 ///
 /// Debug builds panic outside CPL 0.
+#[track_caller]
 pub unsafe fn write_msr(msr: u32, value: u64) {
     check_cpl0("write_msr");
     let low = value as u32;
@@ -143,6 +146,7 @@ pub unsafe fn write_msr(msr: u32, value: u64) {
 ///
 /// Debug builds panic outside CPL 0. Release builds leave interrupts unchanged because `sti` would
 /// fault.
+#[track_caller]
 pub(crate) fn enable_interrupts() {
     if !check_cpl0("enable_interrupts") {
         return;
@@ -162,6 +166,7 @@ pub(crate) fn enable_interrupts() {
 ///
 /// Debug builds panic outside CPL 0. Release builds leave interrupts unchanged because `cli` would
 /// fault.
+#[track_caller]
 pub(crate) fn disable_interrupts() {
     if !check_cpl0("disable_interrupts") {
         return;
@@ -190,6 +195,7 @@ pub fn interrupts_enabled() -> bool {
 ///
 /// Debug builds panic outside CPL 0. Release builds return without halting because `sti` and
 /// `hlt` would fault.
+#[track_caller]
 pub fn enable_interrupts_and_sleep() {
     if !check_cpl0("enable_interrupts_and_sleep") {
         return;
@@ -207,6 +213,7 @@ pub fn enable_interrupts_and_sleep() {
 /// ## Errors
 ///
 /// Returns [`EfiError::Unsupported`] for [`CpuFlushType::EfiCpuFlushTypeWriteBack`].
+#[track_caller]
 pub fn flush_data_cache(_start: efi::PhysicalAddress, _length: u64, flush_type: CpuFlushType) -> Result<(), EfiError> {
     match flush_type {
         CpuFlushType::EfiCpuFlushTypeWriteBackInvalidate => {
@@ -277,6 +284,7 @@ pub fn get_timer_frequency() -> Option<NonZeroU64> {
 ///
 /// Debug builds panic outside CPL 0. Release builds leave the caches unchanged because `wbinvd`
 /// would fault.
+#[track_caller]
 fn asm_wbinvd() {
     if !check_cpl0("wbinvd") {
         return;
@@ -294,6 +302,7 @@ fn asm_wbinvd() {
 ///
 /// Debug builds panic outside CPL 0. Release builds leave the caches unchanged because `invd`
 /// would fault.
+#[track_caller]
 fn asm_invd() {
     if !check_cpl0("invd") {
         return;
