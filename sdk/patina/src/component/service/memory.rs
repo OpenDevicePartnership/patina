@@ -583,6 +583,28 @@ impl PageAllocation {
         unsafe { Box::from_raw_in(core::ptr::from_mut(slice), page_free) }
     }
 
+    /// Converts the allocation into a boxed slice without initializing or writing any elements.
+    ///
+    /// The length is the allocation's byte length divided by the size of `T`. Elements must
+    /// be initialized before being read as `T`. Dropping the box frees the pages without
+    /// dropping any `T` values, including values subsequently written into the slice.
+    ///
+    /// Prefer this when the consumer will initialize the elements. Use
+    /// [`Self::into_boxed_slice`] when default-initialized elements are needed immediately.
+    /// Before converting to `[T]`, every exposed element must be valid for `T`.
+    #[must_use]
+    #[deprecated(note = "This API is a temporary perf fix until a new PageAllocation API is available")]
+    #[cfg(any(test, feature = "alloc"))]
+    pub fn into_uninitialized_boxed_slice<T>(self) -> Box<[MaybeUninit<T>], PageFree> {
+        let page_free = self.get_page_free();
+        #[allow(deprecated)]
+        let slice = self.leak_as_uninitialized_slice::<T>();
+
+        // SAFETY: The slice is aligned, sized, and exclusively owned by this allocation.
+        // MaybeUninit<T> permits uninitialized elements. PageFree owns the matching pages.
+        unsafe { Box::from_raw_in(core::ptr::from_mut(slice), page_free) }
+    }
+
     /// Converts the allocation and leaks the memory as a mutable `T`.
     ///
     /// This function is similar to [`Box::leak`] in terms of caller responsibility for memory
@@ -621,6 +643,31 @@ impl PageAllocation {
             (*slice).fill_with(|| MaybeUninit::new(Default::default()));
             (slice as *mut [T]).as_mut().expect("Slice Pointer just created and is not null")
         }
+    }
+
+    /// Leaks the allocation as a mutable slice without initializing or writing any elements.
+    ///
+    /// The length is the allocation's byte length divided by the size of `T`. Elements must
+    /// be initialized before being read as `T`. As with [`Self::leak_as_slice`], the caller
+    /// is responsible for freeing the pages after all references to them have been dropped.
+    ///
+    /// Prefer this when the consumer will initialize the elements. Use
+    /// [`Self::leak_as_slice`] when default-initialized elements are needed immediately.
+    /// Before converting to `[T]`, every exposed element must be valid for `T`.
+    ///
+    /// `T` must have a nonzero size and have alignment of at most `UEFI_PAGE_SIZE` for the page allocation.
+    /// Both of these are checked at compile time.
+    #[deprecated(note = "This API is a temporary perf fix until a new PageAllocation API is available")]
+    #[must_use]
+    pub fn leak_as_uninitialized_slice<'a, T>(self) -> &'a mut [MaybeUninit<T>] {
+        const { assert!(size_of::<T>() != 0, "Cannot create a page slice of a zero-sized type") };
+        const { assert!(align_of::<T>() <= UEFI_PAGE_SIZE, "Page slice element alignment exceeds the page size") };
+        let slice = self.into_raw_slice::<MaybeUninit<T>>();
+
+        // SAFETY: The allocation is valid, exclusively owned, and checked for alignment.
+        // into_raw_slice sizes the slice to the allocation and transfers ownership.
+        // MaybeUninit<T> permits the existing uninitialized contents without writing them.
+        unsafe { &mut *slice }
     }
 
     /// Frees the allocated pages of memory this struct manages.
