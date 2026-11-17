@@ -34,10 +34,12 @@ RUSTC_PROFILE = "release"
 description = """Installs the project tools pinned in the `[tools]` section of
 `rust-toolchain.toml` at their specified versions. Each tool is installed with
 `cargo binstall`, falling back to `cargo install` when a prebuilt binary is not
-available. CI also installs and tests the tools in this section.
+available. `--locked` is used so source builds use the dependency versions the
+tool was published with (required by some tools like `cargo-nextest`). CI also
+installs and tests the tools in this section.
 
 `cargo-binstall` (https://github.com/cargo-bins/cargo-binstall) is installed
-automatically with `cargo install` when it is not already present.
+automatically with `cargo install --locked` when it is not already present.
 
 Example:
     `cargo make install-tools`
@@ -50,7 +52,7 @@ script = '''
 binstall_path = which cargo-binstall
 if is_empty ${binstall_path}
     echo "==> cargo-binstall not found. Installing it with cargo install..."
-    exec --fail-on-error cargo install cargo-binstall
+    exec --fail-on-error cargo install --locked cargo-binstall
 end
 
 toolchain_file = readfile rust-toolchain.toml
@@ -84,11 +86,12 @@ for line in ${lines}
                     version_parts = split ${version} "\""
                     version = array_get ${version_parts} 1
 
-                    result = exec cargo binstall -y ${name} --version ${version}
+                    # Note: --locked is passed to any `cargo install` binstall runs internally.
+                    result = exec cargo binstall -y --locked ${name} --version ${version}
                     output = set "${result.stdout}${result.stderr}"
                     if not eq ${result.code} "0"
                         echo "  building ${name} ${version} from source (no prebuilt binary)..."
-                        result = exec cargo install ${name} --version ${version}
+                        result = exec cargo install --locked ${name} --version ${version}
                         output = set "${result.stdout}${result.stderr}"
                     end
 
