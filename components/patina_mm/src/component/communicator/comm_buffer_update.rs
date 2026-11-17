@@ -67,8 +67,9 @@ pub(super) fn register_buffer_update_notify(
     }));
 
     log::trace!(target: "mm_comm", "Registering protocol notify - callback runs for present and future installs");
+    let callback_protocols = protocols.clone();
     protocols.on_protocol_installed::<MmCommBufferUpdateProtocol>(Tpl::Callback, move |handle| {
-        handle_protocol_installed(protocols, handle, context);
+        handle_protocol_installed(callback_protocols.clone(), handle, context);
     })?;
 
     log::debug!(

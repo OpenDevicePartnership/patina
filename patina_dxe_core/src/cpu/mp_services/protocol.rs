@@ -132,7 +132,7 @@ impl<M: MpDispatcher + 'static> MpProtocolWrapper<M> {
         finished: *mut efi::Boolean,
         failed_cpu_list: *mut *mut usize,
     ) -> DispatchCompletion {
-        let events = self.events;
+        let events = self.events.clone();
         Box::new(move |failed: &[usize]| {
             if !finished.is_null() {
                 // SAFETY: the caller guaranteed a valid, writable `Finished` out-pointer.

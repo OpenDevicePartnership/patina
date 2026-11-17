@@ -125,7 +125,7 @@ impl<T: ?Sized + 'static> ServiceCell<T> {
     /// Never blocks. Returns `None` both when nothing has been published yet and while a concurrent call to
     /// `publish` is in progress.
     pub fn get(&self) -> Option<Service<T>> {
-        if self.state.load(Ordering::Acquire) == DONE { self.value.get().copied() } else { None }
+        if self.state.load(Ordering::Acquire) == DONE { self.value.get().cloned() } else { None }
     }
 
     /// Returns the provided default result if nothing has been published yet, or applies `f` to the published

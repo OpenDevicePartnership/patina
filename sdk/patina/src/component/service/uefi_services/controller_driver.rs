@@ -45,7 +45,7 @@
 //!     drivers: Service<dyn DriverServices>,
 //!     tpl: Service<dyn TplServices>,
 //! ) -> patina::error::Result<()> {
-//!     let driver = install_controller_driver(protocols, tpl, BlockCounter)?;
+//!     let driver = install_controller_driver(protocols.clone(), tpl, BlockCounter)?;
 //!     for controller in protocols.locate_handles_for::<block_io::Protocol>()? {
 //!         // ConnectController() calls BlockCounter's supported() and start().
 //!         let _ = drivers.connect_controller(controller, false);
