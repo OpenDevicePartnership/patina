@@ -537,3 +537,886 @@ impl MmUserCore {
         efi::Status::SUCCESS.as_usize() as u64
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    use alloc::borrow::Cow;
+    use core::sync::atomic::AtomicU64;
+
+    use patina::{
+        component::{
+            MetaData, Storage, UnsafeStorageCell, component,
+            hob::{FromHob, Hob as ComponentHob, HobParseError},
+            params::{Config as ConfigParam, ConfigMut, Param},
+        },
+        management_mode::{
+            MmCommBufferStatus, event::MM_DISPATCH_EVENT_GROUP_GUID, mm_services::MmServiceProvider,
+            supervisor::MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+        },
+        pi::{
+            hob::{
+                END_OF_HOB_LIST, GUID_EXTENSION, GuidHob, HANDOFF, HobHeader, MEMORY_ALLOCATION,
+                MemoryAllocationHeader, MemoryAllocationModule,
+            },
+            mm_cis::EfiMmEntryContext,
+        },
+    };
+
+    use crate::component_dispatcher::{Add, Component, Config};
+
+    const HANDLER_GUID: efi::Guid = efi::Guid::from_fields(0x1111_0000, 0, 0, 0, 0, &[0, 0, 0, 0, 0, 1]);
+
+    static CORE: MmUserCore = MmUserCore::new();
+    static AP_ARGUMENT: AtomicU64 = AtomicU64::new(0);
+    static HANDLER_CALLS: AtomicU64 = AtomicU64::new(0);
+    static DISPATCH_ORDER: Mutex<Vec<&str>> = Mutex::new(Vec::new());
+    static NESTED_DISPATCH_STATUS: AtomicU64 = AtomicU64::new(0);
+    static NESTED_PREPARATION_STATUS: AtomicU64 = AtomicU64::new(0);
+    static PREPARATION_READY: AtomicBool = AtomicBool::new(false);
+    static DRIVER_READY: AtomicBool = AtomicBool::new(false);
+
+    struct PreparationProbe;
+
+    // SAFETY: this parameter accesses no storage and has no access requirements.
+    unsafe impl Param for PreparationProbe {
+        type State = ();
+        type Item<'storage, 'state> = Self;
+
+        unsafe fn get_param<'storage, 'state>(
+            _state: &'state Self::State,
+            _storage: UnsafeStorageCell<'storage>,
+        ) -> Self {
+            Self
+        }
+
+        fn validate(_state: &Self::State, _storage: UnsafeStorageCell) -> bool {
+            true
+        }
+
+        fn init_state(_storage: &mut Storage, _meta: &mut MetaData) -> Result<(), Cow<'static, str>> {
+            DISPATCH_ORDER.lock().push("parameter initialization");
+            Ok(())
+        }
+    }
+
+    struct DispatchValue(u64);
+
+    impl FromHob for DispatchValue {
+        const HOB_GUID: patina::BinaryGuid = patina::BinaryGuid::from_string("00000000-0000-0000-0000-0000000000a1");
+
+        fn parse(bytes: &[u8]) -> Result<Self, HobParseError> {
+            DISPATCH_ORDER.lock().push("HOB parsing");
+            Ok(Self(u64::from_le_bytes(bytes[..8].try_into().expect("test HOB contains a u64"))))
+        }
+    }
+
+    struct ConfigureDispatch;
+
+    impl ConfigureDispatch {
+        fn new() -> Self {
+            DISPATCH_ORDER.lock().push("construction");
+            Self
+        }
+    }
+
+    #[component]
+    impl ConfigureDispatch {
+        fn entry_point(
+            self,
+            mut config: ConfigMut<u64>,
+            hob: ComponentHob<DispatchValue>,
+            _probe: PreparationProbe,
+        ) -> patina::error::Result<()> {
+            *config = hob.0;
+            DISPATCH_ORDER.lock().push("mutable-config entry");
+            Ok(())
+        }
+    }
+
+    struct PublishDispatchProtocol;
+
+    #[component]
+    impl PublishDispatchProtocol {
+        fn entry_point(self, config: ConfigParam<u64>, services: MmServiceProvider) -> patina::error::Result<()> {
+            assert_eq!(*config, 42, "the mutable-config pass consumed the startup HOB");
+            DISPATCH_ORDER.lock().push("read-only-config entry");
+            // SAFETY: the installed protocol is a null marker with no borrowed interface.
+            unsafe {
+                services.install_protocol_interface(None, &HANDLER_GUID, core::ptr::null_mut()).unwrap();
+            }
+            // SAFETY: the dispatch event has no context or payload.
+            let nested = unsafe {
+                services.mmi_manage(
+                    Some(&MM_DISPATCH_EVENT_GROUP_GUID),
+                    core::ptr::null(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            NESTED_DISPATCH_STATUS.store(nested.as_usize() as u64, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct DispatchPlatform;
+
+    impl MmComponentInfo for DispatchPlatform {
+        fn configs(mut add: Add<Config>) {
+            // SAFETY: the core builds the MM System Table before any component callback.
+            let table = unsafe { &*CORE.mm_system_table_ptr() };
+            PREPARATION_READY.store(
+                CORE.initialized.load(Ordering::Acquire)
+                    && table.currently_executing_cpu == 1
+                    && table.number_of_cpus == 4,
+                Ordering::SeqCst,
+            );
+            DISPATCH_ORDER.lock().push("config registration");
+            add.config(0u64);
+        }
+
+        fn services(_add: Add<crate::component_dispatcher::Service>) {
+            DISPATCH_ORDER.lock().push("service registration");
+        }
+
+        fn components(mut add: Add<Component>) {
+            DISPATCH_ORDER.lock().push("component registration");
+            let nested = CORE.mmi_db.mmi_manage(
+                Some(&MM_DISPATCH_EVENT_GROUP_GUID),
+                core::ptr::null(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            );
+            NESTED_PREPARATION_STATUS.store(nested.as_usize() as u64, Ordering::SeqCst);
+            add.component(PublishDispatchProtocol);
+            add.component(ConfigureDispatch::new());
+        }
+    }
+
+    extern "efiapi" fn component_dependent_driver(handle: efi::Handle, table: *const c_void) -> efi::Status {
+        // SAFETY: the dispatcher passes the initialized MM System Table.
+        let table = unsafe { &*table.cast::<EfiMmSystemTable>() };
+        DRIVER_READY.store(
+            handle.is_null()
+                && table.currently_executing_cpu == 1
+                && table.number_of_cpus == 4
+                && CORE.protocol_db.locate_protocol(&HANDLER_GUID).is_some(),
+            Ordering::SeqCst,
+        );
+        DISPATCH_ORDER.lock().push("driver entry");
+        efi::Status::SUCCESS
+    }
+
+    /// Publishes the process-wide core instance. nextest gives each test its own process, so the
+    /// `Once` behind `set_instance` starts empty every time.
+    fn init_core() -> &'static MmUserCore {
+        assert!(CORE.set_instance(), "the core instance is set once per test process");
+        MmUserCore::instance()
+    }
+
+    extern "efiapi" fn record_ap_argument(argument: *mut c_void) {
+        AP_ARGUMENT.store(argument as u64, Ordering::SeqCst);
+    }
+
+    /// A platform that registers no components, configs or services.
+    pub(super) struct BarePlatform;
+    impl MmComponentInfo for BarePlatform {}
+
+    fn counting_handler(_: &efi::Guid, _: *mut c_void, _: *mut usize) -> efi::Status {
+        HANDLER_CALLS.fetch_add(1, Ordering::SeqCst);
+        efi::Status::SUCCESS
+    }
+
+    /// Reports a response far larger than the communication buffer it was given.
+    fn oversized_handler(_: &efi::Guid, _: *mut c_void, comm_buffer_size: *mut usize) -> efi::Status {
+        // SAFETY: `mmi_manage` passes a pointer to the dispatcher's own `data_size`.
+        unsafe { *comm_buffer_size = usize::MAX };
+        efi::Status::SUCCESS
+    }
+
+    /// Builds a contiguous PI HOB list rooted at a PHIT, which is the shape the supervisor hands
+    /// to `StartUserCore`.
+    ///
+    /// The HOB iterator walks raw memory from one header to the next, so the entries must be laid
+    /// out consecutively with every length a multiple of eight to keep the next header aligned.
+    pub(super) struct HobListBuffer {
+        bytes: Vec<u8>,
+        aligned: Vec<u64>,
+    }
+
+    impl HobListBuffer {
+        pub(super) fn new() -> Self {
+            let phit = PhaseHandoffInformationTable {
+                header: HobHeader {
+                    r#type: HANDOFF,
+                    length: size_of::<PhaseHandoffInformationTable>() as u16,
+                    reserved: 0,
+                },
+                version: 9,
+                boot_mode: patina::pi::BootMode::BootWithFullConfiguration,
+                memory_top: 0,
+                memory_bottom: 0,
+                free_memory_top: 0,
+                free_memory_bottom: 0,
+                end_of_hob_list: 0,
+            };
+
+            let mut this = Self { bytes: Vec::new(), aligned: Vec::new() };
+            // SAFETY: `PhaseHandoffInformationTable` is `repr(C)` over integers and a `repr(u32)`
+            // enum, so every byte is initialized.
+            this.bytes.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(
+                    core::ptr::from_ref(&phit).cast::<u8>(),
+                    size_of::<PhaseHandoffInformationTable>(),
+                )
+            });
+            this
+        }
+
+        fn guid_hob(mut self, guid: patina::BinaryGuid, payload: &[u8]) -> Self {
+            let length = (size_of::<GuidHob>() + payload.len()).next_multiple_of(8);
+            let header = GuidHob {
+                header: HobHeader { r#type: GUID_EXTENSION, length: length as u16, reserved: 0 },
+                name: guid,
+            };
+
+            // SAFETY: `GuidHob` is `repr(C)` and holds only integers and a GUID.
+            self.bytes.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(core::ptr::from_ref(&header).cast::<u8>(), size_of::<GuidHob>())
+            });
+            self.bytes.extend_from_slice(payload);
+            let padded = self.bytes.len() - payload.len() - size_of::<GuidHob>() + length;
+            self.bytes.resize(padded, 0);
+            self
+        }
+
+        fn driver(self) -> Self {
+            self.driver_at(component_dependent_driver as *const () as u64)
+        }
+
+        /// Appends a driver module HOB whose entry point is `entry_point`.
+        pub(super) fn driver_at(mut self, entry_point: u64) -> Self {
+            static IMAGE: [u8; 64] = [0; 64];
+            let module = MemoryAllocationModule {
+                header: HobHeader {
+                    r#type: MEMORY_ALLOCATION,
+                    length: size_of::<MemoryAllocationModule>() as u16,
+                    reserved: 0,
+                },
+                alloc_descriptor: MemoryAllocationHeader {
+                    name: MM_SUPERVISOR_HOB_MEMORY_ALLOC_MODULE_GUID,
+                    memory_base_address: IMAGE.as_ptr() as u64,
+                    memory_length: IMAGE.len() as u64,
+                    memory_type: efi::BOOT_SERVICES_CODE,
+                    reserved: [0; 4],
+                },
+                module_name: patina::BinaryGuid::from_string("00000000-0000-0000-0000-0000000000a2"),
+                entry_point,
+            };
+            // SAFETY: `MemoryAllocationModule` is repr(C), with all bytes initialized.
+            self.bytes.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(
+                    core::ptr::from_ref(&module).cast::<u8>(),
+                    size_of::<MemoryAllocationModule>(),
+                )
+            });
+            self
+        }
+
+        pub(super) fn build(mut self) -> Self {
+            let end = HobHeader { r#type: END_OF_HOB_LIST, length: size_of::<HobHeader>() as u16, reserved: 0 };
+            // SAFETY: `HobHeader` is `repr(C)` over integers.
+            self.bytes.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(core::ptr::from_ref(&end).cast::<u8>(), size_of::<HobHeader>())
+            });
+
+            self.aligned = vec![0u64; self.bytes.len().div_ceil(8)];
+            // SAFETY: `aligned` owns at least `bytes.len()` bytes and is 8-byte aligned.
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    self.bytes.as_ptr(),
+                    self.aligned.as_mut_ptr().cast::<u8>(),
+                    self.bytes.len(),
+                );
+            }
+            self
+        }
+
+        pub(super) fn as_ptr(&self) -> *const c_void {
+            self.aligned.as_ptr().cast::<c_void>()
+        }
+    }
+
+    /// A legacy-format MM communication buffer of `total` bytes.
+    fn legacy_comm_buffer(guid: efi::Guid, message: &[u8], total: usize) -> Vec<u64> {
+        let mut storage = vec![0u64; total.div_ceil(8).max(1)];
+        let header = EfiMmCommunicateHeader::new(patina::Guid::from_ref(&guid), message.len());
+        // SAFETY: `storage` is 8-byte aligned and sized for the header plus the message.
+        unsafe {
+            let base = storage.as_mut_ptr().cast::<u8>();
+            core::ptr::copy_nonoverlapping(header.as_bytes().as_ptr(), base, EfiMmCommunicateHeader::size());
+            core::ptr::copy_nonoverlapping(message.as_ptr(), base.add(EfiMmCommunicateHeader::size()), message.len());
+        }
+        storage
+    }
+
+    /// Byte size of the V3 communicate header.
+    fn v3_header_size() -> usize {
+        mem::size_of::<patina::pi::protocol::communication3::EfiMmCommunicateHeader>()
+    }
+
+    /// A V3-format MM communication buffer of `total` bytes, whose `buffer_size` field claims
+    /// `claimed_buffer_size`.
+    fn v3_comm_buffer(message_guid: efi::Guid, total: usize, claimed_buffer_size: u64) -> Vec<u64> {
+        let mut storage = vec![0u64; total.div_ceil(8).max(1)];
+        // SAFETY: `storage` is 8-byte aligned; each field is written within `total` bytes, and
+        // callers that build a short buffer only write the parts that fit.
+        unsafe {
+            let base = storage.as_mut_ptr().cast::<u8>();
+            let v3_guid = patina::pi::protocol::communication3::COMMUNICATE_HEADER_V3_GUID;
+            core::ptr::copy_nonoverlapping(v3_guid.as_bytes().as_ptr(), base, 16);
+            if total >= 24 {
+                core::ptr::write_unaligned(base.add(16).cast::<u64>(), claimed_buffer_size);
+            }
+            if total >= v3_header_size() {
+                let guid_offset =
+                    core::mem::offset_of!(patina::pi::protocol::communication3::EfiMmCommunicateHeader, message_guid);
+                core::ptr::copy_nonoverlapping(
+                    core::ptr::from_ref(&message_guid).cast::<u8>(),
+                    base.add(guid_offset),
+                    16,
+                );
+            }
+        }
+        storage
+    }
+
+    #[test]
+    fn test_new_core_is_uninitialized() {
+        let core = MmUserCore::default();
+
+        assert!(MmUserCore::try_instance().is_none());
+        assert!(core.mm_system_table_ptr().is_null());
+        assert!(!core.initialized.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn test_set_instance_publishes_the_core_once() {
+        static OTHER: MmUserCore = MmUserCore::new();
+
+        assert!(CORE.set_instance());
+        assert!(core::ptr::eq(MmUserCore::instance(), &raw const CORE));
+
+        // A second core cannot displace the published one.
+        assert!(!OTHER.set_instance());
+        assert!(core::ptr::eq(MmUserCore::try_instance().unwrap(), &raw const CORE));
+    }
+
+    #[test]
+    fn test_entry_point_worker_rejects_an_unknown_command() {
+        let core = init_core();
+
+        let status = core.entry_point_worker::<BarePlatform>(99, 0, 0);
+
+        assert_eq!(status, efi::Status::INVALID_PARAMETER.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_start_user_core_rejects_a_null_hob_list() {
+        let core = init_core();
+
+        let status = core.entry_point_worker::<BarePlatform>(UserCommandType::StartUserCore as u64, 0, 0);
+
+        assert_eq!(status, efi::Status::INVALID_PARAMETER.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_start_user_core_initializes_and_refuses_to_run_twice() {
+        let hobs = HobListBuffer::new().build();
+
+        let status =
+            CORE.entry_point_worker::<BarePlatform>(UserCommandType::StartUserCore as u64, hobs.as_ptr() as u64, 0);
+        assert_eq!(status, efi::Status::SUCCESS.as_usize() as u64);
+
+        let core = MmUserCore::instance();
+        assert!(core.initialized.load(Ordering::Acquire));
+        assert!(!core.mm_system_table_ptr().is_null(), "the MM System Table was built");
+        // The HOB list is published so dispatched drivers can find it through the system table.
+        assert_eq!(
+            core.config_table_db.get_configuration_table(&patina::pi::guid::HOB_LIST_TABLE_GUID),
+            Some(hobs.as_ptr().cast_mut())
+        );
+
+        // A repeat StartUserCore must not re-initialize.
+        let repeat =
+            CORE.entry_point_worker::<BarePlatform>(UserCommandType::StartUserCore as u64, hobs.as_ptr() as u64, 0);
+        assert_eq!(repeat, efi::Status::ALREADY_STARTED.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_start_user_core_refuses_while_another_core_is_published() {
+        static OTHER: MmUserCore = MmUserCore::new();
+        assert!(OTHER.set_instance());
+        let hobs = HobListBuffer::new().build();
+
+        let status =
+            CORE.entry_point_worker::<BarePlatform>(UserCommandType::StartUserCore as u64, hobs.as_ptr() as u64, 0);
+
+        assert_eq!(status, efi::Status::ALREADY_STARTED.as_usize() as u64);
+        // The published core keeps serving, and the refused one is left untouched.
+        assert!(core::ptr::eq(MmUserCore::instance(), &raw const OTHER));
+        assert!(!CORE.initialized.load(Ordering::Acquire));
+        assert!(CORE.mm_system_table_ptr().is_null());
+        assert_eq!(CORE.config_table_db.get_configuration_table(&patina::pi::guid::HOB_LIST_TABLE_GUID), None);
+    }
+
+    #[test]
+    fn test_components_dispatch_with_drivers_only_on_the_dispatch_event() {
+        let comm = legacy_comm_buffer(MM_DISPATCH_EVENT_GROUP_GUID.into_inner(), &[], patina::UEFI_PAGE_SIZE);
+        let hobs = HobListBuffer::new().guid_hob(DispatchValue::HOB_GUID, &42u64.to_le_bytes()).driver().build();
+
+        let status =
+            CORE.entry_point_worker::<DispatchPlatform>(UserCommandType::StartUserCore as u64, hobs.as_ptr() as u64, 0);
+        assert_eq!(status, efi::Status::SUCCESS.as_usize() as u64);
+        assert!(DISPATCH_ORDER.lock().is_empty(), "startup must not execute any component-supplied code");
+        assert!(CORE.protocol_db.locate_protocol(&HANDLER_GUID).is_none());
+        mm_mem::mock::set_handler(|index, _, _, _| {
+            assert_eq!(index, patina::management_mode::supervisor::SyscallIndex::MmIsCommBuffer.as_u64());
+            1
+        });
+
+        let expected = [
+            "config registration",
+            "service registration",
+            "component registration",
+            "construction",
+            "parameter initialization",
+            "HOB parsing",
+            "mutable-config entry",
+            "read-only-config entry",
+            "driver entry",
+        ];
+        for (valid, expected_order, expected_status) in [
+            (0, &[][..], efi::Status::SUCCESS),
+            (1, &expected[..], efi::Status::SUCCESS),
+            (1, &expected[..], efi::Status::NOT_FOUND),
+        ] {
+            let mut request = MmUserRequest {
+                entry_context: EfiMmEntryContext {
+                    mm_startup_this_ap: 0,
+                    currently_executing_cpu: 1,
+                    number_of_cpus: 4,
+                    cpu_save_state_size: 0,
+                    cpu_save_state: 0,
+                },
+                status: MmCommBufferStatus {
+                    is_comm_buffer_valid: valid,
+                    _padding: [0; 7],
+                    return_status: 0,
+                    return_buffer_size: 0,
+                },
+                comm_buffer_address: comm.as_ptr() as u64,
+                comm_buffer_size: patina::UEFI_PAGE_SIZE as u64,
+            };
+            let result = CORE.entry_point_worker::<DispatchPlatform>(
+                UserCommandType::UserRequest as u64,
+                core::ptr::from_mut(&mut request) as u64,
+                size_of::<MmUserRequest>() as u64,
+            );
+            assert_eq!(result, efi::Status::SUCCESS.as_usize() as u64);
+            assert_eq!(DISPATCH_ORDER.lock().as_slice(), expected_order);
+            assert_eq!(request.status.return_status, expected_status.as_usize() as u64);
+        }
+
+        assert!(PREPARATION_READY.load(Ordering::SeqCst), "preparation must wait for the request's CPU context");
+        assert!(DRIVER_READY.load(Ordering::SeqCst), "components and CPU context must be ready before drivers");
+        assert_eq!(
+            NESTED_PREPARATION_STATUS.load(Ordering::SeqCst),
+            efi::Status::NOT_FOUND.as_usize() as u64,
+            "the handler must retire before invoking registration callbacks"
+        );
+        assert_eq!(
+            NESTED_DISPATCH_STATUS.load(Ordering::SeqCst),
+            efi::Status::NOT_FOUND.as_usize() as u64,
+            "the handler must retire before calling components to prevent recursive dispatch"
+        );
+    }
+
+    #[test]
+    fn test_init_mm_system_table_builds_the_table_once() {
+        let core = init_core();
+
+        let first = core.init_mm_system_table();
+        let second = core.init_mm_system_table();
+
+        assert!(!first.is_null());
+        assert_eq!(first, second, "the table is allocated once and reused");
+        assert_eq!(core.mm_system_table_ptr(), first);
+    }
+
+    #[test]
+    fn test_update_cpu_context_is_a_no_op_without_a_system_table() {
+        let core = init_core();
+
+        // Must not dereference the null table pointer.
+        core.update_cpu_context(1, 4);
+
+        assert!(core.mm_system_table_ptr().is_null());
+    }
+
+    #[test]
+    fn test_update_cpu_context_reflects_the_executing_processor() {
+        let core = init_core();
+        let table = core.init_mm_system_table();
+
+        core.update_cpu_context(3, 8);
+
+        // SAFETY: the table is heap-allocated and lives for the process.
+        unsafe {
+            assert_eq!((*table).currently_executing_cpu, 3);
+            assert_eq!((*table).number_of_cpus, 8);
+        }
+    }
+
+    #[test]
+    fn test_ap_procedure_rejects_a_null_pointer() {
+        let core = init_core();
+
+        let status = core.entry_point_worker::<BarePlatform>(UserCommandType::UserApProcedure as u64, 0, 0);
+
+        assert_eq!(status, efi::Status::INVALID_PARAMETER.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_ap_procedure_invokes_the_supplied_routine() {
+        let core = init_core();
+        let procedure = (record_ap_argument as extern "efiapi" fn(*mut c_void)) as usize as u64;
+
+        let status =
+            core.entry_point_worker::<BarePlatform>(UserCommandType::UserApProcedure as u64, procedure, 0xabcd);
+
+        assert_eq!(status, efi::Status::SUCCESS.as_usize() as u64);
+        assert_eq!(AP_ARGUMENT.load(Ordering::SeqCst), 0xabcd);
+    }
+
+    #[test]
+    fn test_user_request_rejects_a_null_buffer() {
+        let core = init_core();
+
+        let status = core.entry_point_worker::<BarePlatform>(
+            UserCommandType::UserRequest as u64,
+            0,
+            size_of::<MmUserRequest>() as u64,
+        );
+
+        assert_eq!(status, efi::Status::INVALID_PARAMETER.as_usize() as u64);
+    }
+
+    #[test]
+    fn test_user_request_rejects_an_invalid_handoff_size_before_reading_it() {
+        let core = init_core();
+        let expected = size_of::<MmUserRequest>() as u64;
+
+        for size in [0, size_of::<EfiMmEntryContext>() as u64, expected - 1, expected + 1, u64::MAX] {
+            let status = core.entry_point_worker::<BarePlatform>(UserCommandType::UserRequest as u64, 1, size);
+
+            assert_eq!(status, efi::Status::INVALID_PARAMETER.as_usize() as u64);
+        }
+    }
+
+    #[test]
+    fn test_user_request_uses_each_handoff_without_a_comm_buffer_hob() {
+        let hobs = HobListBuffer::new().build();
+        assert_eq!(
+            CORE.entry_point_worker::<BarePlatform>(UserCommandType::StartUserCore as u64, hobs.as_ptr() as u64, 0),
+            efi::Status::SUCCESS.as_usize() as u64
+        );
+        CORE.mmi_db.register_internal_handler(counting_handler, Some(&HANDLER_GUID)).expect("handler registers");
+
+        let legacy = legacy_comm_buffer(HANDLER_GUID, &[0xAA; 8], 64);
+        let v3 = v3_comm_buffer(HANDLER_GUID, 96, 96);
+        for (index, (address, capacity, response_size)) in
+            [(legacy.as_ptr() as u64, 64, EfiMmCommunicateHeader::size() as u64 + 8), (v3.as_ptr() as u64, 96, 96)]
+                .into_iter()
+                .enumerate()
+        {
+            mm_mem::mock::set_handler(move |call_index, supplied_address, supplied_size, arg3| {
+                assert_eq!(call_index, patina::management_mode::supervisor::SyscallIndex::MmIsCommBuffer.as_u64());
+                assert_eq!(supplied_address, address);
+                assert_eq!(supplied_size, capacity);
+                assert_eq!(arg3, 0);
+                1
+            });
+            let mut request = MmUserRequest {
+                entry_context: EfiMmEntryContext {
+                    mm_startup_this_ap: 0,
+                    currently_executing_cpu: 0,
+                    number_of_cpus: 1,
+                    cpu_save_state_size: 0,
+                    cpu_save_state: 0,
+                },
+                status: MmCommBufferStatus { is_comm_buffer_valid: 1, ..MmCommBufferStatus::new() },
+                comm_buffer_address: address,
+                comm_buffer_size: capacity,
+            };
+
+            let status = CORE.entry_point_worker::<BarePlatform>(
+                UserCommandType::UserRequest as u64,
+                core::ptr::from_mut(&mut request) as u64,
+                size_of::<MmUserRequest>() as u64,
+            );
+
+            assert_eq!(status, efi::Status::SUCCESS.as_usize() as u64);
+            assert_eq!(request.status.is_comm_buffer_valid, 0);
+            assert_eq!(request.status.return_status, efi::Status::SUCCESS.as_usize() as u64);
+            assert_eq!(request.status.return_buffer_size, response_size);
+            assert_eq!(request.comm_buffer_address, address);
+            assert_eq!(request.comm_buffer_size, capacity);
+            assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), index as u64 + 1);
+        }
+    }
+
+    #[test]
+    fn test_user_request_rejects_an_unapproved_buffer_before_reading_it() {
+        let core = init_core();
+        core.mmi_db.register_internal_handler(counting_handler, None).expect("root handler registers");
+
+        for address in [0, 0xDEAD_0000] {
+            mm_mem::mock::set_handler(move |call_index, supplied_address, supplied_size, _| {
+                assert_eq!(call_index, patina::management_mode::supervisor::SyscallIndex::MmIsCommBuffer.as_u64());
+                assert_eq!(supplied_address, address);
+                assert_eq!(supplied_size, 64);
+                0
+            });
+            let mut request = MmUserRequest {
+                entry_context: EfiMmEntryContext {
+                    mm_startup_this_ap: 0,
+                    currently_executing_cpu: 0,
+                    number_of_cpus: 1,
+                    cpu_save_state_size: 0,
+                    cpu_save_state: 0,
+                },
+                status: MmCommBufferStatus { is_comm_buffer_valid: 1, ..MmCommBufferStatus::new() },
+                comm_buffer_address: address,
+                comm_buffer_size: 64,
+            };
+
+            let status = core.entry_point_worker::<BarePlatform>(
+                UserCommandType::UserRequest as u64,
+                core::ptr::from_mut(&mut request) as u64,
+                size_of::<MmUserRequest>() as u64,
+            );
+
+            assert_eq!(status, efi::Status::SUCCESS.as_usize() as u64);
+            assert_eq!(request.status.is_comm_buffer_valid, 0);
+            assert_eq!(request.status.return_status, efi::Status::NOT_FOUND.as_usize() as u64);
+            assert_eq!(request.status.return_buffer_size, 0);
+        }
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 2, "root handlers still run for each rejected request");
+    }
+
+    #[test]
+    fn test_user_request_dispatches_root_handlers_and_preserves_the_status() {
+        let core = init_core();
+        core.mmi_db.register_internal_handler(counting_handler, None).expect("root handler registers");
+
+        let context = EfiMmEntryContext {
+            mm_startup_this_ap: 0,
+            currently_executing_cpu: 2,
+            number_of_cpus: 6,
+            cpu_save_state_size: 0,
+            cpu_save_state: 0,
+        };
+        let status =
+            MmCommBufferStatus { is_comm_buffer_valid: 0, _padding: [0; 7], return_status: 7, return_buffer_size: 9 };
+        let mut request = MmUserRequest { entry_context: context, status, comm_buffer_address: 0, comm_buffer_size: 0 };
+        mm_mem::mock::set_handler(|_, _, _, _| panic!("an asynchronous request must not validate a comm buffer"));
+        let table = core.init_mm_system_table();
+
+        let result = core.entry_point_worker::<BarePlatform>(
+            UserCommandType::UserRequest as u64,
+            core::ptr::from_mut(&mut request) as u64,
+            size_of::<MmUserRequest>() as u64,
+        );
+
+        assert_eq!(result, efi::Status::SUCCESS.as_usize() as u64);
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 1, "the async root dispatch always runs");
+        // The entry context is reflected into the system table for dispatched drivers.
+        // SAFETY: the table is heap-allocated and lives for the process.
+        unsafe {
+            assert_eq!((*table).currently_executing_cpu, 2);
+            assert_eq!((*table).number_of_cpus, 6);
+        }
+        // With no valid comm buffer the status block is written back untouched.
+        let written = request.status;
+        assert_eq!(written.return_status, 7);
+        assert_eq!(written.return_buffer_size, 9);
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_buffer_too_small_for_a_header() {
+        crate::test_support::init_test_logger();
+        let core = init_core();
+        let buffer = legacy_comm_buffer(HANDLER_GUID, &[], EfiMmCommunicateHeader::size());
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(
+            buffer.as_ptr() as u64,
+            (EfiMmCommunicateHeader::size() - 1) as u64,
+            &mut returned,
+        );
+
+        assert_eq!(status, efi::Status::BAD_BUFFER_SIZE);
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_message_longer_than_the_buffer() {
+        let core = init_core();
+        let total = EfiMmCommunicateHeader::size() + 8;
+        // Claim a longer message than the buffer can hold.
+        let buffer = legacy_comm_buffer(HANDLER_GUID, &[0xAA; 8], total);
+        // SAFETY: the header occupies the first bytes of the buffer.
+        unsafe {
+            (*(buffer.as_ptr() as *mut EfiMmCommunicateHeader)).message_length = 0x1000;
+        }
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+        assert_eq!(status, efi::Status::BAD_BUFFER_SIZE);
+    }
+
+    #[test]
+    fn test_synchronous_mmi_dispatches_the_message_guid() {
+        let core = init_core();
+        core.mmi_db.register_internal_handler(counting_handler, Some(&HANDLER_GUID)).expect("handler registers");
+
+        let message = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let total = EfiMmCommunicateHeader::size() + 16;
+        let buffer = legacy_comm_buffer(HANDLER_GUID, &message, total);
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+        assert_eq!(status, efi::Status::SUCCESS);
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(returned, (EfiMmCommunicateHeader::size() + message.len()) as u64);
+
+        // The tail past the message is zeroed, matching the C implementation.
+        // SAFETY: the buffer owns `total` bytes.
+        let tail = unsafe {
+            core::slice::from_raw_parts(
+                buffer.as_ptr().cast::<u8>().add(EfiMmCommunicateHeader::size() + message.len()),
+                total - EfiMmCommunicateHeader::size() - message.len(),
+            )
+        };
+        assert!(tail.iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn test_synchronous_mmi_reports_not_found_for_an_unhandled_guid() {
+        let core = init_core();
+        let total = EfiMmCommunicateHeader::size() + 8;
+        let buffer = legacy_comm_buffer(HANDLER_GUID, &[0; 8], total);
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+        assert_eq!(status, efi::Status::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_response_larger_than_the_buffer() {
+        let core = init_core();
+        core.mmi_db.register_internal_handler(oversized_handler, Some(&HANDLER_GUID)).expect("handler registers");
+
+        let total = EfiMmCommunicateHeader::size() + 16;
+        let buffer = legacy_comm_buffer(HANDLER_GUID, &[0xAA; 8], total);
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+        // The size travels to the non-MM caller, which uses it to read the response out of the
+        // communication buffer, so a length it cannot hold is refused rather than shortened.
+        assert_eq!(status, efi::Status::BAD_BUFFER_SIZE);
+        assert_eq!(returned, 0);
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_v3_header_that_does_not_fit() {
+        let core = init_core();
+
+        // A caller picks the V3 layout through a GUID that sits in the part both layouts share,
+        // so a buffer holding only a legacy header can still select the larger V3 header. Reading
+        // it would run past the end of the communication buffer.
+        for total in [EfiMmCommunicateHeader::size(), v3_header_size() - 1] {
+            let buffer = v3_comm_buffer(HANDLER_GUID, total, total as u64);
+            let mut returned = 0;
+
+            let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+            assert_eq!(status, efi::Status::BAD_BUFFER_SIZE, "a {total}-byte buffer was accepted as V3");
+        }
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_v3_total_outside_the_buffer() {
+        let core = init_core();
+        let total = v3_header_size() + 16;
+
+        // Larger than the buffer, and smaller than the header it must account for.
+        for claimed in [total as u64 + 1, u64::MAX, 0, v3_header_size() as u64 - 1] {
+            let buffer = v3_comm_buffer(HANDLER_GUID, total, claimed);
+            let mut returned = 0;
+
+            let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+            assert_eq!(status, efi::Status::BAD_BUFFER_SIZE, "a claimed size of 0x{claimed:x} was accepted");
+        }
+    }
+
+    #[test]
+    fn test_synchronous_mmi_dispatches_a_valid_v3_message_guid() {
+        let core = init_core();
+        core.mmi_db.register_internal_handler(counting_handler, Some(&HANDLER_GUID)).expect("handler registers");
+
+        let total = v3_header_size() + 16;
+        let buffer = v3_comm_buffer(HANDLER_GUID, total, total as u64);
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+        // The V3 branch dispatches on `message_guid`, not the header GUID that selected it.
+        assert_eq!(status, efi::Status::SUCCESS);
+        assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(returned, total as u64);
+    }
+
+    #[test]
+    fn test_synchronous_mmi_rejects_a_message_length_that_would_overflow() {
+        let core = init_core();
+        let total = EfiMmCommunicateHeader::size() + 8;
+        let buffer = legacy_comm_buffer(HANDLER_GUID, &[0xAA; 8], total);
+
+        // Adding the header size to this wraps, landing back inside the buffer and passing a
+        // check written as `header + message > buffer`.
+        // SAFETY: the header occupies the first bytes of the buffer.
+        unsafe {
+            (*(buffer.as_ptr() as *mut EfiMmCommunicateHeader)).message_length = usize::MAX;
+        }
+        let mut returned = 0;
+
+        let status = core.dispatch_synchronous_mmi(buffer.as_ptr() as u64, total as u64, &mut returned);
+
+        assert_eq!(status, efi::Status::BAD_BUFFER_SIZE);
+    }
+
+    #[test]
+    fn test_dispatch_drivers_reports_no_work_when_nothing_was_discovered() {
+        let core = init_core();
+
+        assert_eq!(core.dispatch_drivers(), Ok(0));
+    }
+}
