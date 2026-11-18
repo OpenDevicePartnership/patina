@@ -601,11 +601,10 @@ pub fn install_controller_driver<D: ControllerDriver>(
     tpl: Service<dyn TplServices>,
     driver: D,
 ) -> Result<ControllerDriverRef<D>, ProtocolError> {
-    let services: &'static dyn ProtocolServices = *protocols;
-    let agent = services.register_agent()?;
+    let agent = protocols.register_agent()?;
     // Driver bindings are not uninstalled, so the driver lives for the rest of boot.
-    let inner: &'static Inner<D> = Box::leak(Box::new(Inner::new(driver, services, tpl, agent)));
-    services.install_driver_binding_on(agent, ManagedDriver(inner))?;
+    let inner: &'static Inner<D> = Box::leak(Box::new(Inner::new(driver, protocols.clone(), tpl, agent)));
+    protocols.install_driver_binding_on(agent, ManagedDriver(inner))?;
     Ok(ControllerDriverRef { inner })
 }
 
@@ -672,7 +671,7 @@ struct Inner<D: ControllerDriver> {
     /// The driver implementation supplied by the component.
     driver: D,
     /// Protocol services used to open and close protocols on behalf of the driver.
-    services: &'static dyn ProtocolServices,
+    services: Service<dyn ProtocolServices>,
     /// The driver's agent handle, which is also its driver binding handle.
     agent: Handle,
     /// Should only be locked for short updates that do not call outside this module.
@@ -680,7 +679,7 @@ struct Inner<D: ControllerDriver> {
 }
 
 impl<D: ControllerDriver> Inner<D> {
-    fn new(driver: D, services: &'static dyn ProtocolServices, tpl: Service<dyn TplServices>, agent: Handle) -> Self {
+    fn new(driver: D, services: Service<dyn ProtocolServices>, tpl: Service<dyn TplServices>, agent: Handle) -> Self {
         // Raises to TPL_NOTIFY so the driver can be used from any allowable callback TPL.
         let records = TplMutex::new(tpl, BootServicesTpl(efi::TPL_NOTIFY), Vec::new());
         Self { driver, services, agent, records }
@@ -956,7 +955,7 @@ mod tests {
     /// Records closed usages as (handle, controller) raw values.
     type Closed = Arc<Mutex<Vec<(usize, Option<usize>)>>>;
 
-    fn mock_services(closed: &Closed) -> &'static dyn ProtocolServices {
+    fn mock_services(closed: &Closed) -> Service<dyn ProtocolServices> {
         let mut mock = MockProtocolServices::new();
         mock.expect_open_interface().returning(|_, _, _, _| Ok(fake_ptr()));
         mock.expect_interface_on_handle().returning(|_, _| Ok(fake_ptr()));
@@ -965,7 +964,7 @@ mod tests {
             closed.lock().unwrap().push((handle.as_raw() as usize, controller.map(|c| c.as_raw() as usize)));
             Ok(())
         });
-        Box::leak(Box::new(mock))
+        Service::mock(Box::new(mock))
     }
 
     fn mock_tpl() -> Service<dyn TplServices> {
@@ -1070,7 +1069,7 @@ mod tests {
     fn test_controller_driver_supported_propagates_open_failure() {
         let mut mock = MockProtocolServices::new();
         mock.expect_open_interface().returning(|_, _, _, _| Err(ProtocolError::Unsupported));
-        let (binding, _) = setup_with(TestDriver::default(), Box::leak(Box::new(mock)));
+        let (binding, _) = setup_with(TestDriver::default(), Service::mock(Box::new(mock)));
 
         assert_eq!(binding.supported(h(AGENT), h(CONTROLLER), None), Err(ProtocolError::Unsupported));
         assert_eq!(binding.0.driver.supported_seen.get(), None);
@@ -1362,7 +1361,7 @@ mod tests {
 
     /// Like `mock_services`, but reports `AlreadyStarted` for a second `BY_DRIVER` open of the same controller,
     /// as the core does.
-    fn mock_core_services(closed: &Closed) -> &'static dyn ProtocolServices {
+    fn mock_core_services(closed: &Closed) -> Service<dyn ProtocolServices> {
         let opened: Arc<Mutex<Vec<usize>>> = Arc::default();
         let mut mock = MockProtocolServices::new();
         let opened_for_open = Arc::clone(&opened);
@@ -1387,7 +1386,7 @@ mod tests {
             closed.lock().unwrap().push((raw_handle, raw_controller));
             Ok(())
         });
-        Box::leak(Box::new(mock))
+        Service::mock(Box::new(mock))
     }
 
     #[derive(Default)]
@@ -1448,7 +1447,7 @@ mod tests {
 
     fn setup_with<D: ControllerDriver>(
         driver: D,
-        services: &'static dyn ProtocolServices,
+        services: Service<dyn ProtocolServices>,
     ) -> (ManagedDriver<D>, ControllerDriverRef<D>) {
         let inner: &'static Inner<D> = Box::leak(Box::new(Inner::new(driver, services, mock_tpl(), h(AGENT))));
         (ManagedDriver(inner), ControllerDriverRef { inner })

@@ -12,7 +12,7 @@ use alloc::{boxed::Box, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use patina::{
-    component::service::{IntoService, perf_timer::ArchTimerFunctionality},
+    component::service::{IntoService, Service, perf_timer::ArchTimerFunctionality},
     standard::efi::{self, protocols::mp_services},
 };
 use patina_internal_cpu::mp::{ApWorkItem, MpDispatcher, MpSupport, Processor, ProcessorState};
@@ -57,7 +57,7 @@ enum Targets {
 pub(super) struct MpServices<D: MpDispatcher + 'static = MpSupport> {
     mp: D,
     processors: Vec<mp_services::ProcessorInformation>,
-    timer: &'static dyn ArchTimerFunctionality,
+    timer: Service<dyn ArchTimerFunctionality>,
     notifications: NotificationRegistry,
     ready_to_boot: AtomicBool,
 }
@@ -66,7 +66,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     pub(super) fn new(
         mp: D,
         processors: Vec<mp_services::ProcessorInformation>,
-        timer: &'static dyn ArchTimerFunctionality,
+        timer: Service<dyn ArchTimerFunctionality>,
     ) -> Self {
         Self {
             mp,
@@ -126,12 +126,12 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// are still available.
     pub(super) fn mark_ready_to_boot(&self) {
         self.ready_to_boot.store(true, Ordering::Release);
-        self.notifications.finish_pending(&self.mp, self.timer);
+        self.notifications.finish_pending(&self.mp, *self.timer);
     }
 
     /// Replicates the BSP's dynamic state (MTRRs for x64) to every enabled AP.
     pub(super) fn synchronize(&self) {
-        self.notifications.finish_pending(&self.mp, self.timer);
+        self.notifications.finish_pending(&self.mp, *self.timer);
         let synchronized = self.notifications.with_dispatch_lock(|pending| {
             debug_assert!(pending.is_empty());
             self.mp.sync_aps()
@@ -203,7 +203,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
             log::error!("non-blocking requests should not be made after ReadyToBoot per the PI Specification!");
         }
 
-        let deadline = deadline_for(self.timer, timeout_us);
+        let deadline = deadline_for(*self.timer, timeout_us);
 
         // The registry lock is the dispatch lock: it raises to TPL_NOTIFY, which the
         // periodic poll also needs, so no processor can be taken between being selected
@@ -225,7 +225,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
         })?;
 
         let Some(dispatch) = started else { return Ok(()) };
-        let failed = dispatch.complete_blocking(&self.mp, self.timer);
+        let failed = dispatch.complete_blocking(&self.mp, *self.timer);
         if failed.is_empty() { Ok(()) } else { Err(MpError::Timeout(failed)) }
     }
 
@@ -303,7 +303,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// Resolves any pending non-blocking dispatches. Invoked by the component's
     /// periodic timer callback.
     pub(super) fn poll_notifications(&self) {
-        self.notifications.poll(&self.mp, self.timer);
+        self.notifications.poll(&self.mp, *self.timer);
     }
 
     fn bsp_check(&self) -> Result<(), MpError> {
@@ -371,15 +371,13 @@ mod tests {
         }
     }
 
-    static TIMER: TestTimer = TestTimer;
-
     fn test_work() -> ApWorkItem {
         static ARGUMENT: () = ();
         ApWorkItem::new(|()| {}, &ARGUMENT)
     }
 
     fn test_service(mp: MockMpDispatcher) -> MpServices<MockMpDispatcher> {
-        MpServices::new(mp, Vec::new(), &TIMER)
+        MpServices::new(mp, Vec::new(), Service::mock(Box::new(TestTimer)))
     }
 
     fn with_global_state(test: impl Fn() + std::panic::RefUnwindSafe) {
@@ -468,7 +466,7 @@ mod tests {
         mp.expect_ap_processor_id().with(eq(0)).once().return_const(Some(7));
         mp.expect_ap_availability().with(eq(0)).once().return_const(ProcessorState::Ready);
         mp.expect_ap_healthy().with(eq(0)).once().return_const(true);
-        let service = MpServices::new(mp, vec![known], &TIMER);
+        let service = MpServices::new(mp, vec![known], Service::mock(Box::new(TestTimer)));
 
         let Ok(info) = service.processor_info(1) else { panic!("known AP should have processor information") };
 

@@ -400,10 +400,8 @@ mod tests {
         }
     }
 
-    static TIMER: TestTimer = TestTimer;
-
     fn test_wrapper(mp: MockMpDispatcher) -> TestProtocolWrapper {
-        let service = Service::mock(Box::new(MpServices::new(mp, Vec::new(), &TIMER)));
+        let service = Service::mock(Box::new(MpServices::new(mp, Vec::new(), Service::mock(Box::new(TestTimer)))));
         TestProtocolWrapper::new(service, Service::mock(Box::new(MockEventServices::new())))
     }
 

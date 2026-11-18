@@ -23,6 +23,7 @@ use core::{
 use patina::{
     bit,
     component::service::{
+        Service,
         memory::{AccessType, AllocationOptions, MemoryManager, PageAllocationStrategy},
         perf_timer::ArchTimerFunctionality,
     },
@@ -128,7 +129,7 @@ pub struct MpSupport {
     apic: apic::Apic,
     contexts: &'static [ApContext],
     bsp_processor_id: u32,
-    timer: &'static dyn ArchTimerFunctionality,
+    timer: Service<dyn ArchTimerFunctionality>,
     perf_frequency: NonZeroU64,
     startup_vector: u8,
     shutting_down: AtomicBool,
@@ -353,7 +354,7 @@ impl MpSupport {
 impl MpDispatcher for MpSupport {
     fn initialize(
         memory_manager: &dyn MemoryManager,
-        timer: &'static dyn ArchTimerFunctionality,
+        timer: Service<dyn ArchTimerFunctionality>,
     ) -> Result<Self, EfiError> {
         let bootstrap_allocation = memory_manager
             .allocate_pages(
@@ -665,7 +666,7 @@ mod tests {
             apic: apic::Apic::mock(apic),
             contexts,
             bsp_processor_id: 0,
-            timer: Box::leak(Box::new(MockArchTimerFunctionality::new())),
+            timer: Service::mock(Box::new(MockArchTimerFunctionality::new())),
             perf_frequency: NonZeroU64::new(1_000_000).unwrap(),
             startup_vector: 0,
             shutting_down: AtomicBool::new(shutting_down),
@@ -725,7 +726,7 @@ mod tests {
     fn test_mp_support_initialize_maps_bootstrap_allocation_failure() {
         let mut memory = MockMemoryManager::new();
         memory.expect_allocate_pages().once().returning(|_, _| Err(MemoryError::NoAvailableMemory));
-        let timer = Box::leak(Box::new(MockArchTimerFunctionality::new()));
+        let timer: Service<dyn ArchTimerFunctionality> = Service::mock(Box::new(MockArchTimerFunctionality::new()));
 
         assert!(matches!(MpSupport::initialize(&memory, timer), Err(EfiError::OutOfResources)));
     }
@@ -786,8 +787,10 @@ mod tests {
             .expect_cpu_count()
             .times(4)
             .returning(move || timer_count.fetch_add(AP_STARTUP_TIMEOUT_US + 1, Ordering::Relaxed));
-        let mut support =
-            MpSupport { timer: Box::leak(Box::new(timer)), ..test_support(apic::MockApicBackend::new(), &[], false) };
+        let mut support = MpSupport {
+            timer: Service::mock(Box::new(timer)),
+            ..test_support(apic::MockApicBackend::new(), &[], false)
+        };
         support.bsp_processor_id = 0x10;
 
         assert_eq!(support.setup_aps_with(contexts, Some(handoff(&processors))), Ok(()));
@@ -801,8 +804,10 @@ mod tests {
     fn test_mp_support_try_for_reports_completion_and_timeout() {
         let mut timer = MockArchTimerFunctionality::new();
         timer.expect_cpu_count().times(2).return_const(10_u64);
-        let support =
-            MpSupport { timer: Box::leak(Box::new(timer)), ..test_support(apic::MockApicBackend::new(), &[], false) };
+        let support = MpSupport {
+            timer: Service::mock(Box::new(timer)),
+            ..test_support(apic::MockApicBackend::new(), &[], false)
+        };
         let mut checks = 0;
         assert!(support.attempt_with_timeout(5, || {
             checks += 1;
@@ -814,8 +819,10 @@ mod tests {
         let mut timer = MockArchTimerFunctionality::new();
         timer.expect_cpu_count().once().in_sequence(&mut sequence).return_const(10_u64);
         timer.expect_cpu_count().once().in_sequence(&mut sequence).return_const(15_u64);
-        let support =
-            MpSupport { timer: Box::leak(Box::new(timer)), ..test_support(apic::MockApicBackend::new(), &[], false) };
+        let support = MpSupport {
+            timer: Service::mock(Box::new(timer)),
+            ..test_support(apic::MockApicBackend::new(), &[], false)
+        };
         assert!(!support.attempt_with_timeout(5, || false));
     }
 
@@ -1016,7 +1023,7 @@ mod tests {
         let mut timer = MockArchTimerFunctionality::new();
         timer.expect_cpu_count().times(2).return_const(0_u64);
         let support = MpSupport {
-            timer: Box::leak(Box::new(timer)),
+            timer: Service::mock(Box::new(timer)),
             ..test_support(apic::MockApicBackend::new(), contexts, false)
         };
         ap_setup::setup(&[]);
@@ -1067,7 +1074,7 @@ mod tests {
             apic: apic::Apic::mock(apic),
             contexts,
             bsp_processor_id: 0x10,
-            timer: Box::leak(Box::new(timer)),
+            timer: Service::mock(Box::new(timer)),
             perf_frequency: NonZeroU64::new(1_000_000).unwrap(),
             startup_vector: 8,
             shutting_down: AtomicBool::new(false),
@@ -1110,7 +1117,7 @@ mod tests {
             apic: apic::Apic::mock(apic),
             contexts,
             bsp_processor_id: 0x10,
-            timer: Box::leak(Box::new(timer)),
+            timer: Service::mock(Box::new(timer)),
             perf_frequency: NonZeroU64::new(1_000_000).unwrap(),
             startup_vector: 8,
             shutting_down: AtomicBool::new(false),

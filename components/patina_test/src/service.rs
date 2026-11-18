@@ -110,7 +110,7 @@ impl TestRecord {
         &self,
         events: &Service<dyn EventServices>,
         timer: &Service<dyn TimerEventServices>,
-        recorder: &'static Recorder,
+        recorder: &Service<Recorder>,
         storage: &mut Storage,
     ) -> patina::error::Result<()> {
         let name = self.test_case.name;
@@ -119,15 +119,19 @@ impl TestRecord {
         for trigger in self.test_case.triggers {
             let result = match trigger {
                 TestTrigger::Manual => Ok(()),
-                TestTrigger::Event(guid) => events
-                    .on_event_group(*guid, Tpl::Callback, move || {
-                        // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
-                        let mut storage = unsafe { storage.as_mut() };
-                        recorder.with_mut(|records| records.get_mut(name).map(|record| record.run(storage)));
-                    })
-                    .map(|_| ()),
+                TestTrigger::Event(guid) => {
+                    let recorder = recorder.clone();
+                    events
+                        .on_event_group(*guid, Tpl::Callback, move || {
+                            // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
+                            let mut storage = unsafe { storage.as_mut() };
+                            recorder.with_mut(|records| records.get_mut(name).map(|record| record.run(storage)));
+                        })
+                        .map(|_| ())
+                }
                 TestTrigger::Timer(interval) => (|| -> Result<(), EventError> {
                     // Create a timer event for the specified interval. Cancel the timer when the RTB event occurs.
+                    let recorder = recorder.clone();
                     let timer_event = timer.on_timer_event(Tpl::Callback, move || {
                         // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
                         let mut storage = unsafe { storage.as_mut() };
@@ -221,7 +225,7 @@ impl Recorder {
 
     /// Registers UEFI event callbacks to log the test results at specific points in the boot process.
     pub fn initialize(
-        &'static self,
+        recorder: Service<Self>,
         events: &Service<dyn EventServices>,
         storage: &mut Storage,
     ) -> patina::error::Result<()> {
@@ -231,11 +235,12 @@ impl Recorder {
             patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID,
             patina::uefi::event::EXIT_BOOT_SERVICES_EVENT_GROUP_GUID,
         ] {
+            let recorder = recorder.clone();
             let callback_events = events.clone();
             events.on_event_group_self_managed(group, Tpl::Callback, move |event| {
                 // SAFETY: event callbacks are executed in series, so there exists no other mutable access to storage.
                 let storage = unsafe { storage.as_mut() };
-                self.run_tests_and_report(storage);
+                recorder.run_tests_and_report(storage);
                 callback_events.close_event(event);
             })?;
         }
@@ -460,18 +465,18 @@ mod tests {
         });
 
         let mut storage = Storage::new();
-        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let recorder = Service::mock(Box::new(Recorder::default()));
         let record = TestRecord::new(false, &TEST_CASE4, None);
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
 
-        record.schedule_run(&events, &timer, recorder, &mut storage).expect("event test scheduling should succeed");
+        record.schedule_run(&events, &timer, &recorder, &mut storage).expect("event test scheduling should succeed");
         recorder.update_record(record);
 
         let mut callback = callback.borrow_mut().take().expect("event callback should be registered");
         callback(dummy_event());
 
-        let output = format!("{recorder}");
+        let output = format!("{}", *recorder);
         assert!(output.contains("event_triggered_test ... fail (1 fails, 0 passes): Intentional Failure"));
     }
 
@@ -505,12 +510,12 @@ mod tests {
         });
 
         let mut storage = Storage::new();
-        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let recorder = Service::mock(Box::new(Recorder::default()));
         let record = TestRecord::new(false, test_case, None);
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
-        assert!(record.schedule_run(&events, &timer, recorder, &mut storage).is_ok());
+        assert!(record.schedule_run(&events, &timer, &recorder, &mut storage).is_ok());
     }
 
     #[test]
@@ -537,12 +542,12 @@ mod tests {
         });
 
         let mut storage = Storage::new();
-        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let recorder = Service::mock(Box::new(Recorder::default()));
         let record = TestRecord::new(false, &TEST_CASE5, None);
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
-        assert!(record.schedule_run(&events, &timer, recorder, &mut storage).is_ok());
+        assert!(record.schedule_run(&events, &timer, &recorder, &mut storage).is_ok());
     }
 
     #[test]
@@ -577,12 +582,12 @@ mod tests {
         });
 
         let mut storage = Storage::new();
-        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let recorder = Service::mock(Box::new(Recorder::default()));
         let record = TestRecord::new(false, &TEST_CASE5, None);
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
-        assert!(record.schedule_run(&events, &timer, recorder, &mut storage).is_ok());
+        assert!(record.schedule_run(&events, &timer, &recorder, &mut storage).is_ok());
         assert_eq!(closed_events.borrow().as_slice(), &[timer_event, ready_to_boot_event]);
     }
 
@@ -633,18 +638,18 @@ mod tests {
         });
 
         let mut storage = Storage::new();
-        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let recorder = Service::mock(Box::new(Recorder::default()));
         let record = TestRecord::new(false, &TEST_CASE5, None);
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
-        record.schedule_run(&events, &timer, recorder, &mut storage).expect("timer test scheduling should succeed");
+        record.schedule_run(&events, &timer, &recorder, &mut storage).expect("timer test scheduling should succeed");
         recorder.update_record(record);
 
         let mut callback = timer_callback.borrow_mut().take().expect("timer callback should be registered");
         callback(timer_event);
 
-        let output = format!("{recorder}");
+        let output = format!("{}", *recorder);
         assert!(output.contains("timer_triggered_test ... fail (1 fails, 0 passes): Intentional Failure"));
 
         let mut callback =
@@ -694,11 +699,11 @@ mod tests {
         let mut storage = Storage::new();
         storage.add_config(1_i32);
 
-        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let recorder = Service::mock(Box::new(Recorder::default()));
         recorder.update_record(TestRecord::new(false, &TEST_CASE1, None));
 
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
-        recorder.initialize(&events, &mut storage).expect("recorder initialization should succeed");
+        Recorder::initialize(recorder.clone(), &events, &mut storage).expect("recorder initialization should succeed");
 
         let mut callbacks = callbacks.borrow_mut();
         assert_eq!(callbacks.len(), 2);
@@ -713,13 +718,14 @@ mod tests {
         assert_eq!(*exit_group, patina::uefi::event::EXIT_BOOT_SERVICES_EVENT_GROUP_GUID);
         assert_eq!(*exit_tpl, Tpl::Callback);
         exit_callback(*exit_event);
+        callbacks.clear();
         drop(callbacks);
 
         let mut closed_events = closed_events.borrow().clone();
         closed_events.sort_by_key(Event::as_raw);
         assert_eq!(closed_events, [test_event(1), test_event(2)]);
 
-        let output = format!("{recorder}");
+        let output = format!("{}", *recorder);
         assert!(output.contains("test ... ok (1 passes)"));
     }
 

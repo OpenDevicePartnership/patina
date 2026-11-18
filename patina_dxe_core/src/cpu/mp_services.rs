@@ -95,13 +95,13 @@ impl MpServicesComponent {
         let contexts = self.allocate_ap_contexts(&mm, ap_count)?;
 
         // Initialize the MP architecture support.
-        let mut mp = MpSupport::initialize(*mm, *timer)
+        let mut mp = MpSupport::initialize(*mm, timer.clone())
             .inspect_err(|e| log::error!("Failed to initialize MP architecture support: {e:?}"))?;
         mp.setup_aps(contexts, handoff)
             .inspect_err(|e| log::error!("Failed to set up application processors: {e:?}"))?;
 
         // Build the rust service.
-        let services: &'static MpServices = Box::leak(Box::new(MpServices::new(mp, parsed_hobs.processors, *timer)));
+        let services: &'static MpServices = Box::leak(Box::new(MpServices::new(mp, parsed_hobs.processors, timer)));
         self.register_events(&events, &timer_events, services)?;
         storage.add_service(services);
 
@@ -305,8 +305,6 @@ mod tests {
         }
     }
 
-    static TIMER: TestTimer = TestTimer;
-
     fn page_allocation(page_count: usize) -> PageAllocation {
         let layout = Layout::from_size_align(uefi_pages_to_size!(page_count), patina::UEFI_PAGE_SIZE)
             .expect("page allocation layout should be valid");
@@ -325,7 +323,7 @@ mod tests {
     }
 
     fn test_services(mp: MockMpDispatcher) -> &'static MpServices<MockMpDispatcher> {
-        Box::leak(Box::new(MpServices::new(mp, Vec::new(), &TIMER)))
+        Box::leak(Box::new(MpServices::new(mp, Vec::new(), Service::mock(Box::new(TestTimer)))))
     }
 
     fn test_event() -> Event {
@@ -512,7 +510,11 @@ mod tests {
         });
 
         let result = MpServicesProtocolInstaller::install_protocol(
-            Service::mock(Box::new(MpServices::new(MockMpDispatcher::new(), Vec::new(), &TIMER))),
+            Service::mock(Box::new(MpServices::new(
+                MockMpDispatcher::new(),
+                Vec::new(),
+                Service::mock(Box::new(TestTimer)),
+            ))),
             Service::mock(Box::new(protocols)),
             Service::mock(Box::new(MockEventServices::new())),
         );
@@ -526,7 +528,11 @@ mod tests {
         protocols.expect_install_interface().once().returning(|_, _, _| Err(ProtocolError::OutOfResources));
 
         let result = MpServicesProtocolInstaller::install_protocol(
-            Service::mock(Box::new(MpServices::new(MockMpDispatcher::new(), Vec::new(), &TIMER))),
+            Service::mock(Box::new(MpServices::new(
+                MockMpDispatcher::new(),
+                Vec::new(),
+                Service::mock(Box::new(TestTimer)),
+            ))),
             Service::mock(Box::new(protocols)),
             Service::mock(Box::new(MockEventServices::new())),
         );
