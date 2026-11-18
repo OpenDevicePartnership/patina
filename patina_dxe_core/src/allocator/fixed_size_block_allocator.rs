@@ -2770,7 +2770,7 @@ mod tests {
             _ => return,
         };
         GCD_LOCK_OBSERVATIONS.fetch_or(observation, Ordering::Relaxed);
-        if LOCK_CHECK_FSB.inner.checked_lock().is_ok() {
+        if LOCK_CHECK_FSB.inner.try_lock().is_ok() {
             GCD_OBSERVED_UNLOCKED.store(true, Ordering::Relaxed);
         }
     }

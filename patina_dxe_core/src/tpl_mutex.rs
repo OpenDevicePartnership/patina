@@ -62,12 +62,20 @@ impl<T: ?Sized> TplMutex<T> {
         self.inner.checked_lock()
     }
 
-
+    /// Attempts to lock the `TplMutex`, and if successful, returns a guard object that can be used to access the data.
+    ///
+    /// Returns an error identifying whether the mutex is locked or the requested TPL transition is invalid.
+    ///
+    /// # Panics
+    /// Panics in debug builds if the requested TPL transition is invalid.
+    pub fn try_lock(&self) -> Result<TplGuard<'_, T>, TplMutexError> {
+        self.inner.try_lock()
+    }
 }
 
 impl<T: ?Sized + fmt::Debug> fmt::Debug for TplMutex<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.checked_lock() {
+        match self.try_lock() {
             Ok(guard) => write!(
                 f,
                 "TplMutex {{ lock_tpl: {:x?}, release_tpl: {:x?}, data: ",
@@ -122,6 +130,7 @@ mod tests {
                 let mut guard = lock.checked_lock().expect("Failed to acquire lock");
                 assert_eq!(*guard, 42);
                 *guard = 43;
+                assert_eq!(lock.try_lock().unwrap_err(), TplMutexError::AlreadyLocked);
             }
             let guard = lock.checked_lock().expect("Failed to acquire lock after release");
             assert_eq!(*guard, 43);
@@ -137,6 +146,7 @@ mod tests {
             assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lock.checked_lock())).is_err());
             #[cfg(not(debug_assertions))]
             assert_eq!(lock.checked_lock().unwrap_err(), TplMutexError::AlreadyLocked);
+            assert_eq!(lock.try_lock().unwrap_err(), TplMutexError::AlreadyLocked);
             drop(guard);
             assert!(lock.checked_lock().is_ok());
         });
@@ -151,6 +161,10 @@ mod tests {
             assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lock.checked_lock())).is_err());
             #[cfg(not(debug_assertions))]
             assert_eq!(lock.checked_lock().unwrap_err(), TplMutexError::InvalidTplTransition);
+            #[cfg(debug_assertions)]
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lock.try_lock())).is_err());
+            #[cfg(not(debug_assertions))]
+            assert_eq!(lock.try_lock().unwrap_err(), TplMutexError::InvalidTplTransition);
             assert_eq!(checked_tpl_raise(efi::TPL_HIGH_LEVEL), Some(efi::TPL_NOTIFY));
             restore_tpl(efi::TPL_APPLICATION);
             assert!(lock.checked_lock().is_ok());
@@ -158,7 +172,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(debug_assertions))]
     fn test_tpl_mutex_preserves_core_debug_format() {
         with_reset_state(|| {
             let lock = TplMutex::new(efi::TPL_NOTIFY, 42, "test_lock");
