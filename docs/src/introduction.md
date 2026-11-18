@@ -27,6 +27,9 @@ the project's goals and design philosophy. You can also watch an overview of
 Patina is not the only way to write UEFI firmware in Rust and has unique goals compared to other projects. More details
 are in the [Patina in the UEFI Rust Ecosystem](background/patina_in_the_rust_ecosystem.md) section.
 
+A public community call is held to discuss ongoing development, share updates, and engage with the Patina community.
+The calendar for these community calls can be found in the [Patina Community Calendar](calendar.md).
+
 ## Patina In Action
 
 If you want to see Patina being actively used and "in action", then check out these two repositories:
