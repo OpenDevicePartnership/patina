@@ -683,8 +683,6 @@ impl SpinLockedEventDb {
         self.inner.checked_lock().map(|guard| EventGuard { event_db: guard, pending_signals: &self.pending_signals })
     }
 
-
-
     /// Creates a new event in the event database
     ///
     /// This function closely matches the semantics of the `EFI_BOOT_SERVICES.CreateEventEx()` API in
@@ -780,8 +778,11 @@ impl SpinLockedEventDb {
 
     /// Queues deferred memory map and cache attribute changes during TPL restoration.
     ///
-    /// Leaves the signal pending if the database is locked. The caller must prevent
-    /// recursive flushing while releasing the database lock.
+    /// Leaves the signal pending if the database is locked in non-debug builds.
+    /// The caller must prevent recursive flushing while releasing the database lock.
+    ///
+    /// # Panics
+    /// Panics in debug builds if the database lock cannot be acquired.
     pub(crate) fn flush_deferred_group_signals(&self) {
         if !(self.memory_map_change_pending.load(AtomicOrdering::Acquire)
             || self.cache_attribute_change_pending.load(AtomicOrdering::Acquire))
@@ -900,8 +901,11 @@ impl SpinLockedEventDb {
     /// [`set_timer`](SpinLockedEventDb::set_timer) followed by a [`timer_tick`](SpinLockedEventDb::timer_tick) that
     /// causes the timer to expire.
     ///
-    /// Returns `None` if the database is locked, leaving notifications queued
-    /// for the next TPL restoration.
+    /// Returns `None` if the database is locked in non-debug builds, leaving
+    /// notifications queued for the next TPL restoration.
+    ///
+    /// # Panics
+    /// Panics in debug builds if the database lock cannot be acquired.
     pub fn consume_next_event_notify(&self, tpl_level: efi::Tpl) -> Option<EventNotification> {
         self.checked_lock().ok()?.consume_next_event_notify(tpl_level)
     }
@@ -994,6 +998,8 @@ mod tests {
             test_support::assert_checked_lock_failure(|| db.signal_event(event), Err(EfiError::NotReady));
             assert!(pending.is_empty());
             drop(pending);
+            test_support::assert_checked_lock_failure(|| db.signal_group(efi::Guid::from_bytes(&[0; 16])), ());
+            assert_eq!(db.pending_signals.checked_lock().unwrap().len(), usize::from(!cfg!(debug_assertions)));
             assert_eq!(guard.events.len(), 1);
             drop(guard);
             assert_eq!(db.is_valid(event), Ok(true));
@@ -1017,13 +1023,19 @@ mod tests {
             db.set_timer(event, TimerDelay::Relative, Some(10), None).unwrap();
             let guard = db.checked_lock().expect("test database must be unlocked");
             assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| db.timer_tick(10))).is_err());
-            assert!(db.consume_next_event_notify(efi::TPL_APPLICATION).is_none());
+            test_support::assert_checked_lock_failure(
+                || db.consume_next_event_notify(efi::TPL_APPLICATION).is_none(),
+                true,
+            );
             assert!(guard.pending_notifies.is_empty());
             drop(guard);
 
             db.timer_tick(20);
             let guard = db.checked_lock().expect("test database must be unlocked");
-            assert!(db.consume_next_event_notify(efi::TPL_APPLICATION).is_none());
+            test_support::assert_checked_lock_failure(
+                || db.consume_next_event_notify(efi::TPL_APPLICATION).is_none(),
+                true,
+            );
             assert_eq!(guard.pending_notifies.len(), 1);
             drop(guard);
             assert_eq!(db.consume_next_event_notify(efi::TPL_APPLICATION).unwrap().event, event);
@@ -1152,7 +1164,7 @@ mod tests {
                 crate::events::restore_tpl(old_tpl);
                 let guard = db.lock();
                 crate::events::restore_tpl(old_tpl);
-                db.flush_deferred_group_signals();
+                test_support::assert_checked_lock_failure(|| db.flush_deferred_group_signals(), ());
                 db.signal_group(group);
                 assert!(
                     db.memory_map_change_pending.load(AtomicOrdering::Acquire)
@@ -1941,6 +1953,19 @@ mod tests {
     }
 
     #[test]
+    fn test_event_db_guard_drop_checks_pending_queue_lock() {
+        with_locked_state(|| {
+            let db = SpinLockedEventDb::new();
+            let pending = db.pending_signals.checked_lock().expect("test pending signals must be unlocked");
+            let guard = db.checked_lock().expect("test database must be unlocked");
+            test_support::assert_checked_lock_failure(|| drop(guard), ());
+            drop(pending);
+            assert!(db.checked_lock().is_ok());
+        });
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
     fn signal_event_under_event_lock_should_use_pending_queue() {
         with_locked_state(|| {
             static SPIN_LOCKED_EVENT_DB: SpinLockedEventDb = SpinLockedEventDb::new();

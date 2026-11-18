@@ -23,7 +23,7 @@ the [UEFI Specification Section 7.1](https://uefi.org/specs/UEFI/2.11/07_Service
 very similar to the Rust [sync::Mutex](https://doc.rust-lang.org/std/sync/struct.Mutex.html).
 Each `TplMutex` has a type parameter which represents the data that it is
 protecting. The data can only be accessed through the guards returned by
-`checked_lock()`: `TplMutexGuard` in the SDK and `TplGuard` in
+`checked_lock()` or `try_lock()`: `TplMutexGuard` in the SDK and `TplGuard` in
 the DXE Core adapter. Ordinary acquisitions must use `checked_lock()` and
 handle its `Result` (both SDK and Core), normally by returning an appropriate domain error.
 It asserts in debug builds if any acquisition invariant fails: contention,
@@ -33,7 +33,11 @@ these failures return `Err(TplMutexError)` instead. The error distinguishes
 TPL inversion). An already-held mutex reports `AlreadyLocked` before checking
 the controller or attempting a TPL transition.
 
-The infallible `TplMutex::lock()` method is replaced by `checked_lock()`.
+`try_lock()` is intended for scenarios where failure is expected in some invocations.
+It will allow a caller to attempt to get a lock and gracefully fail if it is not
+available. `checked_lock()` is intended for the majority of scenarios where failure
+to acquire the lock is not expected. It will assert in debug builds if a failure
+occurs.
 
 There are two mutual exclusion mechanisms that protect the data guarded by
 `TplMutex`:
@@ -51,8 +55,8 @@ scenarios.
 Care must be taken when selecting the `tpl_lock_level` for a `TplMutex`. Code
 executing at a TPL higher than the `TplMutex` violates the acquisition invariant
 (because it attempts to raise the TPL to a lower level, which is an error).
-`checked_lock()` asserts on rejection in debug builds and returns an error in
-non-debug builds; acquisition failures return an error in non-debug builds. Setting a
+Both `checked_lock()` and `try_lock()` assert on an invalid TPL transition in
+debug builds and return an error in non-debug builds. Setting a
 `tpl_lock_level` to a high TPL level will
 prevent other (unrelated) usage of that TPL, potentially reducing system
 responsiveness. It is recommended to set the `tpl_lock_level` as low as possible
@@ -68,9 +72,11 @@ indicate that the lock is not owned by any other agent. There is a significant
 difference between the `TplMutex` and `sync::Mutex` - while `sync::Mutex` will
 simply block on a call to `lock()` when the lock is owned, `TplMutex::checked_lock()`
 asserts in debug builds and otherwise returns `Err(TplMutexError::AlreadyLocked)` immediately.
-`TplMutex::checked_lock()` in non-debug builds
-returns `Err(TplMutexError::AlreadyLocked)` immediately if it is already owned. The SDK also returns
+`TplMutex::try_lock()` returns `Err(TplMutexError::AlreadyLocked)` without asserting
+if it is already owned. The SDK also returns
 `Err(TplMutexError::UninitializedController)` if its deferred TPL controller has not been initialized.
+The SDK retains the infallible `TplMutex::lock()` as a deprecated compatibility
+method; consumers should use `checked_lock()` or `try_lock()` and handle the result.
 
 ```admonish warning
 Reentrant acquisition fails. Do not retry in a loop: the interrupted owner
@@ -90,7 +96,7 @@ would therefore deadlock. Note that [`sync::Mutex` behavior](https://doc.rust-la
 is similar if `lock()` is attempted on the same thread that already holds the
 mutex.
 
-The `checked_lock()` routine in `TplMutex` allows a lock to be attempted and fail
+The `try_lock()` routine in `TplMutex` allows a lock to be attempted and fail
 without blocking; this can be used for scenarios where a lock might be held by
 another agent in a lower TPL but the caller can handle not acquiring the lock,
 or in scenarios where a call is re-entrant at the same TPL.
@@ -140,7 +146,7 @@ let tpl_mutex1 = TplMutex::new(boot_services, Tpl::HIGH_LEVEL, 1_usize);
 let mut guard1 = tpl_mutex1.checked_lock()?; //mutex1 locked.
 *guard1 = 2_usize; //set data behind guard1
 assert_eq!(2_usize, *guard1); //deref to read.
-// The guard must be dropped before acquiring the mutex again.
+assert!(tpl_mutex1.try_lock().is_err()); //Deliberate probe: mutex1 still locked.
 drop(guard1); //lock is released.
 assert!(tpl_mutex1.checked_lock().is_ok()); //mutex1 unlocked and can be acquired.
 ```
