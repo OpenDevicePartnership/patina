@@ -117,7 +117,7 @@ impl<M: MpDispatcher + 'static> MpProtocolWrapper<M> {
     /// Same contract as [`Self::wrapper`].
     unsafe fn services<'a>(this: *mut mp_services::Protocol) -> Option<&'a MpServices<M>> {
         // SAFETY: forwarded contract.
-        unsafe { Self::wrapper(this) }.map(|w| *w.service)
+        unsafe { Self::wrapper(this) }.map(|w| &*w.service)
     }
 
     /// Allocates and writes the `FailedCpuList`. See [`build_failed_cpu_list`] for details.
@@ -403,6 +403,22 @@ mod tests {
     fn test_wrapper(mp: MockMpDispatcher) -> TestProtocolWrapper {
         let service = Service::mock(Box::new(MpServices::new(mp, Vec::new(), Service::mock(Box::new(TestTimer)))));
         TestProtocolWrapper::new(service, Service::mock(Box::new(MockEventServices::new())))
+    }
+
+    #[test]
+    fn test_mp_protocol_retains_and_releases_service_owner() {
+        let service = alloc::sync::Arc::new(MpServices::new(
+            MockMpDispatcher::new(),
+            Vec::new(),
+            Service::mock(Box::new(TestTimer)),
+        ));
+        let owner = alloc::sync::Arc::downgrade(&service);
+        let wrapper = TestProtocolWrapper::new(service.into(), Service::mock(Box::new(MockEventServices::new())));
+        assert!(owner.upgrade().is_some());
+
+        drop(wrapper);
+
+        assert!(owner.upgrade().is_none());
     }
 
     #[test]

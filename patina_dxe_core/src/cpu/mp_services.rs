@@ -10,7 +10,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::{num::NonZeroUsize, time::Duration};
 
 use patina::{
@@ -95,14 +95,14 @@ impl MpServicesComponent {
         let contexts = self.allocate_ap_contexts(&mm, ap_count)?;
 
         // Initialize the MP architecture support.
-        let mut mp = MpSupport::initialize(*mm, timer.clone())
+        let mut mp = MpSupport::initialize(&*mm, timer.clone())
             .inspect_err(|e| log::error!("Failed to initialize MP architecture support: {e:?}"))?;
         mp.setup_aps(contexts, handoff)
             .inspect_err(|e| log::error!("Failed to set up application processors: {e:?}"))?;
 
         // Build the rust service.
-        let services: &'static MpServices = Box::leak(Box::new(MpServices::new(mp, parsed_hobs.processors, timer)));
-        self.register_events(&events, &timer_events, services)?;
+        let services = Arc::new(MpServices::new(mp, parsed_hobs.processors, timer));
+        self.register_events(&events, &timer_events, Service::from(services.clone()))?;
         storage.add_service(services);
 
         Ok(())
@@ -149,16 +149,17 @@ impl MpServicesComponent {
         Ok(contexts)
     }
 
-    fn register_events<D: MpDispatcher>(
+    fn register_events<D: MpDispatcher + 'static>(
         &self,
         events: &Service<dyn EventServices>,
         timer_events: &Service<dyn TimerEventServices>,
-        services: &'static MpServices<D>,
+        services: Service<MpServices<D>>,
     ) -> Result<(), EfiError> {
         // Create park event for EBS so that APs are parked before the OS takes over.
+        let park_services = services.clone();
         if let Err(e) =
             events.on_event_group(BinaryGuid(efi::EVENT_GROUP_EXIT_BOOT_SERVICES), Tpl::Callback, move || {
-                services.park();
+                park_services.park();
                 log::info!("MP Services: APs parked for ExitBootServices");
             })
         {
@@ -167,16 +168,18 @@ impl MpServicesComponent {
             return Err(e.into());
         }
 
+        let ready_services = services.clone();
         events
             .on_event_group(BinaryGuid(efi::EVENT_GROUP_READY_TO_BOOT), Tpl::Callback, move || {
-                services.mark_ready_to_boot();
+                ready_services.mark_ready_to_boot();
             })
             .inspect_err(|e| log::error!("Failed to register MP ReadyToBoot event: {e:?}"))?;
 
         // Create cache-attribute-change event AP synchronization.
+        let sync_services = services.clone();
         events
             .on_event_group(CACHE_ATTRIBUTE_CHANGE_GUID, Tpl::Callback, move || {
-                services.synchronize();
+                sync_services.synchronize();
             })
             .inspect_err(|e| log::error!("Failed to register MP MTRR sync event: {e:?}"))?;
 
@@ -280,6 +283,7 @@ mod tests {
         sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
+    use alloc::sync::Arc;
     use patina::{
         component::hob::FromHob,
         component::service::memory::{MemoryError, MockMemoryManager, PageAllocation},
@@ -291,7 +295,7 @@ mod tests {
         },
         protocol::ProtocolInterface,
     };
-    use patina_internal_cpu::mp::{MockMpDispatcher, Processor};
+    use patina_internal_cpu::mp::MockMpDispatcher;
 
     struct TestTimer;
 
@@ -322,8 +326,8 @@ mod tests {
         Service::mock(Box::new(memory))
     }
 
-    fn test_services(mp: MockMpDispatcher) -> &'static MpServices<MockMpDispatcher> {
-        Box::leak(Box::new(MpServices::new(mp, Vec::new(), Service::mock(Box::new(TestTimer)))))
+    fn test_services(mp: MockMpDispatcher) -> Service<MpServices<MockMpDispatcher>> {
+        Service::mock(Box::new(MpServices::new(mp, Vec::new(), Service::mock(Box::new(TestTimer)))))
     }
 
     fn test_event() -> Event {
@@ -510,11 +514,7 @@ mod tests {
         });
 
         let result = MpServicesProtocolInstaller::install_protocol(
-            Service::mock(Box::new(MpServices::new(
-                MockMpDispatcher::new(),
-                Vec::new(),
-                Service::mock(Box::new(TestTimer)),
-            ))),
+            test_services(MockMpDispatcher::new()),
             Service::mock(Box::new(protocols)),
             Service::mock(Box::new(MockEventServices::new())),
         );
@@ -528,11 +528,7 @@ mod tests {
         protocols.expect_install_interface().once().returning(|_, _, _| Err(ProtocolError::OutOfResources));
 
         let result = MpServicesProtocolInstaller::install_protocol(
-            Service::mock(Box::new(MpServices::new(
-                MockMpDispatcher::new(),
-                Vec::new(),
-                Service::mock(Box::new(TestTimer)),
-            ))),
+            test_services(MockMpDispatcher::new()),
             Service::mock(Box::new(protocols)),
             Service::mock(Box::new(MockEventServices::new())),
         );
@@ -642,7 +638,6 @@ mod tests {
     #[test]
     fn test_mp_services_component_parks_aps_when_exit_event_registration_fails() {
         let mut mp = MockMpDispatcher::new();
-        mp.expect_who_am_i().once().return_const(Some(Processor::Bsp));
         mp.expect_park().once().return_const(());
         let services = test_services(mp);
         let mut events = MockEventServices::new();
@@ -657,9 +652,50 @@ mod tests {
     }
 
     #[test]
+    fn test_mp_services_component_callbacks_retain_service_and_dispatcher() {
+        use patina::component::service::uefi_services::event::EventNotifyCallback;
+        use std::{cell::RefCell, rc::Rc};
+
+        let mut mp = MockMpDispatcher::new();
+        mp.expect_park().once().return_const(());
+        mp.expect_sync_aps().once().return_const(true);
+        let services = Arc::new(MpServices::new(mp, Vec::new(), Service::mock(Box::new(TestTimer))));
+        let owner = Arc::downgrade(&services);
+        let callbacks = Rc::new(RefCell::new(Vec::<EventNotifyCallback>::new()));
+        let event_callbacks = callbacks.clone();
+        let mut events = MockEventServices::new();
+        events.expect_create_event_for_group().times(3).returning_st(move |_, _, callback| {
+            event_callbacks.borrow_mut().push(callback);
+            Ok(test_event())
+        });
+        let timer_callbacks = callbacks.clone();
+        let mut timer_events = MockTimerEventServices::new();
+        timer_events.expect_create_timer_event().once().returning_st(move |_, callback| {
+            timer_callbacks.borrow_mut().push(callback);
+            Ok(test_event())
+        });
+        timer_events.expect_set_timer().once().return_const(Ok(()));
+        let events: Service<dyn EventServices> = Service::mock(Box::new(events));
+        let timer_events: Service<dyn TimerEventServices> = Service::mock(Box::new(timer_events));
+
+        MpServicesComponent.register_events(&events, &timer_events, services.into()).unwrap();
+        drop(events);
+        drop(timer_events);
+        assert!(owner.upgrade().is_some());
+
+        for callback in callbacks.borrow_mut().iter_mut() {
+            callback(test_event());
+        }
+        // Dropping the callbacks releases the last service owner, which drops the dispatcher
+        // mock and verifies its `once()` expectations.
+        callbacks.borrow_mut().clear();
+
+        assert!(owner.upgrade().is_none());
+    }
+
+    #[test]
     fn test_mp_services_component_callbacks_forward_to_service() {
         let mut mp = MockMpDispatcher::new();
-        mp.expect_who_am_i().once().return_const(Some(Processor::Bsp));
         mp.expect_park().once().return_const(());
         mp.expect_sync_aps().once().return_const(true);
         let services = test_services(mp);
