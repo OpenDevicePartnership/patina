@@ -20,7 +20,7 @@ alloc-no-stdlib = { workspace = true, optional = true }
 lzma-rust2 = { workspace = true, optional = true, default-features = false }
 
 [features]
-default = ["brotli", "crc32", "lzma"]
+default = []
 std = []
 brotli = ["dep:brotli-decompressor", "dep:alloc-no-stdlib"]
 crc32 = []

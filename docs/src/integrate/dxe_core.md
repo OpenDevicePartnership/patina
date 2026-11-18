@@ -160,7 +160,7 @@ Update your `Cargo.toml` to include necessary dependencies based on the referenc
 [dependencies]
 patina_debugger = "$(VERSION)"
 patina_dxe_core = "$(VERSION)"
-patina_ffs_extractors = "$(VERSION)"
+patina_ffs_extractors = "$(VERSION), features = "$(DESIRED_COMPRESSION_ALGS)""
 patina_stacktrace = "$(VERSION)"
 # Add other platform-specific dependencies as needed
 ```
@@ -250,8 +250,9 @@ pub extern "efiapi" fn _start(physical_hob_list: *const c_void) -> ! {
 
 ```admonish note
 If you copy + paste this directly, the compiler will not know what `patina_ffs_extractors` is. You will have to add
-that crate to your platform's `Cargo.toml` file. Additionally, where the `Default::default()` option is, this is where
-you would provide any configuration to the Patina DXE Core.
+that crate to your platform's `Cargo.toml` file and enable the features corresponding to which compression algorithm(s)
+you want. Additionally, where the `Default::default()` option is, this is where you would provide any configuration to
+the Patina DXE Core.
 ```
 
 ### 5.1 Registering Exception Handlers

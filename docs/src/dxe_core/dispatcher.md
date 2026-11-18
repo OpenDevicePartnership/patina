@@ -20,8 +20,8 @@ interface, which is used by the dispatcher to process compressed and
 sections. The reference section extractor provided with the Patina DXE Core can
 extract sections compressed with the [UEFI
 Compress](https://uefi.org/specs/UEFI/2.10_A/19_Protocols_Compression_Algorithm_Specification.html)
-algorithm, as well as sections compressed with the
-[Brotli](https://github.com/google/brotli) compression algorithm.
+algorithm, the [Brotli](https://github.com/google/brotli) compression algorithm, and the
+[LZMA](https://github.com/hasenbanck/lzma-rust2/blob/master/README.md) compression algorithm.
 
 As part of core initialization, any firmware volumes produced by the HOB producer phase (to include at least the
 firmware volume containing the Patina DXE Core itself) are added to the dispatcher prior to initial invocation (otherwise,
