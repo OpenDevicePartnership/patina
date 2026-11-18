@@ -190,7 +190,7 @@ definition but many of the services are still implemented in C so it is orange.
 - \>80% unit test coverage in the Patina DXE Core.
 - Support for [Enhanced Memory Protections](https://microsoft.github.io/mu/WhatAndWhy/enhancedmemoryprotection/).
 - Source-level debugging support.
-- Built-in Brotli and EFI decompression support.
+- Built-in Brotli, LZMA, and EFI decompression support.
 - Infrastructure (in the `patina_test` crate) for on-platform execution of unit tests.
 
 ``` admonish important
