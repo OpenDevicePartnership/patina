@@ -450,3 +450,148 @@ impl LockedState<'_> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use spin::Mutex;
+
+    const PAGE: u64 = UEFI_PAGE_SIZE as u64;
+
+    /// Zeroed bookkeeping for `region_count` regions and `total_pages` pages, laid out as the page
+    /// allocator lays it out. No memory backs the regions it describes, so only the bookkeeping is
+    /// ever written.
+    struct Bookkeeping {
+        words: Vec<u64>,
+        region_count: usize,
+        total_pages: usize,
+    }
+
+    impl Bookkeeping {
+        fn new(region_count: usize, total_pages: usize) -> Self {
+            let bytes = size_of::<AllocatorState>()
+                + region_count * size_of::<RegionInfo>()
+                + 2 * total_pages.div_ceil(u8::BITS as usize);
+            Self { words: vec![0; bytes.div_ceil(size_of::<u64>())], region_count, total_pages }
+        }
+
+        /// Runs `check` on a locked view over the bookkeeping.
+        fn with_locked<R>(&mut self, check: impl FnOnce(&mut LockedState<'_>) -> R) -> R {
+            let state = self.words.as_mut_ptr().cast::<AllocatorState>();
+            let mutex = Mutex::new(StatePtr(state));
+            let mut locked = LockedState {
+                state,
+                region_count: self.region_count,
+                total_pages: self.total_pages,
+                guard: mutex.lock(),
+            };
+            check(&mut locked)
+        }
+    }
+
+    fn region(base: u64, pages: u64, pre_allocated: bool) -> MmramRegion {
+        MmramRegion::new(MemoryRange::from_pages(base, pages).unwrap(), pre_allocated)
+    }
+
+    #[test]
+    fn test_locked_state_rejects_a_bit_range_past_the_bitmap() {
+        // `initialize` keeps the region table and the header consistent. These checks keep a region
+        // table that disagrees with the header from indexing outside the bitmap.
+        let mut bookkeeping = Bookkeeping::new(1, 4);
+        bookkeeping.with_locked(|state| {
+            let mut check = |bitmap_start_bit: usize, addr: u64, num_pages: usize| {
+                state.regions_mut()[0] = RegionInfo { base: 0x10_0000, total_pages: 4, bitmap_start_bit };
+                state.allocation_bit_range(addr, num_pages)
+            };
+
+            // The first bit, the end bit, or the end of the bitmap overflows or runs past it.
+            assert_eq!(check(usize::MAX, 0x10_0000 + PAGE, 1), Err(AllocError::InvalidAddress.into()));
+            assert_eq!(check(usize::MAX - 1, 0x10_0000, 2), Err(AllocError::InvalidAddress.into()));
+            assert_eq!(check(2, 0x10_0000, 4), Err(AllocError::InvalidAddress.into()));
+
+            // The same region fits when the range ends exactly at the end of the bitmap.
+            assert_eq!(check(2, 0x10_0000, 2), Ok(2..4));
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn test_locked_state_allocation_bit_past_the_bitmap_panics() {
+        let mut bookkeeping = Bookkeeping::new(1, 4);
+        // The bitmap holds one byte, so bit 8 is the first one past it.
+        bookkeeping.with_locked(|state| state.is_bit_allocated(8));
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn test_locked_state_type_bit_past_the_bitmap_panics() {
+        let mut bookkeeping = Bookkeeping::new(1, 4);
+        bookkeeping.with_locked(|state| state.bit_type(8));
+    }
+
+    #[test]
+    fn test_locked_state_set_and_clear_ignore_bits_past_the_bitmap() {
+        let mut bookkeeping = Bookkeeping::new(1, 8);
+        bookkeeping.with_locked(|state| {
+            // Bit 8 of the allocation bitmap would be the first bit of the type bitmap.
+            state.set_bit_allocated(8, AllocationType::User);
+            assert_eq!((state.alloc_bitmap(), state.type_bitmap()), (&[0u8][..], &[0u8][..]));
+
+            state.set_bit_allocated(7, AllocationType::User);
+            assert_eq!((state.alloc_bitmap(), state.type_bitmap()), (&[0x80u8][..], &[0x80u8][..]));
+            state.set_bit_free(8);
+            assert_eq!((state.alloc_bitmap(), state.type_bitmap()), (&[0x80u8][..], &[0x80u8][..]));
+            state.set_bit_free(7);
+            assert_eq!((state.alloc_bitmap(), state.type_bitmap()), (&[0u8][..], &[0u8][..]));
+        });
+    }
+
+    #[test]
+    fn test_locked_state_initialize_rejects_a_page_total_that_overflows() {
+        // Each region claims the whole address space, and enough of them are present that the
+        // running bitmap start bit wraps.
+        let pages_per_region = MemoryRange::new(0, u64::MAX).unwrap().pages() as usize;
+        let regions_needed = usize::MAX / pages_per_region + 1;
+        let scanned = vec![MmramRegion::new(MemoryRange::new(0, u64::MAX).unwrap(), false); regions_needed];
+        let mut bookkeeping = Bookkeeping::new(regions_needed, 0);
+
+        let result = bookkeeping.with_locked(|state| state.initialize(&scanned, 0, 1));
+
+        assert_eq!(result, Err(AllocError::OutOfMemory.into()));
+    }
+
+    #[test]
+    fn test_locked_state_initialize_reserves_only_the_bookkeeping_in_free_regions() {
+        let mut bookkeeping = Bookkeeping::new(2, 8);
+        let scanned = [region(0x10_0000, 4, false), region(0x20_0000, 4, false)];
+
+        bookkeeping.with_locked(|state| {
+            assert_eq!(state.initialize(&scanned, 0x10_0000, 2), Ok(()));
+
+            assert_eq!(state.regions()[1].bitmap_start_bit, 4);
+            assert_eq!(state.allocated_page_count(AllocationType::Supervisor), 2);
+            assert_eq!(state.allocation_type(0x10_0000 + PAGE), Some(AllocationType::Supervisor));
+            assert_eq!(state.allocation_type(0x20_0000), None);
+            // Four free pages in a row exist only in the second region.
+            assert_eq!(state.allocate(4, AllocationType::User), Some(0x20_0000));
+            assert_eq!(state.free_page_count(), 2);
+        });
+    }
+
+    #[test]
+    fn test_locked_state_initialize_ignores_regions_past_the_table() {
+        // The table has room for one region, so the pre-allocated second one has no bits to mark.
+        let mut bookkeeping = Bookkeeping::new(1, 4);
+        let scanned = [region(0x10_0000, 4, false), region(0x20_0000, 4, true)];
+
+        bookkeeping.with_locked(|state| {
+            assert_eq!(state.initialize(&scanned, 0x10_0000, 1), Ok(()));
+
+            assert_eq!(state.regions().len(), 1);
+            assert_eq!(state.allocated_page_count(AllocationType::Supervisor), 1);
+            assert_eq!(state.free_page_count(), 3);
+            assert_eq!(state.allocation_type(0x20_0000), None);
+        });
+    }
+}
