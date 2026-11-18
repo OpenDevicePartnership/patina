@@ -2,6 +2,7 @@
 
 [Introduction](introduction.md)
 [Patina Background](patina.md)
+[Patina Community Calendar](calendar.md)
 [Patina in the UEFI Rust Ecosystem](background/patina_in_the_rust_ecosystem.md)
 [Patina Training Videos](training_videos.md)
 [General Rust Learning Resources](dev/learning_resources.md)
