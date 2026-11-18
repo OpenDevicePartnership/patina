@@ -14,7 +14,6 @@ use crate::{
     manager::SmbiosManager,
     service::{Smbios, SmbiosImpl},
 };
-use alloc::boxed::Box;
 use patina::{
     component::{
         component,
@@ -128,15 +127,11 @@ impl SmbiosProvider {
             minor_version: cfg.minor_version,
         };
 
-        // Leak the service to get a 'static reference usable both as the Rust service and, later, by the
-        // C protocol shim.
-        let smbios_static: &'static SmbiosImpl = Box::leak(Box::new(smbios_service));
-
         // Publish initial table (Type 127 only) to register the buffer with the UEFI Configuration Table.
         // Subsequent Add() calls update this buffer in place.
-        smbios_static.publish_table()?;
+        smbios_service.publish_table()?;
 
-        commands.add_service(smbios_static);
+        commands.add_service(smbios_service);
 
         Ok(())
     }
@@ -145,6 +140,7 @@ impl SmbiosProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::boxed::Box;
     extern crate std;
     use patina::component::{
         params::Commands,

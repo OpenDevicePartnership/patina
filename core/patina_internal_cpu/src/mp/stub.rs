@@ -18,7 +18,7 @@
 use core::num::NonZeroUsize;
 
 use patina::{
-    component::service::{memory::MemoryManager, perf_timer::ArchTimerFunctionality},
+    component::service::{Service, memory::MemoryManager, perf_timer::ArchTimerFunctionality},
     error::EfiError,
 };
 
@@ -49,7 +49,7 @@ impl ApContext {
 impl MpDispatcher for MpSupport {
     fn initialize(
         _memory_manager: &dyn MemoryManager,
-        _timer: &'static dyn ArchTimerFunctionality,
+        _timer: Service<dyn ArchTimerFunctionality>,
     ) -> Result<Self, EfiError> {
         Err(EfiError::Unsupported)
     }

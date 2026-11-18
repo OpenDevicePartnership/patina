@@ -189,16 +189,13 @@ impl TryFrom<BootServicesTpl> for Tpl {
 /// `TplController::raise_tpl(&service, tpl)`), since both traits define a method named `raise_tpl`.
 impl TplController for Service<dyn TplServices> {
     fn raise_tpl(&self, tpl: BootServicesTpl) -> BootServicesTpl {
-        // `Service<T>` derefs to `&'static T`, so a double deref gets to the underlying `dyn TplServices`,
-        // avoiding ambiguity with the `raise_tpl` implemented here on `Service<dyn TplServices>` itself.
-        let services: &dyn TplServices = **self;
-        let previous = services.raise_tpl(tpl.try_into().expect("unsupported TPL value"));
+        // Dereference to the inner `dyn TplServices` so this calls its `raise_tpl`, not `TplController::raise_tpl`.
+        let previous = (**self).raise_tpl(tpl.try_into().expect("unsupported TPL value"));
         BootServicesTpl::from(previous.as_raw())
     }
 
     fn restore_tpl(&self, tpl: BootServicesTpl) {
-        let services: &dyn TplServices = **self;
-        services.restore_tpl(PreviousTpl::from_raw(tpl.into()));
+        (**self).restore_tpl(PreviousTpl::from_raw(tpl.into()));
     }
 }
 

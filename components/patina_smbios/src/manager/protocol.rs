@@ -87,8 +87,7 @@ impl SmbiosProtocol {
 impl SmbiosProtocolInternal {
     /// Creates a new SMBIOS protocol internal structure
     ///
-    /// This constructor is tested via integration (Q35 platform component)
-    /// as it requires a 'static service which cannot be mocked in unit tests.
+    /// This constructor is tested via integration (Q35 platform component).
     #[cfg_attr(coverage, coverage(off))]
     pub(super) fn new(major_version: u8, minor_version: u8, service: Service<dyn Smbios>) -> Self {
         Self { protocol: SmbiosProtocol::new(major_version, minor_version), service }

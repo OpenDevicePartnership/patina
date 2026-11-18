@@ -20,7 +20,7 @@ mod work;
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
 use patina::{
-    component::service::{memory::MemoryManager, perf_timer::ArchTimerFunctionality},
+    component::service::{Service, memory::MemoryManager, perf_timer::ArchTimerFunctionality},
     error::EfiError,
 };
 pub use work::ApWorkItem;
@@ -90,7 +90,7 @@ pub trait MpDispatcher: Sized {
     /// Creates multiprocessor support and its architecture-specific memory.
     fn initialize(
         memory_manager: &dyn MemoryManager,
-        timer: &'static dyn ArchTimerFunctionality,
+        timer: Service<dyn ArchTimerFunctionality>,
     ) -> Result<Self, EfiError>;
 
     /// Migrates each AP from its handoff loop into the dispatcher.

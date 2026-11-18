@@ -17,7 +17,6 @@ use crate::{
     service::{Recorder, TestRecord},
 };
 
-use alloc::boxed::Box;
 use patina::component::{
     Storage, component,
     service::{
@@ -118,16 +117,16 @@ impl TestRunner {
     ) -> patina::error::Result<()> {
         let test_list: &'static [__private_api::TestCase] = __private_api::test_cases();
 
-        let recorder: &'static Recorder = if let Some(recorder) = recorder {
-            *recorder
+        let recorder = if let Some(recorder) = recorder {
+            recorder
         } else {
-            let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
-            recorder.initialize(&events, storage)?;
-            storage.add_service(recorder);
+            storage.add_service(Recorder::default());
+            let recorder = storage.get_service::<Recorder>().ok_or(patina::error::EfiError::NotFound)?;
+            Recorder::initialize(recorder.clone(), &events, storage)?;
             recorder
         };
 
-        self.register_tests(test_list, &events, &timer, recorder, storage)
+        self.register_tests(test_list, &events, &timer, &recorder, storage)
     }
 
     /// Registers the tests to be executed by the test runner.
@@ -136,7 +135,7 @@ impl TestRunner {
         test_list: &'static [__private_api::TestCase],
         events: &Service<dyn EventServices>,
         timer: &Service<dyn TimerEventServices>,
-        recorder: &'static Recorder,
+        recorder: &Service<Recorder>,
         storage: &mut Storage,
     ) -> patina::error::Result<()> {
         for test_case in test_list {
@@ -281,13 +280,13 @@ pub(crate) mod tests {
         });
 
         let mut storage = Storage::new();
-        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let recorder = Service::mock(Box::new(Recorder::default()));
         let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
 
         // TEST_CASE3 is designed to fail.
         test_runner
-            .register_tests(Box::leak(Box::new([TEST_CASE3])), &events, &timer, recorder, &mut storage)
+            .register_tests(Box::leak(Box::new([TEST_CASE3])), &events, &timer, &recorder, &mut storage)
             .expect("test registration should succeed");
         recorder.run_manual_tests(&mut storage);
     }
@@ -332,7 +331,7 @@ pub(crate) mod tests {
         let test_runner = TestRunner::default().with_filter(Filter::include("triggered_test"));
 
         let mut storage = Storage::new();
-        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let recorder = Service::mock(Box::new(Recorder::default()));
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
 
@@ -343,7 +342,7 @@ pub(crate) mod tests {
                     Box::leak(Box::new([TEST_CASE3, TEST_CASE4, TEST_CASE5])),
                     &events,
                     &timer,
-                    recorder,
+                    &recorder,
                     &mut storage,
                 )
                 .is_ok()
@@ -353,7 +352,7 @@ pub(crate) mod tests {
         assert_eq!(set_timer_calls.load(Ordering::Relaxed), 1);
         recorder.run_manual_tests(&mut storage);
 
-        let output = format!("{recorder}");
+        let output = format!("{}", *recorder);
 
         // This test is filtered out, so it is never run and is reported as skipped.
         assert!(output.contains("test_that_fails ... skipped"));
@@ -370,42 +369,42 @@ pub(crate) mod tests {
 
         let mut storage = Storage::new();
         storage.add_config(1i32);
-        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let recorder = Service::mock(Box::new(Recorder::default()));
         let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
 
         // Both tests are manual, so they would run if scheduled, but neither matches the include filter.
         TestRunner::default()
             .with_filter(Filter::include("event"))
-            .register_tests(Box::leak(Box::new([TEST_CASE1, TEST_CASE3])), &events, &timer, recorder, &mut storage)
+            .register_tests(Box::leak(Box::new([TEST_CASE1, TEST_CASE3])), &events, &timer, &recorder, &mut storage)
             .expect("test registration should succeed");
         assert!(!recorder.is_test_scheduled("test"));
         assert!(!recorder.is_test_scheduled("test_that_fails"));
         recorder.run_manual_tests(&mut storage);
 
-        let output = format!("{recorder}");
+        let output = format!("{}", *recorder);
         assert!(output.contains("  test ... skipped"));
         assert!(output.contains("test_that_fails ... skipped"));
         assert!(output.contains("totals: 0 passes, 0 fails"));
 
         // A later runner that does not filter the test out still schedules and runs it.
         TestRunner::default()
-            .register_tests(Box::leak(Box::new([TEST_CASE1])), &events, &timer, recorder, &mut storage)
+            .register_tests(Box::leak(Box::new([TEST_CASE1])), &events, &timer, &recorder, &mut storage)
             .expect("test registration should succeed");
         assert!(recorder.is_test_scheduled("test"));
         recorder.run_manual_tests(&mut storage);
-        let output = format!("{recorder}");
+        let output = format!("{}", *recorder);
         assert!(output.contains("  test ... ok (1 passes)"));
         assert!(output.contains("test_that_fails ... skipped"));
 
         // A test marked `#[skip]` is skipped even without filters.
-        let skip_recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let skip_recorder = Service::mock(Box::new(Recorder::default()));
         TestRunner::default()
-            .register_tests(Box::leak(Box::new([TEST_CASE2])), &events, &timer, skip_recorder, &mut storage)
+            .register_tests(Box::leak(Box::new([TEST_CASE2])), &events, &timer, &skip_recorder, &mut storage)
             .expect("test registration should succeed");
         assert!(!skip_recorder.is_test_scheduled("test"));
         skip_recorder.run_manual_tests(&mut storage);
-        assert!(format!("{skip_recorder}").contains("  test ... skipped"));
+        assert!(format!("{}", *skip_recorder).contains("  test ... skipped"));
     }
 
     #[test]
@@ -415,22 +414,22 @@ pub(crate) mod tests {
         };
 
         let mut storage = Storage::new();
-        let recorder: &'static Recorder = Box::leak(Box::new(Recorder::default()));
+        let recorder = Service::mock(Box::new(Recorder::default()));
         let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
         let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
 
         TestRunner::default()
-            .register_tests(Box::leak(Box::new([TEST_CASE3])), &events, &timer, recorder, &mut storage)
+            .register_tests(Box::leak(Box::new([TEST_CASE3])), &events, &timer, &recorder, &mut storage)
             .expect("test registration should succeed");
         // A later runner filtering the test out must not unschedule it.
         TestRunner::default()
             .with_filter(Filter::exclude("test_that_fails"))
-            .register_tests(Box::leak(Box::new([TEST_CASE3])), &events, &timer, recorder, &mut storage)
+            .register_tests(Box::leak(Box::new([TEST_CASE3])), &events, &timer, &recorder, &mut storage)
             .expect("test registration should succeed");
         assert!(recorder.is_test_scheduled("test_that_fails"));
 
         recorder.run_manual_tests(&mut storage);
-        let output = format!("{recorder}");
+        let output = format!("{}", *recorder);
         assert!(output.contains("test_that_fails ... fail (1 fails, 0 passes)"), "{output}");
         assert!(output.contains("totals: 0 passes, 1 fails"), "{output}");
     }
