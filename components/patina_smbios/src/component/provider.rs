@@ -116,7 +116,7 @@ impl SmbiosProvider {
 
         // Allocate buffers and add Type 127 End-of-Table marker.
         // This must be done before the table is first published to avoid allocating during Add().
-        manager.allocate_buffers(*memory)?;
+        manager.allocate_buffers(&*memory)?;
 
         // Create TplMutex at TPL_NOTIFY for thread safety against timer interrupts
         let manager_mutex = TplMutex::new(tpl, Tpl::NOTIFY, manager);

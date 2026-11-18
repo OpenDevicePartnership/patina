@@ -188,10 +188,12 @@ impl ConcreteService {
 ```
 
 ```admonish important
-Each service references the same underlying static and immutable type. This means that only the &self methods are
-available and forces the implementor to manage their own interior mutability via some sort of locking mechanism. Each
-component receives their own service instance (all of which point back to the same underlying implementation), which
-allows them stash it for their own needs post component execution.
+Each service references the same underlying shared and immutable implementation. This means that only the &self methods
+are available and forces the implementor to manage their own interior mutability via some sort of locking mechanism.
+Each component receives their own service instance (all of which point back to the same underlying implementation),
+which allows them stash it for their own needs post component execution. A producer that needs to keep using its
+implementation after registering it can register an `Arc<T>` and keep a clone of it. The implementation is dropped once
+the last service instance and `Arc` referencing it are dropped.
 ```
 
 See [Storing State for Later Use](storing_state.md) for the full set of patterns for making a value resolved in
