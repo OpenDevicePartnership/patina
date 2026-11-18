@@ -472,6 +472,8 @@ mod tests {
 
         record.schedule_run(&events, &timer, &recorder, &mut storage).expect("event test scheduling should succeed");
         recorder.update_record(record);
+        drop(events);
+        drop(timer);
 
         let mut callback = callback.borrow_mut().take().expect("event callback should be registered");
         callback(dummy_event());
@@ -645,6 +647,8 @@ mod tests {
 
         record.schedule_run(&events, &timer, &recorder, &mut storage).expect("timer test scheduling should succeed");
         recorder.update_record(record);
+        drop(events);
+        drop(timer);
 
         let mut callback = timer_callback.borrow_mut().take().expect("timer callback should be registered");
         callback(timer_event);
@@ -704,6 +708,7 @@ mod tests {
 
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
         Recorder::initialize(recorder.clone(), &events, &mut storage).expect("recorder initialization should succeed");
+        drop(events);
 
         let mut callbacks = callbacks.borrow_mut();
         assert_eq!(callbacks.len(), 2);

@@ -56,7 +56,15 @@ publish `self`. Every later caller gets a `Service<dyn Trait>` pointing at that 
 methods on it. This assumes the struct can be constructed with the dependency already in hand. If it has to exist
 earlier than that, such as a `const`-constructed `static`, for example, see Pattern 4 instead.
 
-```rust,ignore
+```rust,no_run
+# extern crate patina;
+# use patina::{
+#     component::{component, params::Commands, service::{IntoService, Service}},
+#     error::Result,
+# };
+# trait SomeOtherService {
+#     fn do_something(&self);
+# }
 trait MyTrait {
     fn do_work(&self);
 }
@@ -95,6 +103,93 @@ You will see this described in the [`Service<T>`](interface.md#servicet):
 - [`SwMmiManager`](https://github.com/OpenDevicePartnership/patina/blob/main/components/patina_mm/src/component/sw_mmi_manager.rs)
   (in the same crate) has a simpler version of this. It only stores a config value and needs no leak at all.
 
+### Keeping access to a published service
+
+Publishing a service moves the value into shared ownership. Every `Service<T>` handed out afterwards shares that one
+instance, and the instance is dropped once the last handle to it is dropped.
+
+If the component also needs the published instance from code outside dependency injection, such as a callback or a
+`ServiceCell` (see Pattern 4), register an `Arc` of it and keep a clone. The retained `Arc` and every `Service<T>` share
+the same instance.
+
+```rust,no_run
+# extern crate patina;
+# use patina::{
+#     component::{component, params::Commands, service::{IntoService, Service}},
+#     error::Result,
+# };
+# use std::sync::Arc;
+# trait SomeOtherService {
+#     fn do_something(&self);
+# }
+# trait MyTrait {
+#     fn do_work(&self);
+# }
+# #[derive(IntoService)]
+# #[service(dyn MyTrait)]
+# pub struct MyComponent {
+#     dependency: Service<dyn SomeOtherService>,
+# }
+# impl MyTrait for MyComponent {
+#     fn do_work(&self) {
+#         self.dependency.do_something();
+#     }
+# }
+#[component]
+impl MyComponent {
+    fn entry_point(mut self, dependency: Service<dyn SomeOtherService>, mut commands: Commands) -> Result<()> {
+        self.dependency = dependency;
+        let this = Arc::new(self);
+        commands.add_service(this.clone());
+        // `this` still refers to the published instance.
+        Ok(())
+    }
+}
+```
+
+A `Service<T>` can also be created from a retained `Arc<T>` with `Service::from(arc)` (or `arc.into()`) when an API
+expects a `Service<T>`.
+
+If the component only needs a `Service<T>` handle to what it published, it can take `&mut Storage` instead of
+`Commands`, add the service, and immediately retrieve it. `Storage::add_service` registers the service right away,
+whereas `Commands` defers it until `entry_point` returns. Note that `&mut Storage` cannot be combined with `Config<T>`
+or `ConfigMut<T>` parameters.
+
+```rust,no_run
+# extern crate patina;
+# use patina::{
+#     component::{Storage, component, service::{IntoService, Service}},
+#     error::{EfiError, Result},
+# };
+# trait SomeOtherService {
+#     fn do_something(&self);
+# }
+# trait MyTrait {
+#     fn do_work(&self);
+# }
+# #[derive(IntoService)]
+# #[service(dyn MyTrait)]
+# pub struct MyComponent {
+#     dependency: Service<dyn SomeOtherService>,
+# }
+# impl MyTrait for MyComponent {
+#     fn do_work(&self) {
+#         self.dependency.do_something();
+#     }
+# }
+#[component]
+impl MyComponent {
+    fn entry_point(mut self, dependency: Service<dyn SomeOtherService>, storage: &mut Storage) -> Result<()> {
+        self.dependency = dependency;
+        storage.add_service(self);
+        // The service is already registered, so it can be retrieved right away.
+        let this: Service<dyn MyTrait> = storage.get_service().ok_or(EfiError::NotFound)?;
+        this.do_work();
+        Ok(())
+    }
+}
+```
+
 ## Pattern 2: Capture it in the closure
 
 This covers a scenario common when using Patina UEFI Services. A component sets up an event or protocol notification,
@@ -103,7 +198,19 @@ and the callback needs something the entry point already resolved. `EventService
 `impl FnMut(..) + 'static`. The DXE Core boxes it and keeps it alive for as long as the registration lasts, so there is
 no global to write anywhere. Just `move` the `Service<T>` the callback needs straight into the closure.
 
-```rust,ignore
+```rust,no_run
+# extern crate patina;
+# use patina::{
+#     component::service::{
+#         Service,
+#         uefi_services::{
+#             event::{EventServices, EventServicesExt},
+#             protocol::ProtocolServices,
+#             tpl::Tpl,
+#         },
+#     },
+#     error::Result,
+# };
 fn entry_point(
     events: Service<dyn EventServices>,
     protocols: Service<dyn ProtocolServices>,
@@ -150,7 +257,21 @@ struct's address is the same as its first field's address. Pass a `Box::new(wrap
 `ProtocolServicesExt::install_protocol`. Note that it only leaks the box once installation actually succeeds, so a
 failed install does not leak memory. Cast the callback's incoming pointer back to the wrapper type.
 
-```rust,ignore
+```rust,no_run
+# extern crate patina;
+# use patina::{
+#     BinaryGuid,
+#     component::service::{
+#         Service,
+#         uefi_services::protocol::{ProtocolServices, ProtocolServicesExt},
+#     },
+#     error::Result,
+#     protocol::ProtocolInterface,
+#     standard::efi,
+# };
+# trait SomeOtherService {
+#     fn do_something(&self);
+# }
 #[repr(C)]
 struct MyProtocol {
     do_work: extern "efiapi" fn(*const MyProtocol) -> efi::Status,
@@ -180,9 +301,12 @@ extern "efiapi" fn do_work(this: *const MyProtocol) -> efi::Status {
     efi::Status::SUCCESS
 }
 
+# fn entry_point(service: Service<dyn SomeOtherService>, protocols: Service<dyn ProtocolServices>) -> Result<()> {
 // entry_point:
 let wrapper = Box::new(MyProtocolInternal { protocol: MyProtocol { do_work }, service });
 protocols.install_protocol(None, wrapper)?;
+# Ok(())
+# }
 ```
 
 - [`patina_smbios`'s protocol module](https://github.com/OpenDevicePartnership/patina/blob/main/components/patina_smbios/src/manager/protocol.rs)
@@ -206,7 +330,10 @@ It is a small `static` cell made for this problem. The entry point (or an init m
 value once, and the callback or struct reads it back later through `get()`. It never blocks and it can only be written
 once. See its module documentation for the full safety reasoning.
 
-```rust,ignore
+```rust,no_run
+# extern crate patina;
+# use patina::{component::service::cell::ServiceCell, standard::efi};
+# trait MyService {}
 static PROTOCOL_SERVICE: ServiceCell<dyn MyService> = ServiceCell::new();
 
 unsafe extern "efiapi" fn c_callback(/* fixed signature, no context param */) -> efi::Status {
@@ -227,6 +354,71 @@ unsafe extern "efiapi" fn c_callback(/* fixed signature, no context param */) ->
   resolves it.
   - `patina_dxe_core`'s `CORE_PERFORMANCE` static does the same thing.
 
+Sometimes a static like this is the only option given a pre-defined protocol interface structure. Since a service cannot
+be registered as a `&'static` reference, the implementation itself should not be the `static`. Instead, own the
+implementation in an `Arc`, register it as a service, and publish a handle to the same instance into a `ServiceCell` for
+the callbacks. The concrete type can be published when the callbacks need methods beyond the service trait.
+
+```rust,no_run
+# extern crate patina;
+# use core::ffi::c_void;
+# use patina::{
+#     BinaryGuid,
+#     component::{
+#         Storage,
+#         service::{
+#             IntoService, Service,
+#             cell::ServiceCell,
+#             uefi_services::protocol::{ProtocolServices, ProtocolServicesExt},
+#         },
+#     },
+#     error::{EfiError, Result},
+#     protocol::ProtocolInterface,
+#     standard::efi,
+# };
+# use std::sync::Arc;
+# trait SomeOtherService {}
+# #[derive(IntoService)]
+# #[service(MyProvider)]
+# struct MyProvider {
+#     dependency: Service<dyn SomeOtherService>,
+# }
+# impl MyProvider {
+#     fn new(dependency: Service<dyn SomeOtherService>) -> Self {
+#         Self { dependency }
+#     }
+# }
+# #[repr(C)]
+# struct MyProtocol {
+#     get_thing: extern "efiapi" fn(usize, *mut *mut c_void) -> efi::Status,
+# }
+# // SAFETY: The GUID identifies this protocol layout.
+# unsafe impl ProtocolInterface for MyProtocol {
+#     const PROTOCOL_GUID: BinaryGuid = BinaryGuid::from_string("00000000-0000-0000-0000-000000000000");
+# }
+# static MY_PROTOCOL: MyProtocol = MyProtocol { get_thing };
+static PROVIDER: ServiceCell<MyProvider> = ServiceCell::new();
+
+# fn entry_point(
+#     dependency: Service<dyn SomeOtherService>,
+#     storage: &mut Storage,
+#     protocols: Service<dyn ProtocolServices>,
+# ) -> Result<()> {
+// entry_point:
+let provider = Arc::new(MyProvider::new(dependency));
+storage.add_service(provider.clone());
+PROVIDER.publish(provider.into()).map_err(|_| EfiError::AlreadyStarted)?;
+protocols.install_protocol::<MyProtocol>(None, &MY_PROTOCOL)?;
+# Ok(())
+# }
+
+extern "efiapi" fn get_thing(index: usize, out: *mut *mut c_void) -> efi::Status {
+    let Some(provider) = PROVIDER.get() else { return efi::Status::NOT_STARTED };
+    // use `provider`
+    efi::Status::SUCCESS
+}
+```
+
 ## Pattern 5: Let a callback and a later method share state
 
 Sometimes a callback needs to write something that a later `&self` method on the same component has to read, or the
@@ -234,10 +426,28 @@ other way round. This is not just capturing a value once and using it. Both side
 these cases, it is possible to `Box::leak` a small context struct with something like a `Cell`, `AtomicBool`, or
 `AtomicPtr` inside, then give both the closure and a field on the component a `&'static` reference to it.
 
-```rust,ignore
+```rust,no_run
+# extern crate patina;
+# use core::sync::atomic::{AtomicBool, Ordering};
+# use patina::{
+#     component::service::{
+#         Service,
+#         uefi_services::{
+#             protocol::{ProtocolServices, ProtocolServicesExt},
+#             tpl::Tpl,
+#         },
+#     },
+#     error::Result,
+# };
+# type P = patina::standard::efi::protocols::graphics_output::Protocol;
 struct SharedContext {
     pending: AtomicBool,
 }
+# struct MyComponent {
+#     context: Option<&'static SharedContext>,
+# }
+# impl MyComponent {
+# fn entry_point(&mut self, protocols: Service<dyn ProtocolServices>) -> Result<()> {
 
 // entry_point:
 let context: &'static SharedContext = Box::leak(Box::new(SharedContext { pending: AtomicBool::new(false) }));
@@ -245,9 +455,14 @@ self.context = Some(context); // stored on the component for a later &self metho
 protocols.on_protocol_installed::<P>(Tpl::Callback, move |_handle| {
     context.pending.store(true, Ordering::Release);
 })?;
+# Ok(())
+# }
+# }
 ```
 
-This is a normal box heap allocation made once while the component runs, not a `static` in the file.
+This is a normal box heap allocation made once while the component runs, not a `static` in the file. When the context
+does not need to outlive both sides, an `Arc<SharedContext>` cloned into the closure and stored on the component works
+the same way and frees the context once both are dropped.
 
 - [`ProtocolNotifyContext`](https://github.com/OpenDevicePartnership/patina/blob/main/components/patina_mm/src/component/communicator/comm_buffer_update.rs)
   has an example.

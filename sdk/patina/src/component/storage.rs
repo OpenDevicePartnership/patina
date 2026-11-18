@@ -199,9 +199,10 @@ pub struct Storage {
     configs: SparseVec<RefCell<ConfigRaw>>,
     /// A map to convert from a `TypeId` to a config index.
     config_indices: BTreeMap<TypeId, usize>,
-    /// A container for all service datums. This resource can only be accessed immutably, but one service datum can
-    /// represent multiple services. Services must have internal mutability if they need to be modified.
-    services: SparseVec<&'static dyn Any>,
+    /// A container for all service datums. Each entry is an erased `Arc<S>` for the service interface `S` at that
+    /// index. Services can only be accessed immutably, but one implementation can back multiple services. Services
+    /// must have internal mutability if they need to be modified.
+    services: SparseVec<Box<dyn Any>>,
     /// A map to convert a Service type to a concrete service index.
     service_indices: BTreeMap<TypeId, usize>,
     /// HOB parsers for converting guided HOBs into `Hob<T>` datums.
@@ -355,25 +356,27 @@ impl Storage {
     }
 
     /// Inserts a service into the storage.
-    pub(crate) fn insert_service(&mut self, id: usize, service: &'static dyn Any) {
+    pub(crate) fn insert_service(&mut self, id: usize, service: Box<dyn Any>) {
         self.services.insert(id, service);
     }
 
     /// Adds a new service to the storage.
+    ///
+    /// Accepts an owned implementation or an `Arc` of it. Registering an `Arc` allows the producer to retain a clone
+    /// and keep using the same instance after registering it.
     pub fn add_service<S: IntoService + 'static>(&mut self, service: S) {
         service.register(self);
     }
 
-    /// Retrieves a service from the underlying storage in its untyped form.
-    pub(crate) fn get_raw_service(&self, id: usize) -> Option<&'static dyn Any> {
-        // Copy the reference, not the underlying value
-        self.services.get(id).copied()
+    /// Retrieves the erased service entry at the given id.
+    pub(crate) fn get_raw_service(&self, id: usize) -> Option<&dyn Any> {
+        self.services.get(id).map(AsRef::as_ref)
     }
 
     /// Attempts to retrieve a service from the storage.
     pub fn get_service<S: ?Sized + 'static>(&self) -> Option<Service<S>> {
         let idx = *self.service_indices.get(&TypeId::of::<S>())?;
-        Some(Service::from(self.get_raw_service(idx)?))
+        self.get_raw_service(idx).map(Service::from_raw)
     }
 
     pub(crate) fn add_hob_parser<T: FromHob>(&mut self) {
@@ -691,7 +694,7 @@ mod tests {
         // by dropping the entire storage.
         drop(storage);
 
-        // service should still work as it is pointing to the static leaked memory, not the reference in the storage.
+        // service should still work as it shares ownership of the implementation, not a reference into the storage.
         assert_eq!(service.test(), 42);
     }
 
