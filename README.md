@@ -90,20 +90,20 @@ better understand how Patina is structured and how to integrate it into a platfo
 
 ## Docs
 
-* **[Getting Started](https://opendevicepartnership.github.io/patina/):** Patina's official getting started guide,
+- **[Getting Started](https://opendevicepartnership.github.io/patina/):** Patina's official getting started guide,
 containing information regarding the project itself, integrating the Patina DXE Core into a platform, developing a
 Patina component for your platform, and developing Patina itself.
-* **[Patina DXE Core API docs](https://docs.rs/patina_dxe_core/latest/)** Patina DXE Core API documentation. Includes
+- **[Patina DXE Core API docs](https://docs.rs/patina_dxe_core/latest/)** Patina DXE Core API documentation. Includes
 information for creating a Patina DXE Core EFI binary with platform customizations such as additional Patina
 components.
-* **[Patina SDK API docs](https://docs.rs/patina/latest/patina/)** Patina SDK API documentation that describes how to
+- **[Patina SDK API docs](https://docs.rs/patina/latest/patina/)** Patina SDK API documentation that describes how to
 write a Patina component.
 
 ## Important Notes
 
 Content in the main branch of the patina repository is expected to be functionally stable with the following exception:
 
-* Patina has optional pieces of functionality called "Patina components". While components are expected to adhere to
+- Patina has optional pieces of functionality called "Patina components". While components are expected to adhere to
 the same standards of readiness as the rest of the repository, when evaluating a new component, consumers should
 verify that the component does not have special disclaimers or limitations noted in its documentation.
 
@@ -191,25 +191,25 @@ cargo make check -p patina --features foo
 
 ## Test
 
-* Run all unit tests in the workspace:
+- Run all unit tests in the workspace:
 
 ```shell
 cargo make test
 ```
 
-* Run tests in an individual package:
+- Run tests in an individual package:
 
 ```shell
 cargo make test -p patina
 ```
 
-Build on-platform tests in the workspace:
+- Build on-platform tests in the workspace:
 
 ```shell
 cargo make patina-test
 ```
 
-* Build on-platform tests in an individual package:
+- Build on-platform tests in an individual package:
 
 ```shell
 cargo make patina-test -p patina_dxe_core
@@ -284,9 +284,9 @@ your ideas and feedback on additional priorities that matter to the community.
 
 ## Contributing
 
-* Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/blob/HEAD/docs/src/introduction.md)
+- Review Rust Documentation in the [/docs](https://github.com/OpenDevicePartnership/patina/blob/HEAD/docs/src/introduction.md)
 directory.
-* Run unit tests and ensure all pass.
+- Run unit tests and ensure all pass.
 
 [release]: https://img.shields.io/crates/v/patina
 [_release]: https://github.com/OpenDevicePartnership/patina/releases/latest
