@@ -842,3 +842,603 @@ fn check_cores_distinct(info: &SaveStateInfo, entry_size: usize, bsp_cr3: u64) -
 
     Ok(())
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    use serial_test::serial;
+    use zerocopy::{FromZeros, IntoBytes};
+
+    use crate::memory;
+    use crate::test_support::{self, PageAlignedMemory, init_global_state_over};
+
+    const SMBASE: u64 = 0x7F00_0000;
+    const HOB_LIST: u64 = 0x7E00_0000;
+    const RENDEZVOUS: u64 = 0x7F80_1000;
+
+    const EXPECTED: ExpectedFixups = ExpectedFixups {
+        smbase: SMBASE,
+        hob_list: HOB_LIST,
+        rendezvous: RENDEZVOUS,
+        misc_enable_supported: true,
+        five_level_paging: false,
+    };
+
+    /// The Fixup64 array `SmmCpuFeaturesInstallSmiHandler` writes for a V5 entry.
+    fn fixup64(idt_descriptor: u64) -> [u64; 7] {
+        [0, 0, RENDEZVOUS, 0, 0, idt_descriptor, HOB_LIST]
+    }
+
+    /// The Fixup32 array `SmmCpuFeaturesInstallSmiHandler` writes for a V5 entry.
+    fn fixup32(gdt_descriptor: u32, cr3: u32, stack_top: u32, smbase: u32) -> [u32; 7] {
+        [0, gdt_descriptor, cr3, 0, 0, stack_top, smbase]
+    }
+
+    /// The Fixup8 array `SmmCpuFeaturesInstallSmiHandler` writes for a V5 entry on Intel without
+    /// 5-level paging.
+    const FIXUP8: [u8; 8] = [1, 1, 0, 0, 0, 0, 0, 0];
+
+    /// The GDT and TSS `InitGdt` builds at `gdt_base`, as a core that has run its entry code sees
+    /// them, with IST1 set to `ist1` and the I/O map base at the TSS limit.
+    fn template_gdt(gdt_base: u64, ist1: u64) -> SmiGdtImage {
+        let mut call_gate = CallGateDescriptor::default();
+        call_gate.set_return_gate(0);
+        let mut tss_descriptor = TssDescriptor {
+            limit_low: TSS_LIMIT_LOW,
+            type_attr: TSS_TYPE_BUSY,
+            limit_flags: TSS_LIMIT_FLAGS,
+            ..Default::default()
+        };
+        tss_descriptor.set_base(gdt_base + u64::from(TSS_DESC_OFFSET));
+        SmiGdtImage {
+            segments: GDT_SEGMENTS,
+            call_gate,
+            tss_descriptor,
+            tss_head: [0; 0x24],
+            tss_ist1: ist1,
+            tss_tail: [0; 0x3A],
+            tss_io_map_base: TSS_LIMIT_LOW,
+        }
+    }
+
+    #[test]
+    fn test_mmi_entry_validation_errors_render_each_variant_distinctly() {
+        let cases = [
+            (
+                MmiEntryValidationError::SaveStateInfoUnavailable,
+                "the save-state metadata that locates each core's SMBASE has not been published",
+            ),
+            (
+                MmiEntryValidationError::SmBaseMismatch { cpu: 1, smbase: 0x3000, msr: 0x4000 },
+                "CPU 1: IA32_SMBASE is 0x4000, but the SMBASE array records 0x3000",
+            ),
+            (
+                MmiEntryValidationError::OutsideMmram { cpu: 1, structure: "GDT", base: 0x1000 },
+                "CPU 1: the GDT at 0x1000 is not inside MMRAM",
+            ),
+            (
+                MmiEntryValidationError::UnexpectedHeaderVersion { cpu: 1, version: 4 },
+                "CPU 1: the MMI entry has header version 4, not 5",
+            ),
+            (
+                MmiEntryValidationError::UnexpectedFixup { cpu: 1, slot: "FIXUP64_HOB_START", value: 0x10 },
+                "CPU 1: FIXUP64_HOB_START holds unexpected value 0x10",
+            ),
+            (
+                MmiEntryValidationError::RegisterMismatch { cpu: 1, register: "CR3", expected: 0x1000, found: 0x2000 },
+                "CPU 1: CR3 is 0x2000, expected 0x1000",
+            ),
+            (
+                MmiEntryValidationError::GdtEntryMismatch { cpu: 1, offset: 0x70 },
+                "CPU 1: the GDT entry at offset 0x70 differs from the entry code's template",
+            ),
+            (
+                MmiEntryValidationError::StackTopMismatch { cpu: 1, found: 2 },
+                "CPU 1: the top of the Ring 0 stack holds 0x2, not the CPU index",
+            ),
+            (
+                MmiEntryValidationError::TssIoBitmapPresent { cpu: 1, io_map_base: 0 },
+                "CPU 1: the TSS I/O map base 0x0 is below the TSS limit 0x68, so Ring 3 port I/O is not refused",
+            ),
+            (
+                MmiEntryValidationError::SharedAcrossCores { structure: "GDT", first: 0, second: 3 },
+                "CPUs 0 and 3 share a GDT",
+            ),
+            (
+                MmiEntryValidationError::StackGuardMissing { cpu: 1, ist1: 0x7F60_1000 },
+                "CPU 1: the page at IST1 0x7f601000 is not a page-aligned, not-present stack guard",
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(format!("{error}"), expected);
+        }
+    }
+
+    #[test]
+    fn test_smi_gdt_image_matches_the_template_layout() {
+        assert_eq!(size_of::<SmiGdtImage>(), 0xE8);
+        assert_eq!(core::mem::offset_of!(SmiGdtImage, call_gate), usize::from(CALL_GATE_OFFSET));
+        assert_eq!(core::mem::offset_of!(SmiGdtImage, tss_descriptor), usize::from(TSS_SEL_OFFSET));
+        // IST1 sits 0x24 bytes into the TSS, and the I/O map base 0x66.
+        assert_eq!(core::mem::offset_of!(SmiGdtImage, tss_ist1), usize::from(TSS_DESC_OFFSET) + 0x24);
+        assert_eq!(core::mem::offset_of!(SmiGdtImage, tss_io_map_base), usize::from(TSS_DESC_OFFSET) + 0x66);
+    }
+
+    #[test]
+    fn test_check_ldtr_requires_the_null_selector() {
+        assert_eq!(check_ldtr(2, 0), Ok(()));
+        for selector in [0x28, 0xfff8] {
+            assert_eq!(
+                check_ldtr(2, selector),
+                Err(MmiEntryValidationError::RegisterMismatch {
+                    cpu: 2,
+                    register: "LDTR",
+                    expected: 0,
+                    found: u64::from(selector)
+                }
+                .into())
+            );
+        }
+    }
+
+    #[test]
+    fn test_gdt_segments_encode_the_template_descriptors() {
+        // The descriptors `SmiException.nasm` assembles, as the 64-bit values the CPU reads.
+        const TEMPLATE: [u64; 12] = [
+            0,
+            0x00CF_9B00_0000_FFFF,
+            0x00CF_9B00_0000_FFFF,
+            0x00CF_9300_0000_FFFF,
+            0x00CF_9300_0000_FFFF,
+            0x008F_9B00_0000_FFFF,
+            0x008F_9300_0000_FFFF,
+            0x00AF_9B00_0000_FFFF,
+            0x00CF_9300_0000_FFFF,
+            0x00AF_7B00_0000_FFFF,
+            0x00CF_F300_0000_FFFF,
+            0x00AF_FB00_0000_FFFF,
+        ];
+
+        assert_eq!(size_of::<SegmentDescriptor>(), 8);
+        for (index, (segment, expected)) in GDT_SEGMENTS.iter().zip(TEMPLATE).enumerate() {
+            let bytes: [u8; 8] = segment.as_bytes().try_into().unwrap();
+            assert_eq!(u64::from_le_bytes(bytes), expected, "GDT offset 0x{:x}", index * 8);
+        }
+    }
+
+    #[test]
+    fn test_psd_matches_the_stm_api_layout() {
+        assert_eq!(size_of::<Psd>(), 0x89);
+        // The entry code loads DS, SS, and ES, FS and GS from these offsets (`DSC_DS`, `DSC_SS` and
+        // `DSC_OTHERSEG`).
+        assert_eq!(core::mem::offset_of!(Psd, smm_ds), 0x16);
+        assert_eq!(core::mem::offset_of!(Psd, smm_ss), 0x18);
+        assert_eq!(core::mem::offset_of!(Psd, smm_other_segment), 0x1A);
+        assert_eq!(core::mem::offset_of!(Psd, smm_cr3), 0x20);
+        assert_eq!(core::mem::offset_of!(Psd, smm_gdt_ptr), 0x48);
+    }
+
+    #[test]
+    fn test_check_fixups_accepts_the_values_init_writes() {
+        let entry = test_support::mmi_entry_with(
+            &fixup64(0x7F10_0000),
+            &fixup32(0x7F20_0000, 0x7F30_0000, 0x7F40_0FF8, SMBASE as u32),
+            &FIXUP8,
+        );
+        let fixups = MmiEntryFixups::parse(&entry).unwrap();
+
+        assert_eq!(check_fixups(1, &fixups, &EXPECTED), Ok(()));
+
+        // AMD has no MSR_IA32_MISC_ENABLE, and LA57 follows CR4.
+        let mut fixup8 = FIXUP8;
+        fixup8[FIXUP8_MISC_ENABLE_SUPPORTED] = 0;
+        fixup8[FIXUP8_5_LEVEL_PAGING] = 1;
+        let entry = test_support::mmi_entry_with(
+            &fixup64(0x7F10_0000),
+            &fixup32(0x7F20_0000, 0x7F30_0000, 0x7F40_0FF8, SMBASE as u32),
+            &fixup8,
+        );
+        let fixups = MmiEntryFixups::parse(&entry).unwrap();
+        let amd_la57 = ExpectedFixups { misc_enable_supported: false, five_level_paging: true, ..EXPECTED };
+        assert_eq!(check_fixups(1, &fixups, &amd_la57), Ok(()));
+    }
+
+    #[test]
+    fn test_check_fixups_rejects_each_unexpected_slot() {
+        let fixup32 = fixup32(0x7F20_0000, 0x7F30_0000, 0x7F40_0FF8, SMBASE as u32);
+        let unexpected = |slot: &'static str, value: u64| -> MmSupervisorResult<()> {
+            Err(MmiEntryValidationError::UnexpectedFixup { cpu: 2, slot, value }.into())
+        };
+
+        let cases64 = [
+            (FIXUP64_SMM_DBG_ENTRY, "FIXUP64_SMM_DBG_ENTRY", 0x1000),
+            (FIXUP64_SMM_DBG_EXIT, "FIXUP64_SMM_DBG_EXIT", 0x1000),
+            (FIXUP64_SMI_RDZ_ENTRY, "FIXUP64_SMI_RDZ_ENTRY", RENDEZVOUS + 1),
+            (FIXUP64_XD_SUPPORTED, "FIXUP64_XD_SUPPORTED", 0x1000),
+            (FIXUP64_CET_SUPPORTED, "FIXUP64_CET_SUPPORTED", 0x1000),
+            (FIXUP64_HOB_START, "FIXUP64_HOB_START", HOB_LIST + 8),
+        ];
+        for (index, slot, value) in cases64 {
+            let mut fixup64 = fixup64(0x7F10_0000);
+            fixup64[index] = value;
+            let entry = test_support::mmi_entry_with(&fixup64, &fixup32, &FIXUP8);
+            let fixups = MmiEntryFixups::parse(&entry).unwrap();
+            assert_eq!(check_fixups(2, &fixups, &EXPECTED), unexpected(slot, value), "{slot}");
+        }
+
+        let cases32 = [
+            (FIXUP32_CET_PL0_SSP, "FIXUP32_CET_PL0_SSP", 0x1000),
+            (FIXUP32_CET_INTERRUPT_SSP, "FIXUP32_CET_INTERRUPT_SSP", 0x1000),
+            (FIXUP32_CET_INTERRUPT_SSP_TABLE, "FIXUP32_CET_INTERRUPT_SSP_TABLE", 0x1000),
+            (FIXUP32_MSR_SMM_BASE, "FIXUP32_MSR_SMM_BASE", SMBASE as u32 + 0x2000),
+        ];
+        for (index, slot, value) in cases32 {
+            let mut fixup32 = fixup32;
+            fixup32[index] = value;
+            let entry = test_support::mmi_entry_with(&fixup64(0x7F10_0000), &fixup32, &FIXUP8);
+            let fixups = MmiEntryFixups::parse(&entry).unwrap();
+            assert_eq!(check_fixups(2, &fixups, &EXPECTED), unexpected(slot, value.into()), "{slot}");
+        }
+
+        let cases8 = [
+            (FIXUP8_XD_SUPPORTED, "FIXUP8_XD_SUPPORTED", 0),
+            (FIXUP8_MISC_ENABLE_SUPPORTED, "FIXUP8_MISC_ENABLE_SUPPORTED", 0),
+            (FIXUP8_5_LEVEL_PAGING, "FIXUP8_5_LEVEL_PAGING", 1),
+            (FIXUP8_CET_SUPPORTED, "FIXUP8_CET_SUPPORTED", 1),
+            (FIXUP8_FIRST_RESERVED, "a reserved Fixup8 slot", 1),
+            (FIXUP8.len() - 1, "a reserved Fixup8 slot", 1),
+        ];
+        for (index, slot, value) in cases8 {
+            let mut fixup8 = FIXUP8;
+            fixup8[index] = value;
+            let entry = test_support::mmi_entry_with(&fixup64(0x7F10_0000), &fixup32, &fixup8);
+            let fixups = MmiEntryFixups::parse(&entry).unwrap();
+            assert_eq!(check_fixups(2, &fixups, &EXPECTED), unexpected(slot, value.into()), "{slot}");
+        }
+    }
+
+    #[test]
+    fn test_check_fixups_rejects_another_version_or_short_arrays() {
+        let fixup32 = fixup32(0x7F20_0000, 0x7F30_0000, 0x7F40_0FF8, SMBASE as u32);
+        let mut entry = test_support::mmi_entry_with(&fixup64(0x7F10_0000), &fixup32, &FIXUP8);
+        // The header follows the 8-byte stand-in for the entry code.
+        entry[8..12].copy_from_slice(&4_u32.to_ne_bytes());
+        let fixups = MmiEntryFixups::parse(&entry).unwrap();
+        assert_eq!(
+            check_fixups(2, &fixups, &EXPECTED),
+            Err(MmiEntryValidationError::UnexpectedHeaderVersion { cpu: 2, version: 4 }.into())
+        );
+
+        // A V5 entry missing its HOB slot is rejected rather than read past its array.
+        let entry = test_support::mmi_entry_with(&fixup64(0x7F10_0000)[..FIXUP64_HOB_START], &fixup32, &FIXUP8);
+        let fixups = MmiEntryFixups::parse(&entry).unwrap();
+        assert_eq!(
+            check_fixups(2, &fixups, &EXPECTED),
+            Err(SmiHandlerIdtPatchError::FixupArrayTooSmall {
+                width: 64,
+                index: FIXUP64_HOB_START,
+                found: FIXUP64_HOB_START as u8
+            }
+            .into())
+        );
+    }
+
+    #[test]
+    fn test_check_gdt_accepts_the_template() {
+        assert_eq!(check_gdt(1, &template_gdt(0x7F50_0000, 0x7F60_1000), 0x7F50_0000), Ok(()));
+
+        // The call gate's target is programmed on demotion, so it may hold anything.
+        let mut gdt = template_gdt(0x7F50_0000, 0x7F60_1000);
+        gdt.call_gate.set_offset(0xFFFF_8000_0000_1000);
+        assert_eq!(check_gdt(1, &gdt, 0x7F50_0000), Ok(()));
+    }
+
+    #[test]
+    fn test_check_gdt_rejects_each_altered_entry() {
+        const BASE: u64 = 0x7F50_0000;
+        let mismatch = |offset: usize| -> MmSupervisorResult<()> {
+            Err(MmiEntryValidationError::GdtEntryMismatch { cpu: 1, offset }.into())
+        };
+
+        for index in 0..GDT_SEGMENTS.len() {
+            let mut gdt = template_gdt(BASE, 0x7F60_1000);
+            let mut segments = gdt.segments;
+            // Flip the DPL bits, which turns a Ring 0 segment into a Ring 3 one.
+            segments[index].type_ ^= 0x60;
+            gdt.segments = segments;
+            assert_eq!(check_gdt(1, &gdt, BASE), mismatch(index * 8), "segment {index}");
+        }
+
+        let gate = usize::from(CALL_GATE_OFFSET);
+        let mut gdt = template_gdt(BASE, 0x7F60_1000);
+        gdt.call_gate.selector = 0x58;
+        assert_eq!(check_gdt(1, &gdt, BASE), mismatch(gate));
+        let mut gdt = template_gdt(BASE, 0x7F60_1000);
+        gdt.call_gate.ist = 1;
+        assert_eq!(check_gdt(1, &gdt, BASE), mismatch(gate));
+        let mut gdt = template_gdt(BASE, 0x7F60_1000);
+        gdt.call_gate.type_attr = 0x8C;
+        assert_eq!(check_gdt(1, &gdt, BASE), mismatch(gate));
+        let mut gdt = template_gdt(BASE, 0x7F60_1000);
+        gdt.call_gate.reserved = 1;
+        assert_eq!(check_gdt(1, &gdt, BASE), mismatch(gate));
+
+        let tss = usize::from(TSS_SEL_OFFSET);
+        let mut gdt = template_gdt(BASE, 0x7F60_1000);
+        gdt.tss_descriptor.limit_low = 0xFFFF;
+        assert_eq!(check_gdt(1, &gdt, BASE), mismatch(tss));
+        let mut gdt = template_gdt(BASE, 0x7F60_1000);
+        gdt.tss_descriptor.limit_flags = 0x8F;
+        assert_eq!(check_gdt(1, &gdt, BASE), mismatch(tss));
+        // The old template's G = 1, which scales the limit to 0x68FFF.
+        let mut gdt = template_gdt(BASE, 0x7F60_1000);
+        gdt.tss_descriptor.limit_flags = 0x80;
+        assert_eq!(check_gdt(1, &gdt, BASE), mismatch(tss));
+        // A TSS that is not busy was not the one this core's `ltr` loaded.
+        let mut gdt = template_gdt(BASE, 0x7F60_1000);
+        gdt.tss_descriptor.type_attr = 0x89;
+        assert_eq!(check_gdt(1, &gdt, BASE), mismatch(tss));
+        let mut gdt = template_gdt(BASE, 0x7F60_1000);
+        gdt.tss_descriptor.reserved = 1;
+        assert_eq!(check_gdt(1, &gdt, BASE), mismatch(tss));
+        // The TSS must be the one that follows this GDT.
+        assert_eq!(check_gdt(1, &template_gdt(BASE, 0x7F60_1000), BASE + 0x1000), mismatch(tss));
+        assert_eq!(check_gdt(1, &template_gdt(BASE, 0x7F60_1000), u64::MAX), mismatch(tss));
+
+        // An I/O map base below the limit leaves a bitmap made of the TSS's own bytes, with the old
+        // template's 0 as the worst case. Anything at or above the limit means no bitmap.
+        for io_map_base in [0, TSS_LIMIT_LOW - 1] {
+            let mut gdt = template_gdt(BASE, 0x7F60_1000);
+            gdt.tss_io_map_base = io_map_base;
+            assert_eq!(
+                check_gdt(1, &gdt, BASE),
+                Err(MmiEntryValidationError::TssIoBitmapPresent { cpu: 1, io_map_base }.into())
+            );
+        }
+        let mut gdt = template_gdt(BASE, 0x7F60_1000);
+        gdt.tss_io_map_base = u16::MAX;
+        assert_eq!(check_gdt(1, &gdt, BASE), Ok(()));
+    }
+
+    /// Allocates `pages` pages of the test MMRAM.
+    fn allocate(pages: usize) -> u64 {
+        security_state().page_allocator().allocate_pages(pages).expect("pages in the test MMRAM")
+    }
+
+    /// Writes `value` at `address`, which must be a live allocation large enough to hold it.
+    fn place<T>(address: u64, value: T) {
+        // SAFETY: each caller passes an allocation from `allocate` with room for `T`.
+        unsafe { core::ptr::write_unaligned(address as *mut T, value) };
+    }
+
+    /// Copies `entry` to `SMBASE + 0x8000` of a fresh SMRAM window in the test MMRAM, records
+    /// that SMBASE in a one-entry SMBASE array, and returns the metadata that describes it.
+    fn place_single_core(entry: &[u8]) -> SaveStateInfo {
+        let smbase = allocate((SMRAM_WINDOW_SIZE / UEFI_PAGE_SIZE as u64) as usize);
+        // SAFETY: the SMRAM window is a live 64 KiB allocation, and the entry ends well inside it
+        // because it starts at `SMM_HANDLER_OFFSET`, halfway through.
+        unsafe {
+            core::ptr::copy_nonoverlapping(entry.as_ptr(), (smbase + SMM_HANDLER_OFFSET) as *mut u8, entry.len());
+        }
+        let array = allocate(1);
+        place(array, smbase);
+        // SAFETY: the array holds one initialized SMBASE and stays allocated for the test, and no
+        // save-state map is read through it.
+        unsafe { SaveStateInfo::new(1, array, entry.len() as u64) }.expect("a one-entry SMBASE array")
+    }
+
+    #[test]
+    #[serial]
+    fn test_read_inside_mmram_reads_only_from_mmram() {
+        test_support::init_test_logger();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 8);
+        init_global_state_over(&memory);
+
+        let page = allocate(1);
+        place(page + 8, 0x1122_3344_5566_7788_u64);
+        let (range, value) = read_inside_mmram::<u64>(1, "slot", page + 8).expect("the slot is in MMRAM");
+        assert_eq!((range, value), (MemoryRange::new(page + 8, 8).unwrap(), 0x1122_3344_5566_7788));
+
+        // Outside MMRAM and wrapping the address space are both refused before anything is read.
+        // A range straddling an MMRAM boundary panics in `is_range_inside_mmram` by design.
+        for address in [0x1000, u64::MAX - 3] {
+            assert_eq!(
+                read_inside_mmram::<u64>(1, "slot", address),
+                Err(MmiEntryValidationError::OutsideMmram { cpu: 1, structure: "slot", base: address }.into()),
+                "address 0x{address:x}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_read_mmi_entry_structures_refuses_a_slot_outside_mmram() {
+        test_support::init_test_logger();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 64);
+        init_global_state_over(&memory);
+
+        let idt_descriptor = allocate(1);
+        place(idt_descriptor, DescriptorTablePointer { limit: IDT_LIMIT, base: 0x7F70_0000 });
+        // Host test memory lies above 4 GiB, out of reach of the Fixup32 slots, so this checks
+        // that each slot is refused, in order, before it is read.
+        let fixup32 = fixup32(0x1000, 0x7F30_0000, 0x2000, SMBASE as u32);
+        let cases = [(fixup64(0x1000), "IDT descriptor", 0x1000), (fixup64(idt_descriptor), "GDT descriptor", 0x1000)];
+        for (fixup64, structure, base) in cases {
+            let info = place_single_core(&test_support::mmi_entry_with(&fixup64, &fixup32, &FIXUP8));
+            let entry_size = info.mmi_entry_size() as usize;
+            assert_eq!(
+                read_mmi_entry_structures(&info, 0, entry_size).err(),
+                Some(MmiEntryValidationError::OutsideMmram { cpu: 0, structure, base }.into()),
+                "{structure}"
+            );
+        }
+
+        // A CPU past the end of the SMBASE array is not looked up at all.
+        let info = place_single_core(&test_support::mmi_entry_with(&fixup64(idt_descriptor), &fixup32, &FIXUP8));
+        assert_eq!(
+            read_mmi_entry_structures(&info, 1, info.mmi_entry_size() as usize).err(),
+            Some(CoreInitError::CpuIndexOutOfRange { index: 1, len: 1 }.into())
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_check_cores_distinct_fails_on_a_core_it_cannot_read() {
+        test_support::init_test_logger();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 32);
+        init_global_state_over(&memory);
+
+        // The BSP refuses the whole set when any core's IDT descriptor lies outside MMRAM.
+        let fixup32 = fixup32(0x1000, 0x7F30_0000, 0x2000, SMBASE as u32);
+        let info = place_single_core(&test_support::mmi_entry_with(&fixup64(0x1000), &fixup32, &FIXUP8));
+        assert_eq!(
+            check_cores_distinct(&info, info.mmi_entry_size() as usize, 0x7F30_0000),
+            Err(MmiEntryValidationError::OutsideMmram { cpu: 0, structure: "IDT descriptor", base: 0x1000 }.into())
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_check_psd_compares_the_psd_with_the_mmi_entry() {
+        const CR3: u64 = 0x7F30_0000;
+        const GDT_DESCRIPTOR: u64 = 0x7F20_0000;
+
+        test_support::init_test_logger();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 32);
+        init_global_state_over(&memory);
+
+        let smbase = allocate((SMRAM_WINDOW_SIZE / UEFI_PAGE_SIZE as u64) as usize);
+        let mut psd = Psd::new_zeroed();
+        psd.signature = PSD_SIGNATURE;
+        psd.smm_cr3 = CR3;
+        psd.smm_gdt_ptr = GDT_DESCRIPTOR;
+        place(smbase + SMM_PSD_OFFSET, psd);
+        assert_eq!(check_psd(1, smbase, CR3, GDT_DESCRIPTOR), Ok(()));
+
+        let unexpected = |slot: &'static str, value: u64| -> MmSupervisorResult<()> {
+            Err(MmiEntryValidationError::UnexpectedFixup { cpu: 1, slot, value }.into())
+        };
+        assert_eq!(check_psd(1, smbase, CR3 + 0x1000, GDT_DESCRIPTOR), unexpected("PSD SmmCr3", CR3));
+        assert_eq!(check_psd(1, smbase, CR3, GDT_DESCRIPTOR + 0x10), unexpected("PSD SmmGdtPtr", GDT_DESCRIPTOR));
+
+        let mut unsigned = psd;
+        unsigned.signature = 0;
+        place(smbase + SMM_PSD_OFFSET, unsigned);
+        assert_eq!(check_psd(1, smbase, CR3, GDT_DESCRIPTOR), unexpected("PSD Signature", 0));
+
+        // A PSD outside MMRAM is refused before it is read.
+        assert_eq!(
+            check_psd(1, 0x1000, CR3, GDT_DESCRIPTOR),
+            Err(MmiEntryValidationError::OutsideMmram { cpu: 1, structure: "PSD", base: 0x1000 + SMM_PSD_OFFSET }
+                .into())
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_check_protections_requires_each_structure_mapped_as_the_entry_code_needs() {
+        use crate::hob::validation::HobValidationError;
+
+        test_support::init_test_logger();
+        let memory = PageAlignedMemory::new(memory::DEFAULT_PAGING_POOL_PAGES + 32);
+        init_global_state_over(&memory);
+
+        // One supervisor-only, writable, non-executable page per structure, then the entry code
+        // and the GDT remapped the way init leaves them. The IST1 stack gets the page above it as
+        // well, unmapped as the stack guard IST1 points at.
+        let [entry, idt, idt_descriptor, gdt_descriptor, gdt, stack] = [(); 6].map(|()| allocate(1));
+        let ist1 = allocate(2);
+        let guard = ist1 + UEFI_PAGE_SIZE as u64;
+        let map = |base: u64, attributes: MemoryAttributes| {
+            let mut page_table = security_state().lock_page_table();
+            let page_table = page_table.as_mut().expect("a page table is installed");
+            page_table.map_memory_region(base, UEFI_PAGE_SIZE as u64, attributes).expect("map the page");
+        };
+        let unmap = |base: u64| {
+            let mut page_table = security_state().lock_page_table();
+            let page_table = page_table.as_mut().expect("a page table is installed");
+            page_table.unmap_memory_region(base, UEFI_PAGE_SIZE as u64).expect("unmap the page");
+        };
+        let found = |base: u64| {
+            let page_table = security_state().lock_page_table();
+            let page_table = page_table.as_ref().expect("a page table is installed");
+            page_table.query_memory_region(base, UEFI_PAGE_SIZE as u64).expect("query the page").bits()
+        };
+        let supervisor_data = MemoryAttributes::Supervisor | MemoryAttributes::ExecuteProtect;
+        map(entry, MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly);
+        map(gdt, supervisor_data | MemoryAttributes::ReadOnly);
+        unmap(guard);
+
+        // `check_protections` reads nothing through the fixups, so they hold the usual test values.
+        let fixup32 = fixup32(0x7F20_0000, 0x7F30_0000, 0x7F40_0FF8, SMBASE as u32);
+        let entry_bytes: &'static [u8] =
+            Box::leak(test_support::mmi_entry_with(&fixup64(0x7F10_0000), &fixup32, &FIXUP8).into_boxed_slice());
+        let span = |base: u64, size: usize| MemoryRange::new(base, size as u64).unwrap();
+        let core = |idt_base: u64| MmiEntryStructures {
+            smbase: SMBASE,
+            entry: span(entry, entry_bytes.len()),
+            fixups: MmiEntryFixups::parse(entry_bytes).unwrap(),
+            cr3: 0x7F30_0000,
+            idt_descriptor: span(idt_descriptor, size_of::<DescriptorTablePointer>()),
+            idtr: DescriptorTablePointer { limit: IDT_LIMIT, base: idt_base },
+            gdt_descriptor: span(gdt_descriptor, size_of::<DescriptorTablePointer>()),
+            gdtr: DescriptorTablePointer { limit: GDT_LIMIT, base: gdt },
+            gdt: span(gdt, size_of::<SmiGdtImage>()),
+            gdt_image: template_gdt(gdt, guard),
+            stack_top: span(stack + 0xFF8, size_of::<u64>()),
+            stack_top_value: 3,
+            ist1_top: span(ist1 + 0xFF8, size_of::<u64>()),
+        };
+        assert_eq!(check_protections(3, &core(idt)), Ok(()));
+
+        // The IDT must lie in MMRAM before its page is looked at.
+        assert_eq!(
+            check_protections(3, &core(0x1000)),
+            Err(MmiEntryValidationError::OutsideMmram { cpu: 3, structure: "IDT", base: 0x1000 }.into())
+        );
+
+        // Entry code Ring 0 could rewrite and run.
+        map(entry, MemoryAttributes::Supervisor);
+        assert_eq!(
+            check_protections(3, &core(idt)),
+            Err(HobValidationError::PageWritableAndExecutable { addr: entry, found: found(entry) }.into())
+        );
+        map(entry, MemoryAttributes::Supervisor | MemoryAttributes::ReadOnly);
+
+        // A writable GDT, and a Ring 0 stack Ring 3 can reach.
+        map(gdt, supervisor_data);
+        let desired = (supervisor_data | MemoryAttributes::ReadOnly).bits();
+        assert_eq!(
+            check_protections(3, &core(idt)),
+            Err(HobValidationError::PageMissingAttribute { addr: gdt, desired, found: found(gdt) }.into())
+        );
+        map(gdt, supervisor_data | MemoryAttributes::ReadOnly);
+        map(stack, MemoryAttributes::ExecuteProtect);
+        assert_eq!(
+            check_protections(3, &core(idt)),
+            Err(HobValidationError::PageMissingAttribute {
+                addr: stack,
+                desired: supervisor_data.bits(),
+                found: found(stack)
+            }
+            .into())
+        );
+        map(stack, supervisor_data);
+
+        // IST1 must start a page, and that page must not be present, so an overflow of the Ring 0
+        // stack above it faults rather than running into the exception stack below it.
+        let unaligned = MmiEntryStructures { ist1_top: span(ist1 + 0xFF0, size_of::<u64>()), ..core(idt) };
+        assert_eq!(
+            check_protections(3, &unaligned),
+            Err(MmiEntryValidationError::StackGuardMissing { cpu: 3, ist1: ist1 + 0xFF8 }.into())
+        );
+        map(guard, supervisor_data);
+        assert_eq!(
+            check_protections(3, &core(idt)),
+            Err(MmiEntryValidationError::StackGuardMissing { cpu: 3, ist1: guard }.into())
+        );
+    }
+}

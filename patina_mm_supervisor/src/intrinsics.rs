@@ -285,3 +285,44 @@ pub(crate) unsafe fn with_write_protection_disabled<R>(write: impl FnOnce() -> R
     write()
 }
 
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_with_write_protection_disabled_runs_the_closure() {
+        // SAFETY: the closures store to no memory, so no read-only page is changed. On the host
+        // the CR0 accessors do nothing.
+        unsafe {
+            assert_eq!(with_write_protection_disabled(|| 42), 42);
+            // The guard restores the prior state on drop, so the helper can be used again.
+            assert_eq!(with_write_protection_disabled(|| 7), 7);
+        }
+    }
+
+    #[test]
+    fn test_read_descriptor_table_registers_are_zeroed_in_unit_tests() {
+        for descriptor in [read_idtr(), read_gdtr()] {
+            let base = descriptor.base;
+            let limit = descriptor.limit;
+
+            assert_eq!(base, 0);
+            assert_eq!(limit, 0);
+        }
+    }
+
+    #[test]
+    fn test_cpuid_physical_address_bits_reports_an_x64_width() {
+        // The exact width depends on the host, but x64 defines MAXPHYADDR as at most 52 bits,
+        // and every processor reporting the leaf supports at least a 32-bit physical space.
+        let bits = cpuid_physical_address_bits();
+
+        assert!((32..=52).contains(&bits), "unexpected MAXPHYADDR {bits}");
+    }
+
+    #[test]
+    fn test_descriptor_table_pointer_layout_matches_c_abi() {
+        assert_eq!(core::mem::size_of::<DescriptorTablePointer>(), 10);
+    }
+}

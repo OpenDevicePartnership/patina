@@ -41,3 +41,36 @@ pub(crate) const VERSION: u32 = (CRATE_VERSION_MAJOR << 16) | (CRATE_VERSION_MIN
 
 /// Supervisor patch level: the crate's patch version.
 pub(crate) const PATCH_LEVEL: u32 = CRATE_VERSION_PATCH;
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_constants_follow_the_crate_version() {
+        let major: u32 = env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap();
+        let minor: u32 = env!("CARGO_PKG_VERSION_MINOR").parse().unwrap();
+        let patch: u32 = env!("CARGO_PKG_VERSION_PATCH").parse().unwrap();
+        let flag = if cfg!(debug_assertions) { 8 } else { 9 };
+
+        assert_eq!(VERSION >> 16, major);
+        assert_eq!(VERSION & 0xFFFF, minor * 10 + flag);
+        assert_eq!(PATCH_LEVEL, patch);
+    }
+
+    #[test]
+    fn parse_version_number_reads_decimal_components() {
+        assert_eq!(parse_version_number("0"), 0);
+        assert_eq!(parse_version_number("24"), 24);
+        assert_eq!(parse_version_number("999"), 999);
+    }
+
+    #[test]
+    #[should_panic(expected = "the crate version component is not a 32-bit decimal number")]
+    fn parse_version_number_rejects_a_component_wider_than_32_bits() {
+        // At compile time this panic fails the build, so a version that cannot be encoded never
+        // reaches the VERSION_INFO response.
+        parse_version_number("4294967296");
+    }
+}
