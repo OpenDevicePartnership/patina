@@ -358,6 +358,13 @@ pub(super) enum MpError {
 }
 
 #[cfg_attr(coverage, coverage(off))]
+impl From<patina::uefi::tpl_mutex::TplMutexError> for MpError {
+    fn from(_: patina::uefi::tpl_mutex::TplMutexError) -> Self {
+        Self::Busy
+    }
+}
+
+#[cfg_attr(coverage, coverage(off))]
 impl From<MpError> for efi::Status {
     fn from(e: MpError) -> Self {
         match e {

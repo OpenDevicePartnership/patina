@@ -77,7 +77,7 @@ impl NotificationRegistry {
         &self,
         dispatch: impl FnOnce(&mut Vec<PendingDispatch>) -> Result<R, MpError>,
     ) -> Result<R, MpError> {
-        let mut pending = self.pending.checked_lock().map_err(|_| MpError::Busy)?;
+        let mut pending = self.pending.checked_lock()?;
         dispatch(&mut pending)
     }
 
@@ -112,7 +112,7 @@ impl NotificationRegistry {
         let mut resolved: Vec<PendingDispatch> = Vec::new();
 
         let empty = {
-            let mut pending = self.pending.checked_lock().map_err(|_| MpError::Busy)?;
+            let mut pending = self.pending.checked_lock()?;
             for dispatch in pending.iter_mut() {
                 dispatch.dispatch.advance(mp, now);
             }

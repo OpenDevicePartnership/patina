@@ -175,7 +175,7 @@ pub fn core_install_configuration_table(
     vendor_table: *mut c_void,
     efi_system_table: &mut EfiSystemTable,
 ) -> Result<Option<NonNull<c_void>>, EfiError> {
-    let mut types = CONFIG_TABLE_TYPES.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+    let mut types = CONFIG_TABLE_TYPES.checked_lock()?;
     let old_vendor_table_ptr = install_configuration_table_entry(vendor_guid, vendor_table, efi_system_table)?;
     types.remove(&BinaryGuid::from(vendor_guid));
     Ok(old_vendor_table_ptr)
@@ -215,7 +215,7 @@ pub(crate) fn core_install_typed_configuration_table(
     if fail_if_exists && configuration_table_has_entry(efi_system_table, vendor_guid) {
         return Err(EfiError::AlreadyStarted);
     }
-    let mut types = CONFIG_TABLE_TYPES.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+    let mut types = CONFIG_TABLE_TYPES.checked_lock()?;
     let old_vendor_table_ptr = install_configuration_table_entry(vendor_guid, vendor_table, efi_system_table)?;
     types.insert(BinaryGuid::from(vendor_guid), type_id);
     Ok(old_vendor_table_ptr)

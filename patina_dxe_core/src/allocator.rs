@@ -430,7 +430,7 @@ pub(crate) fn get_memory_ranges_for_memory_type(
     // Check static allocators first, then dynamic allocators
     match_static_allocator!(memory_type, alloc => Ok(alloc.get_memory_ranges()?.collect()), {
         // Check dynamic allocators
-        for allocator in ALLOCATORS.checked_lock().map_err(|_| EfiError::AccessDenied)?.iter_dynamic() {
+        for allocator in ALLOCATORS.checked_lock()?.iter_dynamic() {
             if allocator.memory_type() == memory_type {
                 return Ok(allocator.get_memory_ranges()?.collect());
             }
@@ -582,8 +582,7 @@ impl AllocatorMap {
             // already exist.
             _ => {
                 if let Some(handle) = ALLOCATORS
-                    .checked_lock()
-                    .map_err(|_| EfiError::AccessDenied)?
+                    .checked_lock()?
                     .iter_dynamic()
                     .find_map(|x| if x.memory_type() == memory_type { Some(x.handle()) } else { None })
                 {
@@ -663,7 +662,7 @@ pub fn core_allocate_pool(pool_type: efi::MemoryType, size: usize) -> Result<*mu
     }
 
     let handle = AllocatorMap::handle_for_memory_type(pool_type)?;
-    match ALLOCATORS.checked_lock().map_err(|_| EfiError::AccessDenied)?.get_or_create_allocator(pool_type, handle) {
+    match ALLOCATORS.checked_lock()?.get_or_create_allocator(pool_type, handle) {
         Ok(allocator) => {
             let mut buffer: *mut c_void = core::ptr::null_mut();
             // SAFETY: buffer is declared above, we pass the address which guarantees it is a valid pointer.
@@ -711,7 +710,7 @@ pub unsafe fn core_free_pool(buffer: *mut c_void) -> Result<(), EfiError> {
     if buffer.is_null() {
         return Err(EfiError::InvalidParameter);
     }
-    let allocators = ALLOCATORS.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+    let allocators = ALLOCATORS.checked_lock()?;
     // SAFETY: caller must ensure that buffer is a valid pointer and that it was
     // originally allocated via allocate_pool(). It is null-checked above.
     unsafe {
@@ -793,11 +792,7 @@ pub fn core_allocate_pages(
     let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
     let alignment = alignment.unwrap_or(UEFI_PAGE_SIZE);
 
-    let res = match ALLOCATORS
-        .checked_lock()
-        .map_err(|_| EfiError::AccessDenied)?
-        .get_or_create_allocator(memory_type, handle)
-    {
+    let res = match ALLOCATORS.checked_lock()?.get_or_create_allocator(memory_type, handle) {
         Ok(allocator) => {
             let result = match allocation_type {
                 efi::ALLOCATE_ANY_PAGES => allocator.allocate_pages(DEFAULT_ALLOCATION_STRATEGY, pages, alignment),
@@ -832,7 +827,7 @@ pub fn core_allocate_pages(
 /// Must be called at or below `TPL_NOTIFY` because allocator handle creation locks the protocol database.
 pub fn core_get_allocator(memory_type: efi::MemoryType) -> Result<&'static UefiAllocatorWithFsb, EfiError> {
     let handle = AllocatorMap::handle_for_memory_type(memory_type)?;
-    ALLOCATORS.checked_lock().map_err(|_| EfiError::AccessDenied)?.get_or_create_allocator(memory_type, handle)
+    ALLOCATORS.checked_lock()?.get_or_create_allocator(memory_type, handle)
 }
 
 /// Returns the memory type for the given handle, or None if the handle is not found.
@@ -884,7 +879,7 @@ pub unsafe fn core_free_pages(memory: efi::PhysicalAddress, pages: usize) -> Res
         return Err(EfiError::InvalidParameter);
     }
 
-    let allocators = ALLOCATORS.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+    let allocators = ALLOCATORS.checked_lock()?;
 
     let mut memory_type = efi::CONVENTIONAL_MEMORY;
 
@@ -1126,7 +1121,7 @@ pub fn terminate_memory_map(map_key: usize) -> Result<(), EfiError> {
 /// [`config_tables::core_install_configuration_table`]; it is not itself a UEFI service.
 #[cfg_attr(coverage, coverage(off))]
 pub fn install_memory_type_info_table(system_table: &mut EfiSystemTable) -> Result<(), EfiError> {
-    let bin_manager = MEMORY_BIN_MANAGER.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+    let bin_manager = MEMORY_BIN_MANAGER.checked_lock()?;
     if !bin_manager.is_initialized() || bin_manager.memory_type_information().is_empty() {
         log::warn!(target: "memory_bin", "No bin manager data available. Memory type information config table not installed.");
         return Ok(());
@@ -1654,7 +1649,7 @@ fn reserve_bin_ranges() {
         // Set the reserved range so allocations prefer the bin and frees preserve ownership.
         match ALLOCATORS
             .checked_lock()
-            .map_err(|_| EfiError::AccessDenied)
+            .map_err(patina::error::EfiError::from)
             .and_then(|mut allocators| allocators.get_or_create_allocator(memory_type, handle))
         {
             Ok(allocator) => {
