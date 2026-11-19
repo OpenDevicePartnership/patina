@@ -713,7 +713,7 @@ impl<D: ControllerDriver> Inner<D> {
         let mut result = Ok(());
         let mut closing = Vec::new();
         let mut releasing = Vec::new();
-        let mut records = self.records.checked_lock().map_err(|_| ProtocolError::AccessDenied)?;
+        let mut records = self.records.checked_lock()?;
         for record in records.iter_mut() {
             let controller = record.entry.controller;
             if controller != handle && !record.usages.iter().any(|u| u.handle == handle) {
@@ -779,7 +779,7 @@ impl<D: ControllerDriver> Inner<D> {
     /// Destroys `children` of `controller` through the driver, then closes what was opened for them.
     fn stop_children(&self, controller: Handle, children: &[Handle]) -> Result<(), ProtocolError> {
         let entry = {
-            let records = self.records.checked_lock().map_err(|_| ProtocolError::AccessDenied)?;
+            let records = self.records.checked_lock()?;
             let record = records.iter().find(|r| r.entry.controller == controller).ok_or(ProtocolError::NotFound)?;
             if record.phase == Phase::Stopping {
                 // The outer stop may still fail and keep managing the controller.

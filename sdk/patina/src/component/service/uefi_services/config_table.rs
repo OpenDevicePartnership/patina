@@ -95,6 +95,13 @@ pub enum ConfigTableError {
     Internal,
 }
 
+#[cfg_attr(coverage, coverage(off))]
+impl From<crate::uefi::tpl_mutex::TplMutexError> for ConfigTableError {
+    fn from(_: crate::uefi::tpl_mutex::TplMutexError) -> Self {
+        Self::Internal
+    }
+}
+
 impl From<ConfigTableError> for EfiError {
     fn from(value: ConfigTableError) -> Self {
         match value {
