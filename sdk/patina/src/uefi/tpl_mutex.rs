@@ -102,15 +102,6 @@ pub trait TplController {
     #[allow(clippy::result_unit_err)]
     fn checked_tpl_raise(&self, tpl: Tpl) -> Result<Tpl, ()>;
 
-    /// Raises the current TPL, panicking if the transition fails.
-    ///
-    /// # Panics
-    /// Panics if the controller rejects the transition.
-    #[deprecated(note = "Use checked_tpl_raise() and handle the result instead")]
-    fn raise_tpl(&self, tpl: Tpl) -> Tpl {
-        self.checked_tpl_raise(tpl).expect("Cannot raise TPL to a lower or unsupported level")
-    }
-
     /// Restores the current TPL to a previously returned value.
     fn restore_tpl(&self, tpl: Tpl);
 }
@@ -234,15 +225,6 @@ impl<T, B: TplController> TplMutex<T, B> {
 }
 
 impl<T: ?Sized, B: TplController> TplMutex<T, B> {
-    /// Acquires the mutex, panicking if acquisition fails.
-    ///
-    /// # Panics
-    /// Panics if the mutex is locked, uninitialized, or its TPL transition is invalid.
-    #[deprecated(note = "Use checked_lock() or try_lock() and handle the result instead")]
-    pub fn lock(&self) -> TplMutexGuard<'_, T, B> {
-        self.checked_lock().expect("Failed to acquire TPL mutex")
-    }
-
     fn tpl_controller(&self) -> Option<&B> {
         match &self.tpl_controller {
             TplControllerStorage::Ready(controller) => Some(controller),
@@ -578,25 +560,6 @@ mod tests {
             assert!(result.is_err());
             assert_eq!(mutex.with_try_lock(|value| *value), Ok(43));
         }
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_lock_and_raise_tpl_delegate() {
-        let controller = boot_services();
-        assert_eq!(TplController::raise_tpl(&controller, Tpl::NOTIFY), Tpl::APPLICATION);
-        let mutex = TplMutex::new(controller, Tpl::NOTIFY, 42);
-        assert_eq!(*mutex.lock(), 42);
-        assert!(mutex.try_lock().is_ok());
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    #[should_panic]
-    fn test_deprecated_lock_panics_on_contention() {
-        let mutex = TplMutex::new(boot_services(), Tpl::NOTIFY, 42);
-        let _guard = mutex.lock();
-        let _ = mutex.lock();
     }
 
     #[test]

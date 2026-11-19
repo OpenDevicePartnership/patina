@@ -225,14 +225,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    #[should_panic]
-    fn test_tpl_controller_bridge_deprecated_raise_tpl_rejects_unknown_value() {
-        let service: Service<dyn TplServices> = Service::mock(Box::new(MockTplServices::new()));
-        TplController::raise_tpl(&service, BootServicesTpl(usize::MAX));
-    }
-
-    #[test]
     fn test_tpl_controller_bridge_checked_tpl_raise_rejects_unknown_value() {
         let service: Service<dyn TplServices> = Service::mock(Box::new(MockTplServices::new()));
         #[cfg(debug_assertions)]
@@ -259,21 +251,6 @@ mod tests {
             TplController::checked_tpl_raise(&service, BootServicesTpl::NOTIFY),
             Ok(BootServicesTpl::APPLICATION)
         );
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_tpl_controller_bridge_deprecated_raise_tpl_converts_and_delegates() {
-        let mut mock = MockTplServices::new();
-        mock.expect_raise_tpl().times(1).returning(|tpl| {
-            assert_eq!(tpl, Tpl::Notify);
-            PreviousTpl::from_raw(efi::TPL_APPLICATION)
-        });
-        let service: Service<dyn TplServices> = Service::mock(Box::new(mock));
-
-        let previous = TplController::raise_tpl(&service, BootServicesTpl::NOTIFY);
-
-        assert_eq!(previous, BootServicesTpl::APPLICATION);
     }
 
     #[test]
