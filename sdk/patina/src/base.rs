@@ -241,7 +241,7 @@ impl From<UefiSpecVersion> for u32 {
 #[macro_export]
 macro_rules! uefi_size_to_pages {
     ($size:expr) => {
-        (($size) + patina::UEFI_PAGE_MASK) / patina::UEFI_PAGE_SIZE
+        (($size) + $crate::UEFI_PAGE_MASK) / $crate::UEFI_PAGE_SIZE
     };
 }
 
