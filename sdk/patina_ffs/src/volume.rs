@@ -136,6 +136,10 @@ impl<'a> VolumeRef<'a> {
                     .ok_or(FirmwareFileSystemError::InvalidHeader)?;
                 // SAFETY: .get() above guarantees the slice contains a full ExtHeader.
                 let ext_header = unsafe { ptr::read_unaligned(ext_header_slice.as_ptr().cast::<fv::ExtHeader>()) };
+                // ext_header_size includes the ExtHeader structure itself.
+                if (ext_header.ext_header_size as usize) < mem::size_of::<fv::ExtHeader>() {
+                    Err(FirmwareFileSystemError::InvalidHeader)?;
+                }
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
                 if ext_header_end > buffer.len() {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
