@@ -307,11 +307,13 @@ mod tests {
     use patina::component::service::{
         Service,
         uefi_services::{
-            controller_driver::{
-                ControllerDriver, ControllerDriverRef, DependencyAction, StartContext, StopContext, SupportedContext,
-                install_controller_driver,
+            driver_model::{
+                controller_driver::{
+                    ControllerDriver, ControllerDriverRef, DependencyAction, StartContext, StopContext,
+                    SupportedContext, install_controller_driver,
+                },
+                driver_binding::DriverBinding,
             },
-            driver_binding::DriverBinding,
             protocol::ProtocolServicesExt,
         },
     };

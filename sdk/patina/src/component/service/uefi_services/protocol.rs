@@ -49,7 +49,7 @@
 //!   caller's driver binding `Stop()`, if one was installed with
 //!   [`install_driver_binding`](ProtocolServicesExt::install_driver_binding). `Stop()` must close the
 //!   usage to actually release it (returning `Ok(())` alone does not). If the usage is still open
-//!   afterward, uninstall fails with [`ProtocolError::AccessDenied`]. See [`super::driver_binding`]
+//!   afterward, uninstall fails with [`ProtocolError::AccessDenied`]. See [`super::driver_model::driver_binding`]
 //!   for details.
 //! - [`OpenAttributes::ByChildController`] records that a child controller depends on the parent's
 //!   protocol. Like `Exclusive`, it blocks uninstall until closed.
@@ -88,14 +88,13 @@ use crate::base::driver::{
 use crate::base::error::EfiError;
 use crate::base::guid::BinaryGuid;
 use crate::base::protocol::{MarkerProtocol, ProtocolInterface};
-use crate::standard::efi;
 #[cfg(feature = "unstable-device-path")]
 use crate::uefi::device_path::paths::{DevicePath, DevicePathBuf};
 
-pub use super::driver_binding::DriverBinding;
+pub use super::driver_model::driver_binding::DriverBinding;
+use super::driver_model::{component_name, driver_binding, driver_supported_efi_version};
 pub use super::handle::Handle;
 pub use super::tpl::Tpl;
-use super::{component_name, driver_binding, driver_supported_efi_version};
 
 #[cfg(any(test, feature = "mockall"))]
 use mockall::automock;
@@ -1022,7 +1021,7 @@ pub trait ProtocolServicesExt: ProtocolServices {
     /// receives `Supported()`/`Start()`/`Stop()` calls from `ConnectController()`/`DisconnectController()`,
     /// and an existing [`OpenAttributes::ByDriver`] or [`OpenAttributes::ByDriverExclusive`] usage recorded
     /// under the returned handle can be released or preempted, since there is now a `Stop()` for the core to
-    /// call. See [`super::driver_binding`] for details.
+    /// call. See [`super::driver_model::driver_binding`] for details.
     ///
     /// The returned handle is the driver binding handle. Pass it, not the image handle, as the `DriverImageHandle`
     /// of `ConnectController()` and `DisconnectController()`.
@@ -1058,15 +1057,7 @@ pub trait ProtocolServicesExt: ProtocolServices {
         agent: Handle,
         binding: B,
     ) -> Result<(), ProtocolError> {
-        let protocol = efi::protocols::driver_binding::Protocol {
-            version: B::VERSION,
-            supported: driver_binding::supported_trampoline::<B>,
-            start: driver_binding::start_trampoline::<B>,
-            stop: driver_binding::stop_trampoline::<B>,
-            driver_binding_handle: agent.as_raw(),
-            image_handle: self.image_handle().as_raw(),
-        };
-        let holder = Box::new(driver_binding::DriverBindingHolder { protocol, binding });
+        let holder = driver_binding::build_holder(agent, self.image_handle(), binding);
         self.install_protocol::<driver_binding::DriverBindingHolder<B>>(Some(agent), holder).map(|_| ())
     }
 
@@ -1113,6 +1104,7 @@ impl<T: ProtocolServices + ?Sized> ProtocolServicesExt for T {}
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use super::*;
+    use crate::standard::efi;
     use crate::uefi::device_path::walker::BorrowedDevicePathWalker;
 
     #[repr(C)]
@@ -1635,9 +1627,11 @@ mod tests {
 
     struct EmptyNames;
     impl component_name::UefiDriverModelComponentName for EmptyNames {
-        fn driver_name(&self) -> &'static crate::component::service::uefi_services::language::LanguageTable {
-            static TABLE: crate::component::service::uefi_services::language::LanguageTable =
-                crate::component::service::uefi_services::language::LanguageTable(&[]);
+        fn driver_name(
+            &self,
+        ) -> &'static crate::component::service::uefi_services::driver_model::language::LanguageTable {
+            static TABLE: crate::component::service::uefi_services::driver_model::language::LanguageTable =
+                crate::component::service::uefi_services::driver_model::language::LanguageTable(&[]);
             &TABLE
         }
     }

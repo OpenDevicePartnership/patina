@@ -37,7 +37,7 @@ pub struct LanguageEntry {
 ///
 /// ```rust
 /// use patina::char16;
-/// use patina::component::service::uefi_services::language::{LanguageEntry, LanguageTable};
+/// use patina::component::service::uefi_services::driver_model::language::{LanguageEntry, LanguageTable};
 ///
 /// static NAMES: LanguageTable =
 ///     LanguageTable(&[LanguageEntry { iso639: b"eng", rfc4646: "en", name: char16!("Sample Driver") }]);
