@@ -82,6 +82,13 @@ pub enum AcpiError {
     ChecksumFailed,
 }
 
+#[cfg_attr(coverage, coverage(off))]
+impl From<patina::uefi::tpl_mutex::TplMutexError> for AcpiError {
+    fn from(_: patina::uefi::tpl_mutex::TplMutexError) -> Self {
+        Self::StateUnavailable
+    }
+}
+
 // Coverage is disabled since unit tests of the static error mappings would only restate the match arms.
 #[cfg_attr(coverage, coverage(off))]
 impl From<AcpiError> for efi::Status {
