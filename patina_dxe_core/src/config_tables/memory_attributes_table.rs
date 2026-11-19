@@ -134,7 +134,7 @@ pub fn core_install_memory_attributes_table() {
                         };
                         let result = systemtables::SYSTEM_TABLE
                             .checked_lock()
-                            .map_err(|_| patina::error::EfiError::AccessDenied)
+                            .map_err(patina::error::EfiError::from)
                             .and_then(|mut guard| {
                                 let st = guard.as_mut().ok_or(patina::error::EfiError::NotReady)?;
                                 core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, empty_ptr, st)
@@ -242,13 +242,12 @@ pub fn core_install_memory_attributes_table() {
                     mat_desc_list.len() * size_of::<efi::MemoryDescriptor>(),
                 );
 
-                let result = systemtables::SYSTEM_TABLE
-                    .checked_lock()
-                    .map_err(|_| patina::error::EfiError::AccessDenied)
-                    .and_then(|mut guard| {
+                let result = systemtables::SYSTEM_TABLE.checked_lock().map_err(patina::error::EfiError::from).and_then(
+                    |mut guard| {
                         let st = guard.as_mut().ok_or(patina::error::EfiError::NotReady)?;
                         core_install_configuration_table(efi::MEMORY_ATTRIBUTES_TABLE_GUID, void_ptr, st)
-                    });
+                    },
+                );
                 match result {
                     Err(status) => {
                         log::error!("Failed to install MAT table! Status {status}");

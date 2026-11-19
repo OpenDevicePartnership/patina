@@ -39,10 +39,7 @@ impl ActiveDispatchStack {
 
     /// Records that `context`'s dispatch is now executing.
     pub(crate) fn enter(&self, context: *mut c_void) -> Result<(), EfiError> {
-        self.entries
-            .checked_lock()
-            .map_err(|_| EfiError::AccessDenied)?
-            .push(ActiveDispatch { context, close_requested: false });
+        self.entries.checked_lock()?.push(ActiveDispatch { context, close_requested: false });
         Ok(())
     }
 
@@ -51,7 +48,7 @@ impl ActiveDispatchStack {
     pub(crate) fn exit(&self, context: *mut c_void) -> Result<bool, EfiError> {
         // This is the entry pushed by the matching `enter` call since entries are pushed and popped
         // in call order, so nothing pushed after it would still be on the stack.
-        match self.entries.checked_lock().map_err(|_| EfiError::AccessDenied)?.pop() {
+        match self.entries.checked_lock()?.pop() {
             Some(active) => {
                 debug_assert_eq!(active.context, context, "active dispatch stack popped out of order");
                 Ok(active.close_requested)
@@ -65,7 +62,7 @@ impl ActiveDispatchStack {
     /// returns `true`. Returns `false` if no matching dispatch is active, so the caller can free the
     /// context immediately instead.
     pub(crate) fn request_close(&self, context: *mut c_void) -> Result<bool, EfiError> {
-        let mut entries = self.entries.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+        let mut entries = self.entries.checked_lock()?;
         match entries.iter_mut().rev().find(|entry| entry.context == context) {
             Some(active) => {
                 active.close_requested = true;

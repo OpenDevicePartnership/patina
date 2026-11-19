@@ -1220,7 +1220,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         alignment: usize,
     ) -> Result<NonNull<[u8]>, EfiError> {
         // Record this call in the FSB's stats
-        let mut allocator = self.inner.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+        let mut allocator = self.inner.checked_lock()?;
         allocator.stats.page_allocation_calls += 1;
         let granularity = allocator.page_allocation_granularity;
 
@@ -1273,7 +1273,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// Caller must ensure that the given address corresponds to a valid block of pages that was allocated with
     /// [`Self::allocate_pages`]
     pub unsafe fn free_pages(&self, address: usize, pages: usize) -> Result<(), EfiError> {
-        let mut allocator = self.inner.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+        let mut allocator = self.inner.checked_lock()?;
         allocator.stats.page_free_calls += 1;
         let granularity = allocator.page_allocation_granularity;
 
@@ -1296,7 +1296,7 @@ impl SpinLockedFixedSizeBlockAllocator {
     ///
     /// Returns [`EfiError::AlreadyStarted`] if a reserved range has already been set.
     pub fn set_reserved_range(&self, range: Range<efi::PhysicalAddress>) -> Result<(), EfiError> {
-        self.checked_lock().map_err(|_| EfiError::AccessDenied)?.set_reserved_range(range)
+        self.checked_lock()?.set_reserved_range(range)
     }
 
     /// Returns an iterator of the ranges of memory owned by this allocator
@@ -1307,14 +1307,14 @@ impl SpinLockedFixedSizeBlockAllocator {
         // The vector is grown with the lock released, since this allocator may be the one backing the global
         // allocator, in which case allocating while holding its lock would be a re-entrant lock.
         loop {
-            let count = self.checked_lock().map_err(|_| EfiError::AccessDenied)?.get_memory_ranges().count();
+            let count = self.checked_lock()?.get_memory_ranges().count();
             if count < ranges.capacity() {
                 break;
             }
             ranges = Vec::with_capacity(count + 1);
         }
 
-        let allocator = self.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+        let allocator = self.checked_lock()?;
         let range_iter = allocator.get_memory_ranges().take(ranges.capacity());
 
         // Bounded by the reserved capacity so that pushing cannot reallocate while the lock is held.
@@ -1334,20 +1334,20 @@ impl SpinLockedFixedSizeBlockAllocator {
     /// Returns the reserved memory range, if any.
     #[cfg_attr(coverage, coverage(off))]
     pub fn reserved_range(&self) -> Result<Option<Range<efi::PhysicalAddress>>, EfiError> {
-        Ok(self.checked_lock().map_err(|_| EfiError::AccessDenied)?.reserved_range.clone())
+        Ok(self.checked_lock()?.reserved_range.clone())
     }
 
     /// Returns the memory type for this allocator.
     #[allow(dead_code)]
     #[cfg_attr(coverage, coverage(off))]
     pub fn memory_type(&self) -> Result<efi::MemoryType, EfiError> {
-        Ok(self.checked_lock().map_err(|_| EfiError::AccessDenied)?.memory_type())
+        Ok(self.checked_lock()?.memory_type())
     }
 
     /// Returns allocation statistics for this allocator.
     #[allow(dead_code)]
     pub fn stats(&self) -> Result<AllocationStatistics, EfiError> {
-        Ok(*self.checked_lock().map_err(|_| EfiError::AccessDenied)?.stats())
+        Ok(*self.checked_lock()?.stats())
     }
 }
 
@@ -1551,7 +1551,7 @@ impl SpinLockedFixedSizeBlockAllocator {
         layout: Layout,
         invalidate: impl FnOnce(),
     ) -> Result<(), EfiError> {
-        let mut allocator = self.inner.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+        let mut allocator = self.inner.checked_lock()?;
         invalidate();
         let Some(index) = list_index(&layout) else {
             allocator.stats.pool_free_calls += 1;

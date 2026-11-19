@@ -346,17 +346,11 @@ impl PerformanceManager for CorePerformance {
     }
 
     fn published_table_size(&self) -> Result<usize, Error> {
-        match self.performance_table.checked_lock() {
-            Ok(table) => Ok(table.published_table_size()),
-            Err(_) => Err(EfiError::AccessDenied.into()),
-        }
+        Ok(self.performance_table.checked_lock().map_err(EfiError::from)?.published_table_size())
     }
 
     fn publish_table(&self, buffer: &'static mut [u8]) -> Result<(), Error> {
-        match self.performance_table.checked_lock() {
-            Ok(mut table) => table.publish_table(buffer).map(|_| ()),
-            Err(_) => Err(EfiError::AccessDenied.into()),
-        }
+        self.performance_table.checked_lock().map_err(EfiError::from)?.publish_table(buffer).map(|_| ())
     }
 }
 
@@ -370,11 +364,7 @@ impl CorePerformance {
     /// [`EfiError::AccessDenied`] so the caller can observe that the record was not added. This is similar
     /// in behavior and return status to the edk2 implementation of [`create_performance_measurement`].
     fn add_fbpt_record<T: PerformanceRecord>(&self, record: T) -> Result<(), Error> {
-        match self.performance_table.checked_lock() {
-            Ok(mut table) => table.add_record(record),
-            // Re-entrant measurement: See function docs.
-            Err(_) => Err(EfiError::AccessDenied.into()),
-        }
+        self.performance_table.checked_lock().map_err(EfiError::from)?.add_record(record)
     }
 
     /// Builds the appropriate performance record and adds it to the FBPT.

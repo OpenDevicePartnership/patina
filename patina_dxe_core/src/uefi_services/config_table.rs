@@ -48,8 +48,7 @@ pub(crate) struct CoreConfigurationTableServices;
 
 impl ConfigurationTableServices for CoreConfigurationTableServices {
     unsafe fn install_table(&self, guid: BinaryGuid, table: ConfigTablePtr) -> Result<(), ConfigTableError> {
-        let mut st_guard =
-            SYSTEM_TABLE.checked_lock().map_err(|_| ConfigTableError::from(patina::error::EfiError::AccessDenied))?;
+        let mut st_guard = SYSTEM_TABLE.checked_lock()?;
         let st = st_guard.as_mut().ok_or(ConfigTableError::NotFound)?;
         core_install_configuration_table(guid.into_inner(), table.as_raw(), st)
             .map(|_| ())
@@ -57,8 +56,7 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
     }
 
     fn remove_table(&self, guid: BinaryGuid) -> Result<(), ConfigTableError> {
-        let mut st_guard =
-            SYSTEM_TABLE.checked_lock().map_err(|_| ConfigTableError::from(patina::error::EfiError::AccessDenied))?;
+        let mut st_guard = SYSTEM_TABLE.checked_lock()?;
         let st = st_guard.as_mut().ok_or(ConfigTableError::NotFound)?;
         // Installing a null table removes the entry for the GUID.
         core_install_configuration_table(guid.into_inner(), core::ptr::null_mut(), st)
@@ -76,8 +74,7 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
         type_id: TypeId,
         table: ConfigTablePtr,
     ) -> Result<(), ConfigTableError> {
-        let mut st_guard =
-            SYSTEM_TABLE.checked_lock().map_err(|_| ConfigTableError::from(patina::error::EfiError::AccessDenied))?;
+        let mut st_guard = SYSTEM_TABLE.checked_lock()?;
         let st = st_guard.as_mut().ok_or(ConfigTableError::NotFound)?;
         // SAFETY: forwarding the precondition on `table` upheld by this function's own caller.
         core_install_typed_configuration_table(guid.into_inner(), table.as_raw(), type_id, true, st)
@@ -147,8 +144,7 @@ impl ConfigurationTableServices for CoreConfigurationTableServices {
         type_id: TypeId,
         table: ConfigTablePtr,
     ) -> Result<(), ConfigTableError> {
-        let mut st_guard =
-            SYSTEM_TABLE.checked_lock().map_err(|_| ConfigTableError::from(patina::error::EfiError::AccessDenied))?;
+        let mut st_guard = SYSTEM_TABLE.checked_lock()?;
         let st = st_guard.as_mut().ok_or(ConfigTableError::NotFound)?;
         // SAFETY: forwarding the precondition on `table` upheld by this function's own caller.
         core_install_typed_configuration_table(guid.into_inner(), table.as_raw(), type_id, false, st)

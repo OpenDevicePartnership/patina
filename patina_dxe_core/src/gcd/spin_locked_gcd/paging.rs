@@ -34,7 +34,7 @@ impl<'a> PagingAllocator<'a> {
     fn allocate_root_page(&self, allocate_type: AllocateType) -> Result<u64, EfiError> {
         let attributes =
             self.gcd.memory_protection_policy.apply_allocated_memory_protection_policy(0, GcdMemoryType::SystemMemory);
-        let mut gcd = self.gcd.memory.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+        let mut gcd = self.gcd.memory.checked_lock()?;
         let root_page = gcd.allocate_memory_space(
             allocate_type,
             GcdMemoryType::SystemMemory,
@@ -128,7 +128,7 @@ impl SpinLockedGcd {
         len: usize,
         attributes: u64,
     ) -> Result<(), EfiError> {
-        if let Some(page_table) = &mut *self.page_table.checked_lock().map_err(|_| EfiError::AccessDenied)? {
+        if let Some(page_table) = &mut *self.page_table.checked_lock()? {
             // only apply page table attributes to the page table, not our virtual GCD attributes
             let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
                 & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
@@ -273,8 +273,8 @@ impl SpinLockedGcd {
         let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
             & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
 
-        let mut page_table_guard = self.page_table.checked_lock().map_err(|_| EfiError::AccessDenied)?;
-        let mut aliased_mappings_guard = self.aliased_mappings.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+        let mut page_table_guard = self.page_table.checked_lock()?;
+        let mut aliased_mappings_guard = self.aliased_mappings.checked_lock()?;
         aliased_mappings_guard.try_reserve(1).map_err(|_| EfiError::OutOfResources)?;
         let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
 
@@ -291,7 +291,7 @@ impl SpinLockedGcd {
     }
 
     pub(crate) fn unmap_aliased_memory_region(&self, virtual_address: u64, len: u64) -> Result<(), EfiError> {
-        let mut aliased_mappings_guard = self.aliased_mappings.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+        let mut aliased_mappings_guard = self.aliased_mappings.checked_lock()?;
         if !aliased_mappings_guard
             .iter()
             .any(|mapping| mapping.virtual_address == virtual_address && mapping.length == len)
@@ -299,7 +299,7 @@ impl SpinLockedGcd {
             return Err(EfiError::NotFound);
         }
 
-        let mut page_table_guard = self.page_table.checked_lock().map_err(|_| EfiError::AccessDenied)?;
+        let mut page_table_guard = self.page_table.checked_lock()?;
         let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
         page_table.unmap_memory_region(virtual_address, len).map_err(|err| match err {
             PagingError::OutOfResources => EfiError::OutOfResources,
