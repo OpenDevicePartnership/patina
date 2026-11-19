@@ -249,7 +249,7 @@ impl SmbiosImpl {
     /// This updates the pre-allocated buffer with the latest records.
     /// Verifies table integrity before republishing to detect direct modifications.
     fn republish_table(&self) -> core::result::Result<(), crate::error::SmbiosError> {
-        let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
+        let manager = self.manager.try_lock()?;
         manager.republish_table()
     }
 }
@@ -269,7 +269,7 @@ impl Smbios for SmbiosImpl {
         // it overwrites these addresses with correct newer data rather than storing stale
         // addresses after the race completes.
         let (table_addr, ep_addr) = {
-            let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
+            let manager = self.manager.try_lock()?;
             let (table_addr, ep_addr, entry_point) = manager.build_table_data()?;
             manager.store_table_addresses(table_addr, entry_point);
             (table_addr, ep_addr)
@@ -296,7 +296,7 @@ impl Smbios for SmbiosImpl {
         string: &str,
     ) -> core::result::Result<(), crate::error::SmbiosError> {
         {
-            let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
+            let manager = self.manager.try_lock()?;
             manager.update_string(smbios_handle, string_number, string)?;
         }
 
@@ -305,7 +305,7 @@ impl Smbios for SmbiosImpl {
 
     fn remove(&self, smbios_handle: SmbiosHandle) -> core::result::Result<(), crate::error::SmbiosError> {
         {
-            let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
+            let manager = self.manager.try_lock()?;
             manager.remove(smbios_handle)?;
         }
 
@@ -318,7 +318,7 @@ impl Smbios for SmbiosImpl {
         bytes: &[u8],
     ) -> core::result::Result<SmbiosHandle, crate::error::SmbiosError> {
         let handle = {
-            let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
+            let manager = self.manager.try_lock()?;
             manager.add_from_bytes(producer_handle, bytes)?
         };
 
@@ -331,7 +331,7 @@ impl Smbios for SmbiosImpl {
         after: SmbiosHandle,
         record_type: Option<SmbiosType>,
     ) -> core::result::Result<Option<(SmbiosTableHeader, Option<Handle>)>, crate::error::SmbiosError> {
-        let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
+        let manager = self.manager.try_lock()?;
         let mut iter = manager.iter(record_type);
 
         let next = if after == SMBIOS_HANDLE_PI_RESERVED {
@@ -347,7 +347,7 @@ impl Smbios for SmbiosImpl {
         &self,
         handle: SmbiosHandle,
     ) -> core::result::Result<Option<(efi::PhysicalAddress, Option<Handle>)>, crate::error::SmbiosError> {
-        let manager = self.manager.try_lock().map_err(|_| crate::error::SmbiosError::Busy)?;
+        let manager = self.manager.try_lock()?;
         Ok(manager.get_record_pointer(handle))
     }
 }

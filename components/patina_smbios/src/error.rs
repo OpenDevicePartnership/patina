@@ -77,6 +77,13 @@ pub enum SmbiosError {
     Busy,
 }
 
+#[cfg_attr(coverage, coverage(off))]
+impl From<patina::uefi::tpl_mutex::TplMutexError> for SmbiosError {
+    fn from(_: patina::uefi::tpl_mutex::TplMutexError) -> Self {
+        Self::Busy
+    }
+}
+
 impl From<SmbiosError> for patina::standard::efi::Status {
     fn from(error: SmbiosError) -> Self {
         let efi_error: patina::error::EfiError = error.into();
