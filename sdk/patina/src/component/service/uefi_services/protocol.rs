@@ -399,6 +399,13 @@ pub enum ProtocolError {
     Internal,
 }
 
+#[cfg_attr(coverage, coverage(off))]
+impl From<crate::uefi::tpl_mutex::TplMutexError> for ProtocolError {
+    fn from(_: crate::uefi::tpl_mutex::TplMutexError) -> Self {
+        Self::AccessDenied
+    }
+}
+
 impl From<ProtocolError> for EfiError {
     fn from(value: ProtocolError) -> Self {
         match value {

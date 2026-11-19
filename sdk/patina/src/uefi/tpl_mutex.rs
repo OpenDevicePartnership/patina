@@ -136,6 +136,10 @@ enum TplControllerStorage<C> {
 }
 
 /// A failure to acquire a [`TplMutex`].
+///
+/// Converts to [`crate::error::EfiError::AccessDenied`] or
+/// [`crate::standard::efi::Status::ACCESS_DENIED`]. Services may provide their own
+/// conversions when lock failures have a more specific domain meaning.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TplMutexError {
     /// The mutex is already held, including by a reentrant caller.
@@ -157,6 +161,20 @@ impl Display for TplMutexError {
 }
 
 impl core::error::Error for TplMutexError {}
+
+#[cfg_attr(coverage, coverage(off))]
+impl From<TplMutexError> for crate::error::EfiError {
+    fn from(_: TplMutexError) -> Self {
+        Self::AccessDenied
+    }
+}
+
+#[cfg_attr(coverage, coverage(off))]
+impl From<TplMutexError> for crate::standard::efi::Status {
+    fn from(error: TplMutexError) -> Self {
+        crate::error::EfiError::from(error).into()
+    }
+}
 
 /// Type use for mutual exclusion of data across Tpl (task priority level)
 ///
