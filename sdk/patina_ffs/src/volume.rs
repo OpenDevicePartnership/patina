@@ -183,8 +183,15 @@ impl<'a> VolumeRef<'a> {
             Err(FirmwareFileSystemError::InvalidBlockMap)?;
         }
 
-        //other entries in block map must be non-zero.
-        if block_map.iter().any(|x| x == &fv::BlockMapEntry { num_blocks: 0, length: 0 }) {
+        //other entries in block map must have a non-zero block count and length.
+        if block_map.iter().any(|x| x.num_blocks == 0 || x.length == 0) {
+            Err(FirmwareFileSystemError::InvalidBlockMap)?;
+        }
+
+        //block map must describe the whole fv within a u32.
+        let block_map_size =
+            block_map.iter().try_fold(0u64, |size, x| size.checked_add(u64::from(x.num_blocks) * u64::from(x.length)));
+        if block_map_size != Some(fv_header.fv_length) || fv_header.fv_length > u64::from(u32::MAX) {
             Err(FirmwareFileSystemError::InvalidBlockMap)?;
         }
 
@@ -426,11 +433,6 @@ impl<'a> Iterator for FileRefIter<'a> {
     }
 }
 
-enum Capacity {
-    Unbounded,
-    Size(usize),
-}
-
 /// Owned, mutable representation of a Firmware Volume for composition and serialization.
 ///
 /// Use this to build an FV from a block map and a list of FFS files, set attributes,
@@ -441,13 +443,12 @@ pub struct Volume {
     ext_header: Option<(fv::ExtHeader, Vec<u8>)>,
     block_map: Vec<BlockMapEntry>,
     files: Vec<File>,
-    capacity: Capacity,
 }
 
 impl Volume {
     /// Create a new empty Firmware Volume builder with the given block map.
     ///
-    /// Defaults to the `FFSv3` filesystem GUID, no extended header, and unbounded capacity.
+    /// Defaults to the `FFSv3` filesystem GUID and no extended header.
     pub fn new(block_map: Vec<BlockMapEntry>) -> Self {
         Self {
             file_system_guid: ffs::guid::EFI_FIRMWARE_FILE_SYSTEM3_GUID,
@@ -455,7 +456,6 @@ impl Volume {
             ext_header: None,
             block_map,
             files: Vec::new(),
-            capacity: Capacity::Unbounded,
         }
     }
 
@@ -486,7 +486,7 @@ impl Volume {
     ///
     /// Produces a correct FV header (including checksum), inserts PAD files to
     /// satisfy file alignment and optional extended header placement, respects
-    /// filesystem capabilities (`FFSv2` vs `FFSv3`), and pads to capacity when set.
+    /// filesystem capabilities (`FFSv2` vs `FFSv3`), and pads to the size the block map describes.
     /// Errors propagate from serializing files and sections or when constraints
     /// are violated (e.g., file too large for `FFSv2`).
     ///
@@ -652,11 +652,16 @@ impl Volume {
             }
         }
 
-        if let Capacity::Size(size) = self.capacity
-            && size > fv_buffer.len()
-        {
-            fv_buffer.extend(iter::repeat_n(pad_byte, size - fv_buffer.len()));
+        // the fv is as long as its block map describes.
+        let fv_size = self
+            .block_map
+            .iter()
+            .try_fold(0usize, |size, x| size.checked_add((x.num_blocks as usize).checked_mul(x.length as usize)?))
+            .ok_or(FirmwareFileSystemError::InvalidBlockMap)?;
+        if fv_buffer.len() > fv_size {
+            Err(FirmwareFileSystemError::InvalidBlockMap)?;
         }
+        fv_buffer.resize(fv_size, pad_byte);
 
         // calculate/patch the various header fields that need knowledge of buffer.
         fv_header.fv_length = fv_buffer.len().try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
@@ -755,7 +760,6 @@ impl TryFrom<&VolumeRef<'_>> for Volume {
             ext_header: src.ext_header(),
             block_map: src.block_map().clone(),
             files,
-            capacity: Capacity::Size(src.size() as usize),
         })
     }
 }
@@ -782,7 +786,6 @@ impl TryFrom<(&VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
             ext_header: src.ext_header(),
             block_map: src.block_map().clone(),
             files,
-            capacity: Capacity::Size(src.size() as usize),
         })
     }
 }
