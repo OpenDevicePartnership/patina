@@ -202,6 +202,10 @@ impl<'a> VolumeRef<'a> {
         // content_offset to account for this.
         let content_offset =
             align_up(content_offset as u64, 8).map_err(|_| FirmwareFileSystemError::InvalidHeader)? as usize;
+        //content must start within the fv.
+        if content_offset as u64 > fv_header.fv_length {
+            Err(FirmwareFileSystemError::InvalidHeader)?;
+        }
 
         Ok(Self { data: buffer, fv_header, ext_header, block_map, content_offset })
     }
