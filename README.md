@@ -39,7 +39,8 @@ Unsafe Code<br />
 <div>
 Patina is deployed in production environments and runs on both virtual machines and physical hardware, ranging from
 laptops to servers. Every Patina pull request is validated by booting to the EFI Shell on both AArch64 and x64 QEMU
-emulators before it can be merged. In addition, automated daily testing verifies successful booting of a selected set
+emulators, running the EFI test apps, and booting Ubuntu and the Windows Validation OS before it can be merged. In
+addition, automated daily testing verifies successful booting of a selected set
 of operating systems. The latest operating system boot results are shown below.
 </div>
 
