@@ -42,7 +42,7 @@ use crate::{
     base::{UEFI_PAGE_SIZE, error::EfiError},
     log_debug_assert,
     uefi::memory::EfiMemoryType,
-    uefi_pages_to_size,
+    uefi_size_to_pages,
 };
 
 #[cfg(any(test, feature = "alloc"))]
@@ -436,8 +436,7 @@ struct UefiPage([u8; UEFI_PAGE_SIZE]);
 ///
 #[must_use]
 pub struct PageAllocation {
-    blob: NonNull<u8>,
-    page_count: usize,
+    blob: NonNull<[MaybeUninit<u8>]>,
     memory_manager: &'static dyn MemoryManager,
 }
 
@@ -445,8 +444,9 @@ impl PageAllocation {
     /// Creates a new page allocation. The address and page count provided must
     /// be valid and accessible with the `ReadWrite` access type.
     ///
-    /// Returns an appropriate `Err` if the address is not page aligned or the
-    /// page count is zero.
+    /// Returns an appropriate `Err` if the address is null or not page aligned,
+    /// the allocation's end address wraps, or the page count does not describe
+    /// a nonempty slice of at most `isize::MAX` bytes.
     ///
     /// ## Pointer Provenance
     ///
@@ -461,8 +461,9 @@ impl PageAllocation {
     ///
     /// ## Safety
     ///
-    /// The caller is responsible for ensuring the provided address and page count
-    /// are valid and are read/write accessible. Producing a `PageAllocation` will
+    /// If the address and page count pass the checks described above, the caller
+    /// must ensure that they describe a single valid, read/write accessible
+    /// allocation with the required provenance. Producing a `PageAllocation` will
     /// allow this struct to be safely converted into other types that will access
     /// the memory. Failure to ensure the memory is correct will cause undefined
     /// behavior.
@@ -480,23 +481,30 @@ impl PageAllocation {
             return Err(MemoryError::UnalignedAddress);
         }
 
-        if page_count == 0 {
+        let Some(byte_length) =
+            page_count.checked_mul(UEFI_PAGE_SIZE).filter(|&len| len != 0 && isize::try_from(len).is_ok())
+        else {
             return Err(MemoryError::InvalidPageCount);
+        };
+
+        if addr.checked_add(byte_length).is_none() {
+            return Err(MemoryError::InvalidAddress);
         }
 
-        Ok(Self { blob, page_count, memory_manager })
+        let blob = NonNull::slice_from_raw_parts(blob, byte_length);
+        Ok(Self { blob, memory_manager })
     }
 
     /// Gets the number of pages in the allocation.
     #[inline(always)]
     pub fn page_count(&self) -> usize {
-        self.page_count
+        uefi_size_to_pages!(self.byte_length())
     }
 
     /// Gets the length of the allocation in bytes.
     #[inline(always)]
     pub fn byte_length(&self) -> usize {
-        uefi_pages_to_size!(self.page_count)
+        self.blob.len()
     }
 
     /// Internal routine for zeroing a page allocation. This is not intended for
@@ -506,14 +514,14 @@ impl PageAllocation {
         // SAFETY: The memory is allocated and valid for writing through the
         //         provided page count. This is the responsibility of the caller
         //         of PageAllocation::new().
-        unsafe { self.blob.write_bytes(0, self.byte_length()) };
+        unsafe { self.blob.cast::<u8>().write_bytes(0, self.byte_length()) };
     }
 
     /// Internal function for creating the `PageFree` struct for this allocation.
     #[inline(always)]
     #[cfg(any(test, feature = "alloc"))]
     fn get_page_free(&self) -> PageFree {
-        PageFree { blob: self.blob, page_count: self.page_count, memory_manager: self.memory_manager }
+        PageFree { blob: self.blob, memory_manager: self.memory_manager }
     }
 
     /// Consumes the allocation and returns the raw address which must be manually
@@ -697,7 +705,7 @@ impl PageAllocation {
         //         this structure contains the only reference to the memory and
         //         the memory is safe to free.
         unsafe {
-            if self.memory_manager.free_pages(address, self.page_count).is_err() {
+            if self.memory_manager.free_pages(address, self.page_count()).is_err() {
                 log_debug_assert!("Failed to free page allocation at {address:x}!");
             }
         }
@@ -716,7 +724,10 @@ impl Drop for PageAllocation {
 
 impl core::fmt::Display for PageAllocation {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("PageAllocation").field("address", &self.blob).field("page_count", &self.page_count).finish()
+        f.debug_struct("PageAllocation")
+            .field("address", &self.blob.cast::<u8>())
+            .field("page_count", &self.page_count())
+            .finish()
     }
 }
 
@@ -725,8 +736,7 @@ impl core::fmt::Display for PageAllocation {
 /// allocate memory, and should only be used to free the specific memory it tracks.
 #[cfg(any(test, feature = "alloc"))]
 pub struct PageFree {
-    blob: NonNull<u8>,
-    page_count: usize,
+    blob: NonNull<[MaybeUninit<u8>]>,
     memory_manager: &'static dyn MemoryManager,
 }
 
@@ -740,19 +750,20 @@ unsafe impl Allocator for PageFree {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: core::alloc::Layout) {
-        if self.blob != ptr {
+        if self.blob.cast::<u8>() != ptr {
             log_debug_assert!(
                 "PageFree was not used to free the correct memory! Leaking memory at {:?}!",
-                self.blob.as_ptr()
+                self.blob.cast::<u8>().as_ptr()
             );
             return;
         }
 
         let address = self.blob.addr().get();
+        let page_count = uefi_size_to_pages!(self.blob.len());
         // SAFETY: PageFree structures are only created when the memory is converted
         //         into a smart pointer. The smart pointers themselves will ensure
         //         that the memory is safe to free.
-        if unsafe { self.memory_manager.free_pages(address, self.page_count).is_err() } {
+        if unsafe { self.memory_manager.free_pages(address, page_count).is_err() } {
             log_debug_assert!("Failed to free page allocation at {address:x}!");
         }
     }
@@ -1120,8 +1131,7 @@ mod tests {
     #[test]
     fn test_page_free_allocate_errors() {
         let pf = PageFree {
-            blob: NonNull::dangling(),
-            page_count: 1,
+            blob: NonNull::slice_from_raw_parts(NonNull::dangling(), UEFI_PAGE_SIZE),
             memory_manager: Box::leak(Box::new(StdMemoryManager::new())),
         };
 
@@ -1129,13 +1139,36 @@ mod tests {
     }
 
     #[test]
+    fn test_page_free_small_box_frees_entire_allocation() {
+        let mut allocation = StdMemoryManager::new().allocate_pages(2, AllocationOptions::new()).unwrap();
+        let address = allocation.blob.addr().get();
+        let frees = alloc::sync::Arc::new(AtomicUsize::new(0));
+        let frees_for_manager = frees.clone();
+        let mut manager = MockMemoryManager::new();
+        manager.expect_free_pages().once().returning(move |actual_address, pages| {
+            assert_eq!((actual_address, pages), (address, 2));
+            frees_for_manager.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            // SAFETY: This is the original allocation and its page count.
+            unsafe { StdMemoryManager::new().free_pages(actual_address, pages) }
+        });
+        allocation.memory_manager = Box::leak(Box::new(manager));
+
+        assert_eq!(allocation.byte_length(), 2 * UEFI_PAGE_SIZE);
+        assert_eq!(allocation.page_count(), 2);
+        let value = allocation.into_box(42_u8).unwrap();
+        assert_eq!(*value, 42);
+        drop(value);
+        assert_eq!(frees.load(core::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn test_page_free_mismatched_address_should_assert() {
         let mut value: u8 = 5;
         let data = NonNull::new(&raw mut value).unwrap();
+        let mut other = 0_u8;
+        let wrong_address = NonNull::from(&mut other);
         let pf = PageFree {
-            // SAFETY: Intentionally using a bad address for testing panic behavior.
-            blob: unsafe { data.add(0x1000) },
-            page_count: 1,
+            blob: NonNull::slice_from_raw_parts(wrong_address.cast(), UEFI_PAGE_SIZE),
             memory_manager: Box::leak(Box::new(StdMemoryManager::new())),
         };
 
@@ -1149,7 +1182,10 @@ mod tests {
         let blob = NonNull::new(&raw mut value).unwrap();
         let mut mock = MockMemoryManager::new();
         mock.expect_free_pages().returning(|_, _| Err(MemoryError::InvalidAddress));
-        let pf = PageFree { blob, page_count: 1, memory_manager: Box::leak(Box::new(mock)) };
+        let pf = PageFree {
+            blob: NonNull::slice_from_raw_parts(blob.cast(), UEFI_PAGE_SIZE),
+            memory_manager: Box::leak(Box::new(mock)),
+        };
 
         // SAFETY: Test code - intentionally deallocating to test panic on mock error.
         // This will panic because the mock returns an error.
@@ -1170,7 +1206,7 @@ mod tests {
         let mm = StdMemoryManager::new();
 
         let page = mm.allocate_pages(1, AllocationOptions::new()).unwrap();
-        let address = page.blob.as_ptr() as usize;
+        let address = page.blob.addr().get();
 
         let display = format!("{page}");
         let _ = page.into_raw_ptr::<u8>(); // Consume the pa to avoid the debug_assert in drop.
@@ -1294,10 +1330,18 @@ mod tests {
                 .is_err_and(|e| matches!(e, MemoryError::UnalignedAddress))
         );
 
-        // Catch zero page count
+        for count in [0, isize::MAX as usize / UEFI_PAGE_SIZE + 1, usize::MAX / UEFI_PAGE_SIZE + 1] {
+            assert!(
+                // SAFETY: Each count is rejected before the memory can be accessed.
+                unsafe { PageAllocation::new(address, count, mm) }
+                    .is_err_and(|e| matches!(e, MemoryError::InvalidPageCount))
+            );
+        }
+
+        let last_page = usize::MAX & !(UEFI_PAGE_SIZE - 1);
         assert!(
-            // SAFETY: Test code - intentionally using zero page count to test error handling.
-            unsafe { PageAllocation::new(address, 0, mm) }.is_err_and(|e| matches!(e, MemoryError::InvalidPageCount))
+            // SAFETY: This range wraps and is rejected before it can be used.
+            unsafe { PageAllocation::new(last_page, 1, mm) }.is_err_and(|e| matches!(e, MemoryError::InvalidAddress))
         );
     }
 
