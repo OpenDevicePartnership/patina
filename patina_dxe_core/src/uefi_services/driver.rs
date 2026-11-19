@@ -12,7 +12,10 @@ use core::ptr::NonNull;
 
 use patina::component::service::{
     IntoService,
-    uefi_services::driver::{DriverError, DriverServices, Handle},
+    uefi_services::{
+        driver_model::driver::{DriverError, DriverServices},
+        handle::Handle,
+    },
 };
 use patina::standard::efi;
 

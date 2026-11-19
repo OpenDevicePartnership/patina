@@ -16,8 +16,10 @@
 //! use patina::component::service::{
 //!     Service,
 //!     uefi_services::{
-//!         controller_driver::{ControllerDriver, StartContext, SupportedContext, install_controller_driver},
-//!         driver::DriverServices,
+//!         driver_model::{
+//!             controller_driver::{ControllerDriver, StartContext, SupportedContext, install_controller_driver},
+//!             driver::DriverServices,
+//!         },
 //!         protocol::{ProtocolError, ProtocolServices, ProtocolServicesExt},
 //!         tpl::TplServices,
 //!     },
@@ -130,9 +132,11 @@ use crate::uefi::{
 };
 
 use super::driver_binding::DriverBinding;
-use super::handle::Handle;
-use super::protocol::{OpenAttributes, ProtocolError, ProtocolPtr, ProtocolServices, ProtocolServicesExt};
-use super::tpl::TplServices;
+use crate::component::service::uefi_services::handle::Handle;
+use crate::component::service::uefi_services::protocol::{
+    OpenAttributes, ProtocolError, ProtocolPtr, ProtocolServices, ProtocolServicesExt,
+};
+use crate::component::service::uefi_services::tpl::TplServices;
 
 /// A driver that manages controllers exposing [`Self::Protocol`].
 ///
