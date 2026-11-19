@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="757" viewBox="0 0 780 757" font-family="monospace" font-size="15">
+  <title>Intel and AMD SMRAM save state maps</title>
+  <rect x="0" y="0" width="780" height="757" rx="8" fill="#ffffff"/>
+  <!-- Intel (default) -->
+  <text x="250" y="29" text-anchor="middle" fill="#222" font-weight="bold" font-size="17">Intel (default)</text>
+  <text x="115" y="57" text-anchor="end" fill="#555">Offset</text>
+  <text x="250" y="57" text-anchor="middle" fill="#555">SMBASE + 0x10000</text>
+  <rect x="125" y="70" width="250" height="33" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="250" y="92" text-anchor="middle" fill="#222">CR0, CR3, RFLAGS</text>
+  <text x="115" y="92" text-anchor="end" fill="#555">0x3E8-0x3FF</text>
+  <rect x="125" y="109" width="250" height="33" rx="3" fill="#eefbea" stroke="#52b788" stroke-width="1.5"/>
+  <text x="250" y="130" text-anchor="middle" fill="#222">EFER</text>
+  <text x="115" y="130" text-anchor="end" fill="#555">0x3E0</text>
+  <rect x="125" y="148" width="250" height="33" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="250" y="170" text-anchor="middle" fill="#222">RIP, DR6, DR7</text>
+  <text x="115" y="170" text-anchor="end" fill="#555">0x3C8-0x3DF</text>
+  <rect x="125" y="187" width="250" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="250" y="208" text-anchor="middle" fill="#222">Selectors, 4 bytes each:</text>
+  <text x="250" y="228" text-anchor="middle" fill="#222">ES CS SS DS FS GS LDTR TR</text>
+  <text x="115" y="218" text-anchor="end" fill="#555">0x3A8-0x3C7</text>
+  <rect x="125" y="245" width="250" height="33" rx="3" fill="#fff5eb" stroke="#f4a261" stroke-width="1.5"/>
+  <text x="250" y="266" text-anchor="middle" fill="#222">IOMisc (I/O trap)</text>
+  <text x="115" y="266" text-anchor="end" fill="#555">0x3A4</text>
+  <rect x="125" y="284" width="250" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="250" y="306" text-anchor="middle" fill="#222">RCX RDX RBX RSP</text>
+  <text x="250" y="324" text-anchor="middle" fill="#222">RBP RSI RDI</text>
+  <text x="115" y="315" text-anchor="end" fill="#555">0x364-0x39B</text>
+  <rect x="125" y="342" width="250" height="33" rx="3" fill="#fff5eb" stroke="#f4a261" stroke-width="1.5"/>
+  <text x="250" y="364" text-anchor="middle" fill="#222">RAX</text>
+  <text x="115" y="364" text-anchor="end" fill="#555">0x35C</text>
+  <rect x="125" y="381" width="250" height="33" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="250" y="402" text-anchor="middle" fill="#222">R8 to R15</text>
+  <text x="115" y="402" text-anchor="end" fill="#555">0x31C-0x35B</text>
+  <rect x="125" y="420" width="250" height="33" rx="3" fill="#eefbea" stroke="#52b788" stroke-width="1.5"/>
+  <text x="250" y="442" text-anchor="middle" fill="#222">SMMRevId</text>
+  <text x="115" y="442" text-anchor="end" fill="#555">0x2FC</text>
+  <rect x="125" y="459" width="250" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="250" y="480" text-anchor="middle" fill="#222">GDTR, IDTR, LDTR base</text>
+  <text x="250" y="500" text-anchor="middle" fill="#222">(low halves)</text>
+  <text x="115" y="490" text-anchor="end" fill="#555">0x28C-0x29F</text>
+  <rect x="125" y="517" width="250" height="33" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="250" y="538" text-anchor="middle" fill="#222">CR4 (4 bytes)</text>
+  <text x="115" y="538" text-anchor="end" fill="#555">0x240</text>
+  <rect x="125" y="556" width="250" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="250" y="578" text-anchor="middle" fill="#222">GDTR, LDTR, IDTR base</text>
+  <text x="250" y="596" text-anchor="middle" fill="#222">(high halves)</text>
+  <text x="115" y="587" text-anchor="end" fill="#555">0x1D0-0x1DB</text>
+  <rect x="125" y="614" width="250" height="33" rx="3" fill="#e6e6e6" stroke="#c8c8c8" stroke-width="1.5"/>
+  <text x="250" y="636" text-anchor="middle" fill="#777">All other fields</text>
+  <text x="115" y="636" text-anchor="end" fill="#555"></text>
+  <text x="250" y="670" text-anchor="middle" fill="#555">SMBASE + 0xFC00</text>
+  <!-- AMD (save_state_amd) -->
+  <text x="635" y="29" text-anchor="middle" fill="#222" font-weight="bold" font-size="17">AMD (save_state_amd)</text>
+  <text x="505" y="57" text-anchor="end" fill="#555">Offset</text>
+  <text x="635" y="57" text-anchor="middle" fill="#555">SMBASE + 0x10000</text>
+  <rect x="510" y="70" width="250" height="50" rx="3" fill="#fff5eb" stroke="#f4a261" stroke-width="1.5"/>
+  <text x="635" y="100" text-anchor="middle" fill="#222">RAX</text>
+  <text x="505" y="100" text-anchor="end" fill="#555">0x3F8</text>
+  <rect x="510" y="126" width="250" height="69" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="635" y="156" text-anchor="middle" fill="#222">RCX RDX RBX RSP</text>
+  <text x="635" y="176" text-anchor="middle" fill="#222">RBP RSI RDI</text>
+  <text x="505" y="166" text-anchor="end" fill="#555">0x3C0-0x3F7</text>
+  <rect x="510" y="202" width="250" height="50" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="635" y="232" text-anchor="middle" fill="#222">R8 to R15</text>
+  <text x="505" y="232" text-anchor="end" fill="#555">0x380-0x3BF</text>
+  <rect x="510" y="258" width="250" height="69" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="635" y="288" text-anchor="middle" fill="#222">RIP, RFLAGS, DR6, DR7,</text>
+  <text x="635" y="307" text-anchor="middle" fill="#222">CR0, CR3, CR4</text>
+  <text x="505" y="298" text-anchor="end" fill="#555">0x348-0x37F</text>
+  <rect x="510" y="333" width="250" height="50" rx="3" fill="#eefbea" stroke="#52b788" stroke-width="1.5"/>
+  <text x="635" y="364" text-anchor="middle" fill="#222">SMMRevId</text>
+  <text x="505" y="364" text-anchor="end" fill="#555">0x2FC</text>
+  <rect x="510" y="390" width="250" height="50" rx="3" fill="#eefbea" stroke="#52b788" stroke-width="1.5"/>
+  <text x="635" y="420" text-anchor="middle" fill="#222">EFER</text>
+  <text x="505" y="420" text-anchor="end" fill="#555">0x2D0</text>
+  <rect x="510" y="446" width="250" height="50" rx="3" fill="#fff5eb" stroke="#f4a261" stroke-width="1.5"/>
+  <text x="635" y="476" text-anchor="middle" fill="#222">IO_DWord (I/O trap)</text>
+  <text x="505" y="476" text-anchor="end" fill="#555">0x2C0</text>
+  <rect x="510" y="502" width="250" height="88" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="635" y="532" text-anchor="middle" fill="#222">16-byte segment records:</text>
+  <text x="635" y="551" text-anchor="middle" fill="#222">ES CS SS DS FS GS</text>
+  <text x="635" y="570" text-anchor="middle" fill="#222">GDTR LDTR IDTR TR</text>
+  <text x="505" y="551" text-anchor="end" fill="#555">0x200-0x29F</text>
+  <rect x="510" y="597" width="250" height="50" rx="3" fill="#e6e6e6" stroke="#c8c8c8" stroke-width="1.5"/>
+  <text x="635" y="627" text-anchor="middle" fill="#777">All other fields</text>
+  <text x="505" y="627" text-anchor="end" fill="#555"></text>
+  <text x="635" y="670" text-anchor="middle" fill="#555">SMBASE + 0xFC00</text>
+  <!-- Legend -->
+  <rect x="20" y="691" width="28" height="20" rx="3" fill="#fff5eb" stroke="#f4a261" stroke-width="1.5"/>
+  <text x="58" y="706" fill="#222">Named by the save state policy</text>
+  <rect x="370" y="691" width="28" height="20" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="408" y="706" fill="#222">Other registers ReadSaveState returns</text>
+  <rect x="20" y="725" width="28" height="20" rx="3" fill="#eefbea" stroke="#52b788" stroke-width="1.5"/>
+  <text x="58" y="740" fill="#222">Used to decode the map</text>
+  <rect x="370" y="725" width="28" height="20" rx="3" fill="#e6e6e6" stroke="#c8c8c8" stroke-width="1.5"/>
+  <text x="408" y="740" fill="#222">Not read</text>
+</svg>

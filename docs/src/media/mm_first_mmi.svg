@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480" viewBox="0 0 800 480" font-family="monospace" font-size="13">
+  <title>The first MMI on the BSP and the APs</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="480" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="90" fill="#f0f0f0"/>
+  <rect x="10" y="100" width="780" height="240" fill="#fff3cc"/>
+  <rect x="10" y="340" width="780" height="130" fill="#f0f0f0"/>
+  <line x1="10" y1="100" x2="790" y2="100" stroke="#999" stroke-dasharray="6 4"/>
+  <line x1="10" y1="340" x2="790" y2="340" stroke="#999" stroke-dasharray="6 4"/>
+  <text x="20" y="90" text-anchor="start" fill="#555" font-weight="bold">Outside MM: PEI</text>
+  <text x="20" y="330" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: mm_supervisor.efi</text>
+  <text x="20" y="460" text-anchor="start" fill="#555" font-weight="bold">Ring 3: mm_user_core.efi</text>
+  <!-- MM Init raises the first MMI on every core -->
+  <rect x="176" y="22" width="292" height="44" rx="5" fill="#d8f3dc" stroke="#52b788" stroke-width="1.5"/>
+  <text x="322" y="40" text-anchor="middle" fill="#222" font-weight="bold">MM Init</text>
+  <text x="322" y="56" text-anchor="middle" fill="#222">raises the first MMI</text>
+  <polyline points="200,66 200,82" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="152" y="82" width="96" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="200" y="104" text-anchor="middle" fill="#222">first MMI</text>
+  <polyline points="200,118 200,205 88,205 88,230" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="200,155 260,155" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- The APs -->
+  <rect x="260" y="120" width="208" height="70" rx="5" fill="#fff3cc" stroke="#b08a2e" stroke-dasharray="5 4" stroke-width="1.5"/>
+  <text x="364" y="143" text-anchor="middle" fill="#222" font-weight="bold">Each AP</text>
+  <text x="364" y="159" text-anchor="middle" fill="#222">waits until the</text>
+  <text x="364" y="175" text-anchor="middle" fill="#222">BSP releases it</text>
+  <rect x="488" y="120" width="136" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="556" y="143" text-anchor="middle" fill="#222" font-weight="bold">6. Take its</text>
+  <text x="556" y="159" text-anchor="middle" fill="#222">core slot; check</text>
+  <text x="556" y="175" text-anchor="middle" fill="#222">its MMI entry</text>
+  <rect x="644" y="120" width="136" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="712" y="143" text-anchor="middle" fill="#222" font-weight="bold">7. Per-core init;</text>
+  <text x="712" y="159" text-anchor="middle" fill="#222">mark itself</text>
+  <text x="712" y="175" text-anchor="middle" fill="#222">initialized</text>
+  <polyline points="468,155 488,155" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="624,155 644,155" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- The BSP -->
+  <rect x="20" y="230" width="136" height="80" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="88" y="266" text-anchor="middle" fill="#222" font-weight="bold">1. One-time</text>
+  <text x="88" y="282" text-anchor="middle" fill="#222">initialization</text>
+  <rect x="176" y="230" width="136" height="80" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="244" y="250" text-anchor="middle" fill="#222" font-weight="bold">2. Check every</text>
+  <text x="244" y="266" text-anchor="middle" fill="#222">core's MMI</text>
+  <text x="244" y="282" text-anchor="middle" fill="#222">entry; take</text>
+  <text x="244" y="298" text-anchor="middle" fill="#222">its core slot</text>
+  <rect x="488" y="230" width="136" height="80" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="556" y="258" text-anchor="middle" fill="#222" font-weight="bold">4. Mark BSP init</text>
+  <text x="556" y="274" text-anchor="middle" fill="#222">complete;</text>
+  <text x="556" y="290" text-anchor="middle" fill="#222">release the APs</text>
+  <rect x="644" y="230" width="136" height="80" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="712" y="258" text-anchor="middle" fill="#222" font-weight="bold">5. Per-core init;</text>
+  <text x="712" y="274" text-anchor="middle" fill="#222">mark itself</text>
+  <text x="712" y="290" text-anchor="middle" fill="#222">initialized</text>
+  <polyline points="156,270 176,270" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="624,270 644,270" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="556,230 556,190" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="564" y="214" text-anchor="start" fill="#555" font-size="11">releases</text>
+  <!-- The one demotion -->
+  <rect x="332" y="372" width="136" height="60" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="400" y="390" text-anchor="middle" fill="#222" font-weight="bold">3. StartUserCore</text>
+  <text x="400" y="406" text-anchor="middle" fill="#222">the user core</text>
+  <text x="400" y="422" text-anchor="middle" fill="#222">starts</text>
+  <polyline points="280,310 280,322" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="280,358 280,402 332,402" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="244" y="322" width="72" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="280" y="344" text-anchor="middle" fill="#222">demote</text>
+  <polyline points="468,402 556,402 556,358" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="556,322 556,310" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="508" y="322" width="96" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="556" y="344" text-anchor="middle" fill="#222">call gate</text>
+  <!-- Tags naming the core that runs each block -->
+  <g transform="rotate(-6 28 226)">
+    <rect x="28" y="217" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="47" y="230" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 184 226)">
+    <rect x="184" y="217" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="203" y="230" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 496 226)">
+    <rect x="496" y="217" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="515" y="230" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 652 226)">
+    <rect x="652" y="217" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="671" y="230" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 268 116)">
+    <rect x="268" y="107" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="283" y="120" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <g transform="rotate(-6 496 116)">
+    <rect x="496" y="107" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="511" y="120" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <g transform="rotate(-6 652 116)">
+    <rect x="652" y="107" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="667" y="120" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <g transform="rotate(-6 340 366)">
+    <rect x="340" y="357" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="359" y="370" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+</svg>

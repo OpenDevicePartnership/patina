@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="486" viewBox="0 0 800 486" font-family="monospace" font-size="13">
+  <title>MM actors</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#888"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="486" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="110" fill="#f0f0f0"/>
+  <rect x="10" y="120" width="780" height="180" fill="#fff3cc"/>
+  <rect x="10" y="300" width="780" height="176" fill="#f0f0f0"/>
+  <line x1="10" y1="120" x2="790" y2="120" stroke="#999" stroke-dasharray="6 4"/>
+  <line x1="10" y1="300" x2="790" y2="300" stroke="#999" stroke-dasharray="6 4"/>
+  <text x="20" y="110" text-anchor="start" fill="#555" font-weight="bold">Outside MM: PEI</text>
+  <text x="20" y="290" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0, MMRAM</text>
+  <text x="20" y="466" text-anchor="start" fill="#555" font-weight="bold">Ring 3, MMRAM</text>
+  <!-- Load time: MM Init places everything in MMRAM -->
+  <rect x="160" y="30" width="260" height="60" rx="5" fill="#d8f3dc" stroke="#52b788" stroke-width="1.5"/>
+  <text x="290" y="56" text-anchor="middle" fill="#222" font-weight="bold">MM Init</text>
+  <text x="290" y="72" text-anchor="middle" fill="#222">MmSupervisorInit.efi</text>
+  <polyline points="420,60 685,60 685,140" fill="none" stroke-width="1.5" stroke="#888" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <text x="560" y="54" text-anchor="middle" fill="#555" font-size="11">installs</text>
+  <polyline points="200,90 200,190" fill="none" stroke-width="1.5" stroke="#888" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <polyline points="180,90 180,370 190,370" fill="none" stroke-width="1.5" stroke="#888" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <polyline points="165,90 165,150 140,150 140,428 640,428 640,400" fill="none" stroke-width="1.5" stroke="#888" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <text x="100" y="144" text-anchor="middle" fill="#555" font-size="11">loads images</text>
+  <!-- Ring 0 -->
+  <rect x="600" y="140" width="170" height="46" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="685" y="159" text-anchor="middle" fill="#222" font-weight="bold">MMI entry code</text>
+  <text x="685" y="175" text-anchor="middle" fill="#222">one per core</text>
+  <rect x="190" y="190" width="380" height="60" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="380" y="216" text-anchor="middle" fill="#222" font-weight="bold">Supervisor</text>
+  <text x="380" y="232" text-anchor="middle" fill="#222">mm_supervisor.efi</text>
+  <polyline points="600,163 520,163 520,190" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <text x="560" y="157" text-anchor="middle" fill="#555" font-size="11">every MMI</text>
+  <!-- Ring 3 and the transitions -->
+  <rect x="190" y="340" width="230" height="60" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="305" y="366" text-anchor="middle" fill="#222" font-weight="bold">User core</text>
+  <text x="305" y="382" text-anchor="middle" fill="#222">mm_user_core.efi</text>
+  <rect x="520" y="340" width="240" height="60" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="640" y="358" text-anchor="middle" fill="#222" font-weight="bold">MM drivers</text>
+  <text x="640" y="374" text-anchor="middle" fill="#222">entry points and</text>
+  <text x="640" y="390" text-anchor="middle" fill="#222">MMI handlers</text>
+  <polyline points="420,370 520,370" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <text x="470" y="364" text-anchor="middle" fill="#555" font-size="11">calls</text>
+  <polyline points="260,250 260,282" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="260,318 260,340" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="224" y="282" width="72" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="260" y="304" text-anchor="middle" fill="#222" font-weight="bold">demote</text>
+  <polyline points="370,340 370,318" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="370,282 370,250" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="322" y="282" width="96" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="370" y="296" text-anchor="middle" fill="#222" font-weight="bold">syscall,</text>
+  <text x="370" y="312" text-anchor="middle" fill="#222">call gate</text>
+  <polyline points="690,340 690,318" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="690,282 690,220 570,220" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="650" y="282" width="80" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="690" y="304" text-anchor="middle" fill="#222" font-weight="bold">syscall</text>
+  <!-- Legend -->
+  <line x1="560" y1="458" x2="590" y2="458" stroke="#888" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="596" y="462" text-anchor="start" fill="#555" font-size="11">load time</text>
+  <line x1="670" y1="458" x2="700" y2="458" stroke="#222" stroke-width="1.5"/>
+  <text x="706" y="462" text-anchor="start" fill="#555" font-size="11">every MMI</text>
+</svg>

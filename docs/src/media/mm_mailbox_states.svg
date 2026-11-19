@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="330" viewBox="0 0 800 330" font-family="monospace" font-size="13">
+  <title>AP mailbox states</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#777"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="330" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="310" fill="#fff3cc"/>
+  <text x="20" y="310" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: one AP mailbox per core index</text>
+  <circle cx="30" cy="80" r="7" fill="#222"/>
+  <polyline points="37,80 60,80" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="60" y="50" width="180" height="60" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="150" y="84" text-anchor="middle" fill="#222" font-weight="bold">Empty</text>
+  <rect x="310" y="50" width="180" height="60" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="400" y="84" text-anchor="middle" fill="#222" font-weight="bold">CommandWriting</text>
+  <rect x="560" y="50" width="180" height="60" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="650" y="84" text-anchor="middle" fill="#222" font-weight="bold">CommandReady</text>
+  <rect x="560" y="190" width="180" height="60" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="650" y="224" text-anchor="middle" fill="#222" font-weight="bold">CommandRunning</text>
+  <rect x="60" y="190" width="180" height="60" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="150" y="224" text-anchor="middle" fill="#222" font-weight="bold">ResponseReady</text>
+  <polyline points="240,80 310,80" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="490,80 560,80" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="650,110 650,190" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="560,220 240,220" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="150,190 150,110" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g transform="rotate(-6 255 66)">
+    <rect x="255" y="57" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="274" y="70" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <text x="275" y="100" text-anchor="middle" fill="#555" font-size="11">claims it</text>
+  <g transform="rotate(-6 505 66)">
+    <rect x="505" y="57" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="524" y="70" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <text x="525" y="100" text-anchor="middle" fill="#555" font-size="11">publishes</text>
+  <g transform="rotate(-6 660 138)">
+    <rect x="660" y="129" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="675" y="142" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <text x="660" y="170" text-anchor="start" fill="#555" font-size="11">takes it</text>
+  <g transform="rotate(-6 380 196)">
+    <rect x="380" y="187" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="395" y="200" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <text x="400" y="240" text-anchor="middle" fill="#555" font-size="11">posts the response</text>
+  <g transform="rotate(-6 160 138)">
+    <rect x="160" y="129" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="179" y="142" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <text x="160" y="170" text-anchor="start" fill="#555" font-size="11">reads it</text>
+  <rect x="310" y="270" width="430" height="30" rx="5" fill="none" stroke="none" stroke-width="1.5"/>
+  <text x="525" y="289" text-anchor="middle" fill="#222">End of every MMI: the BSP forces every mailbox to Empty</text>
+</svg>

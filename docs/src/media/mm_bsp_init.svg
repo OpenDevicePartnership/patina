@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480" viewBox="0 0 800 480" font-family="monospace" font-size="13">
+  <title>BSP one-time initialization</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#888"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="480" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="90" fill="#f0f0f0"/>
+  <rect x="10" y="100" width="780" height="260" fill="#fff3cc"/>
+  <rect x="10" y="360" width="780" height="110" fill="#f0f0f0"/>
+  <line x1="10" y1="100" x2="790" y2="100" stroke="#999" stroke-dasharray="6 4"/>
+  <line x1="10" y1="360" x2="790" y2="360" stroke="#999" stroke-dasharray="6 4"/>
+  <text x="20" y="90" text-anchor="start" fill="#555" font-weight="bold">Outside MM: PEI</text>
+  <text x="20" y="350" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: mm_supervisor.efi, BSP</text>
+  <text x="20" y="460" text-anchor="start" fill="#555" font-weight="bold">Ring 3 memory</text>
+  <rect x="290" y="22" width="220" height="44" rx="5" fill="#d8f3dc" stroke="#52b788" stroke-width="1.5"/>
+  <text x="400" y="40" text-anchor="middle" fill="#222" font-weight="bold">MM Init</text>
+  <text x="400" y="56" text-anchor="middle" fill="#222">raises the first MMI</text>
+  <polyline points="290,44 210,44 210,82" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="162" y="82" width="96" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="210" y="104" text-anchor="middle" fill="#222">first MMI</text>
+  <polyline points="210,118 210,125" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="30" y="125" width="220" height="84" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="140" y="155" text-anchor="middle" fill="#222" font-weight="bold">1. Validate the HOB</text>
+  <text x="140" y="171" text-anchor="middle" fill="#222">list and MMRAM: bound,</text>
+  <text x="140" y="187" text-anchor="middle" fill="#222">core count, HOB checks</text>
+  <rect x="290" y="125" width="220" height="84" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="400" y="155" text-anchor="middle" fill="#222" font-weight="bold">2. Program the SMRR</text>
+  <text x="400" y="171" text-anchor="middle" fill="#222">range; it is enabled</text>
+  <text x="400" y="187" text-anchor="middle" fill="#222">at the next MMI</text>
+  <rect x="550" y="125" width="220" height="84" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="660" y="147" text-anchor="middle" fill="#222" font-weight="bold">3. Allocators; adopt</text>
+  <text x="660" y="163" text-anchor="middle" fill="#222">the page table at CR3;</text>
+  <text x="660" y="179" text-anchor="middle" fill="#222">allocate the per-core</text>
+  <text x="660" y="195" text-anchor="middle" fill="#222">arrays</text>
+  <rect x="30" y="249" width="220" height="84" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="140" y="279" text-anchor="middle" fill="#222" font-weight="bold">4. Validate the page</text>
+  <text x="140" y="295" text-anchor="middle" fill="#222">table and the HOBs that</text>
+  <text x="140" y="311" text-anchor="middle" fill="#222">need page attributes</text>
+  <rect x="290" y="249" width="220" height="84" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="400" y="271" text-anchor="middle" fill="#222" font-weight="bold">5. Policy, syscalls and</text>
+  <text x="400" y="287" text-anchor="middle" fill="#222">comm buffers from the</text>
+  <text x="400" y="303" text-anchor="middle" fill="#222">PassDown HOB; accept</text>
+  <text x="400" y="319" text-anchor="middle" fill="#222">the firmware policy</text>
+  <rect x="550" y="249" width="220" height="84" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="660" y="279" text-anchor="middle" fill="#222" font-weight="bold">6. Publish a read-only</text>
+  <text x="660" y="295" text-anchor="middle" fill="#222">HOB list copy</text>
+  <text x="660" y="311" text-anchor="middle" fill="#222">for Ring 3</text>
+  <polyline points="250,167 290,167" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="510,167 550,167" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="250,291 290,291" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="510,291 550,291" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="660,209 660,229 140,229 140,249" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="550" y="385" width="220" height="60" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="660" y="403" text-anchor="middle" fill="#222" font-weight="bold">HOB list copy</text>
+  <text x="660" y="419" text-anchor="middle" fill="#222">zeroed user pages,</text>
+  <text x="660" y="435" text-anchor="middle" fill="#222">read-only, no execute</text>
+  <polyline points="660,333 660,385" fill="none" stroke-width="1.5" stroke="#888" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <text x="668" y="371" text-anchor="start" fill="#555" font-size="11">writes</text>
+  <rect x="30" y="385" width="480" height="60" rx="5" fill="none" stroke="none" stroke-width="1.5"/>
+  <text x="270" y="411" text-anchor="middle" fill="#222">Next: check every core's MMI entry,</text>
+  <text x="270" y="427" text-anchor="middle" fill="#222">then demote once to StartUserCore</text>
+</svg>

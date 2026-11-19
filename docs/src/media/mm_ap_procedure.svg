@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="470" viewBox="0 0 800 470" font-family="monospace" font-size="13">
+  <title>An AP procedure started from Ring 3</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#777"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="470" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="300" fill="#fff3cc"/>
+  <rect x="10" y="310" width="780" height="150" fill="#f0f0f0"/>
+  <line x1="10" y1="310" x2="790" y2="310" stroke="#999" stroke-dasharray="6 4"/>
+  <text x="262" y="300" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: mm_supervisor.efi</text>
+  <text x="20" y="450" text-anchor="start" fill="#555" font-weight="bold">Ring 3: MM driver and mm_user_core.efi</text>
+  <!-- BSP side -->
+  <rect x="30" y="40" width="220" height="76" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="140" y="58" text-anchor="middle" fill="#222" font-weight="bold">2. Check: caller is</text>
+  <text x="140" y="74" text-anchor="middle" fill="#222">the BSP; procedure and</text>
+  <text x="140" y="90" text-anchor="middle" fill="#222">argument user owned;</text>
+  <text x="140" y="106" text-anchor="middle" fill="#222">AP in range, not self</text>
+  <rect x="100" y="146" width="150" height="60" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="175" y="164" text-anchor="middle" fill="#222" font-weight="bold">3. Claim the</text>
+  <text x="175" y="180" text-anchor="middle" fill="#222">Empty mailbox,</text>
+  <text x="175" y="196" text-anchor="middle" fill="#222">post the command</text>
+  <rect x="100" y="236" width="150" height="44" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="175" y="254" text-anchor="middle" fill="#222" font-weight="bold">8. Read the</text>
+  <text x="175" y="270" text-anchor="middle" fill="#222">response</text>
+  <polyline points="175,116 175,146" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="175,206 175,236" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <text x="183" y="225" text-anchor="start" fill="#555" font-size="11">wait up to 10 s</text>
+  <!-- The mailbox between the cores -->
+  <rect x="310" y="120" width="180" height="86" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="400" y="151" text-anchor="middle" fill="#222" font-weight="bold">AP mailbox</text>
+  <text x="400" y="167" text-anchor="middle" fill="#222">the target AP's</text>
+  <text x="400" y="183" text-anchor="middle" fill="#222">per-core slot</text>
+  <polyline points="250,176 310,176" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <text x="280" y="170" text-anchor="middle" fill="#555" font-size="11">post</text>
+  <polyline points="400,206 400,258 250,258" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <text x="330" y="254" text-anchor="middle" fill="#555" font-size="11">response</text>
+  <!-- AP side -->
+  <rect x="550" y="40" width="220" height="60" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="660" y="58" text-anchor="middle" fill="#222" font-weight="bold">4. Take the command</text>
+  <text x="660" y="74" text-anchor="middle" fill="#222">from the holding pen;</text>
+  <text x="660" y="90" text-anchor="middle" fill="#222">state Busy</text>
+  <rect x="640" y="150" width="130" height="76" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="705" y="176" text-anchor="middle" fill="#222" font-weight="bold">7. Post the</text>
+  <text x="705" y="192" text-anchor="middle" fill="#222">response; state</text>
+  <text x="705" y="208" text-anchor="middle" fill="#222">InHoldingPen</text>
+  <polyline points="490,140 520,140 520,70 550,70" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <text x="526" y="110" text-anchor="start" fill="#555" font-size="11">take</text>
+  <polyline points="640,196 490,196" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <!-- Ring 3 and the four transitions -->
+  <rect x="30" y="350" width="260" height="60" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="160" y="368" text-anchor="middle" fill="#222" font-weight="bold">1. StartApProc syscall</text>
+  <text x="160" y="384" text-anchor="middle" fill="#222">procedure, AP index, argument;</text>
+  <text x="160" y="400" text-anchor="middle" fill="#222">9. resumes</text>
+  <rect x="550" y="350" width="220" height="60" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="660" y="376" text-anchor="middle" fill="#222" font-weight="bold">5. User core runs</text>
+  <text x="660" y="392" text-anchor="middle" fill="#222">the procedure</text>
+  <polyline points="60,350 60,328" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="60,292 60,116" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="20" y="292" width="80" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="60" y="314" text-anchor="middle" fill="#222">syscall</text>
+  <polyline points="175,280 175,292" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="175,328 175,350" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="135" y="292" width="80" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="175" y="314" text-anchor="middle" fill="#222">sysretq</text>
+  <polyline points="590,100 590,292" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="590,328 590,350" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="554" y="292" width="72" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="590" y="314" text-anchor="middle" fill="#222">demote</text>
+  <polyline points="705,350 705,328" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="705,292 705,226" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="657" y="292" width="96" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="705" y="314" text-anchor="middle" fill="#222">call gate</text>
+  <text x="713" y="272" text-anchor="start" fill="#555" font-size="11">6. returns</text>
+  <g transform="rotate(-6 38 36)">
+    <rect x="38" y="27" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="57" y="40" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 108 142)">
+    <rect x="108" y="133" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="127" y="146" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 108 232)">
+    <rect x="108" y="223" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="127" y="236" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 222 346)">
+    <rect x="222" y="337" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="241" y="350" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 558 36)">
+    <rect x="558" y="27" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="573" y="40" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <g transform="rotate(-6 648 146)">
+    <rect x="648" y="137" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="663" y="150" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <g transform="rotate(-6 622 346)">
+    <rect x="622" y="337" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="637" y="350" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+</svg>

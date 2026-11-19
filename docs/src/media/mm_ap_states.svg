@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="250" viewBox="0 0 800 250" font-family="monospace" font-size="13">
+  <title>AP states</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#777"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="250" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="230" fill="#fff3cc"/>
+  <text x="20" y="230" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: each AP's per-core slot</text>
+  <rect x="30" y="110" width="190" height="60" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="125" y="144" text-anchor="middle" fill="#222" font-weight="bold">NotPresent</text>
+  <rect x="300" y="110" width="200" height="60" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="400" y="144" text-anchor="middle" fill="#222" font-weight="bold">InHoldingPen</text>
+  <rect x="580" y="110" width="190" height="60" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="675" y="136" text-anchor="middle" fill="#222" font-weight="bold">Busy</text>
+  <text x="675" y="152" text-anchor="middle" fill="#222">runs a procedure</text>
+  <circle cx="125" cy="50" r="7" fill="#222"/>
+  <polyline points="125,57 125,110" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="133" y="84" text-anchor="start" fill="#555" font-size="11">registered on the AP's first entry</text>
+  <polyline points="220,128 300,128" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="260" y="122" text-anchor="middle" fill="#555" font-size="11">checks in</text>
+  <polyline points="300,155 220,155" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="260" y="185" text-anchor="middle" fill="#555" font-size="11">checks out after</text>
+  <text x="260" y="199" text-anchor="middle" fill="#555" font-size="11">the BSP releases it</text>
+  <polyline points="500,128 580,128" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="540" y="103" text-anchor="middle" fill="#555" font-size="11">takes a</text>
+  <text x="540" y="117" text-anchor="middle" fill="#555" font-size="11">command</text>
+  <polyline points="580,155 500,155" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="540" y="185" text-anchor="middle" fill="#555" font-size="11">procedure</text>
+  <text x="540" y="199" text-anchor="middle" fill="#555" font-size="11">returns</text>
+  <g transform="rotate(-6 38 106)">
+    <rect x="38" y="97" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="53" y="110" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <g transform="rotate(-6 308 106)">
+    <rect x="308" y="97" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="323" y="110" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <g transform="rotate(-6 588 106)">
+    <rect x="588" y="97" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="603" y="110" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <text x="770" y="204" text-anchor="end" fill="#555" font-size="11">The BSP's own slot stays Busy.</text>
+</svg>

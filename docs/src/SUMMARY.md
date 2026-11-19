@@ -65,6 +65,7 @@
 
 - [Patina DXE Core Requirements Checklist](integrate/patina_dxe_core_requirements_checklist.md)
 - [Patina DXE Core Requirements](integrate/patina_dxe_core_requirements.md)
+- [Patina MM Supervisor Requirements](integrate/patina_mm_supervisor_requirements.md)
 - [Setting up the Patina DXE Core](integrate/dxe_core.md)
   - [Confidential Compute Integration](integrate/confidential_compute.md)
 - [Platform Integration and Crate Patching](integrate/platform_integration_and_patching.md)
@@ -88,6 +89,17 @@
   - [Synchronization](dxe_core/synchronization.md)
   - [Testing](dxe_core/testing.md)
   - [UEFI Driver Model](dxe_core/driver_model.md)
+
+# Patina MM Subsystems
+
+- [Theory and Operation](mm/operation.md)
+  - [Initialization](mm/initialization.md)
+  - [Initialization Validation](mm/validation.md)
+  - [Privilege Boundary](mm/privilege_boundary.md)
+  - [MMI Handling](mm/mmi_handling.md)
+  - [Memory Management](mm/memory_management.md)
+  - [Security Policy](mm/security_policy.md)
+  - [User Core](mm/user_core.md)
 
 -----------
 

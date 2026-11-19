@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="430" viewBox="0 0 800 430" font-family="monospace" font-size="13">
+  <title>A FETCH_POLICY request</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#777"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="430" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="100" fill="#f0f0f0"/>
+  <text x="20" y="100" text-anchor="start" fill="#555" font-weight="bold">Outside MM</text>
+  <rect x="10" y="110" width="780" height="310" fill="#fff3cc"/>
+  <text x="20" y="410" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: mm_supervisor.efi, BSP</text>
+  <line x1="10" y1="110" x2="790" y2="110" stroke="#999" stroke-dasharray="6 4"/>
+  <rect x="30" y="25" width="270" height="60" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="165" y="43" text-anchor="middle" fill="#222" font-weight="bold">Caller outside MM</text>
+  <text x="165" y="59" text-anchor="middle" fill="#222">FETCH_POLICY on the</text>
+  <text x="165" y="75" text-anchor="middle" fill="#222">supervisor channel</text>
+  <rect x="400" y="25" width="370" height="60" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="585" y="43" text-anchor="middle" fill="#222" font-weight="bold">6. Response</text>
+  <text x="585" y="59" text-anchor="middle" fill="#222">status in the header; merged</text>
+  <text x="585" y="75" text-anchor="middle" fill="#222">policy on success</text>
+  <rect x="30" y="135" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="115" y="158" text-anchor="middle" fill="#222" font-weight="bold">1. Copy into MMRAM;</text>
+  <text x="115" y="174" text-anchor="middle" fill="#222">check the request</text>
+  <text x="115" y="190" text-anchor="middle" fill="#222">header</text>
+  <rect x="240" y="135" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="325" y="174" text-anchor="middle" fill="#222" font-weight="bold">2. Gate locked?</text>
+  <rect x="450" y="135" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="535" y="158" text-anchor="middle" fill="#222" font-weight="bold">3b. Walk the page</text>
+  <text x="535" y="174" text-anchor="middle" fill="#222">table again; compare</text>
+  <text x="535" y="190" text-anchor="middle" fill="#222">with the snapshot</text>
+  <rect x="240" y="255" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="325" y="278" text-anchor="middle" fill="#222" font-weight="bold">3a. Take the</text>
+  <text x="325" y="294" text-anchor="middle" fill="#222">snapshot, lock the</text>
+  <text x="325" y="310" text-anchor="middle" fill="#222">gate, end UNBLOCK_MEM</text>
+  <rect x="450" y="255" width="170" height="70" rx="5" fill="#d8f3dc" stroke="#52b788" stroke-width="1.5"/>
+  <text x="535" y="278" text-anchor="middle" fill="#222" font-weight="bold">4. Merge</text>
+  <text x="535" y="294" text-anchor="middle" fill="#222">firmware policy</text>
+  <text x="535" y="310" text-anchor="middle" fill="#222">and snapshot</text>
+  <rect x="660" y="135" width="110" height="190" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="715" y="194" text-anchor="middle" fill="#222" font-weight="bold">PolicyGate</text>
+  <text x="715" y="210" text-anchor="middle" fill="#222"></text>
+  <text x="715" y="226" text-anchor="middle" fill="#222">firmware</text>
+  <text x="715" y="242" text-anchor="middle" fill="#222">policy,</text>
+  <text x="715" y="258" text-anchor="middle" fill="#222">memory</text>
+  <text x="715" y="274" text-anchor="middle" fill="#222">snapshot</text>
+  <rect x="30" y="255" width="170" height="70" rx="5" fill="#fde2e1" stroke="#d9534f" stroke-width="1.5"/>
+  <text x="115" y="278" text-anchor="middle" fill="#222" font-weight="bold">5. Failed</text>
+  <text x="115" y="294" text-anchor="middle" fill="#222">DEVICE_ERROR or</text>
+  <text x="115" y="310" text-anchor="middle" fill="#222">SECURITY_VIOLATION</text>
+  <polyline points="165,85 165,135" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="141" y="92" width="48" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="165" y="114" text-anchor="middle" fill="#222">MMI</text>
+  <polyline points="200,170 240,170" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="410,170 450,170" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="430" y="164" text-anchor="middle" fill="#555" font-size="11">yes</text>
+  <polyline points="325,205 325,255" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="333" y="236" text-anchor="start" fill="#555" font-size="11">no</text>
+  <polyline points="410,290 450,290" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="430" y="284" text-anchor="middle" fill="#2d6a4f" font-size="11">ok</text>
+  <polyline points="535,205 535,255" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="543" y="236" text-anchor="start" fill="#2d6a4f" font-size="11">same</text>
+  <polyline points="620,170 660,170" fill="none" stroke="#777" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrow-grey)" marker-start="url(#arrow-grey)"/>
+  <polyline points="620,290 660,290" fill="none" stroke="#777" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrow-grey)" marker-start="url(#arrow-grey)"/>
+  <polyline points="240,305 200,305" fill="none" stroke="#c0392b" stroke-width="1.5" marker-end="url(#arrow-red)"/>
+  <text x="220" y="301" text-anchor="middle" fill="#c0392b" font-size="11">fails</text>
+  <polyline points="470,205 470,225 150,225 150,255" fill="none" stroke="#c0392b" stroke-width="1.5" marker-end="url(#arrow-red)"/>
+  <text x="310" y="221" text-anchor="middle" fill="#c0392b" font-size="11">differs or fails</text>
+  <polyline points="115,325 115,395 640,395" fill="none" stroke="#c0392b" stroke-width="1.5"/>
+  <polyline points="535,325 535,395 640,395" fill="none" stroke="#222" stroke-width="1.5"/>
+  <polyline points="640,395 640,345 785,345 785,122 640,122 640,85" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="700" y="389" text-anchor="middle" fill="#555" font-size="11">result</text>
+  <rect x="604" y="92" width="72" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="640" y="114" text-anchor="middle" fill="#222">status</text>
+</svg>

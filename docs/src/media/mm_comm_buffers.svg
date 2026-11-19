@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="720" viewBox="0 0 800 720" font-family="monospace" font-size="13">
+  <title>The supervisor and user communication channels</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#777"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="720" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="200" fill="#f0f0f0"/>
+  <rect x="10" y="210" width="780" height="270" fill="#fff3cc"/>
+  <rect x="10" y="480" width="780" height="230" fill="#f0f0f0"/>
+  <line x1="10" y1="210" x2="790" y2="210" stroke="#999" stroke-dasharray="6 4"/>
+  <line x1="10" y1="480" x2="790" y2="480" stroke="#999" stroke-dasharray="6 4"/>
+  <text x="20" y="200" text-anchor="start" fill="#555" font-weight="bold">Outside MM</text>
+  <text x="20" y="470" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: mm_supervisor.efi</text>
+  <text x="20" y="700" text-anchor="start" fill="#555" font-weight="bold">Ring 3: mm_user_core.efi</text>
+  <!-- Outside MM: the caller and the two channels -->
+  <rect x="300" y="22" width="200" height="48" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="400" y="42" text-anchor="middle" fill="#222" font-weight="bold">Caller outside MM</text>
+  <text x="400" y="58" text-anchor="middle" fill="#222">uses one channel</text>
+  <rect x="15" y="92" width="270" height="76" rx="5" fill="none" stroke="#999" stroke-width="1.5"/>
+  <text x="162" y="105" text-anchor="middle" fill="#555" font-size="11">Supervisor channel</text>
+  <rect x="515" y="92" width="270" height="76" rx="5" fill="none" stroke="#999" stroke-width="1.5"/>
+  <text x="638" y="105" text-anchor="middle" fill="#555" font-size="11">User channel</text>
+  <rect x="22" y="110" width="123" height="48" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="84" y="130" text-anchor="middle" fill="#222" font-weight="bold">Buffer</text>
+  <text x="84" y="146" text-anchor="middle" fill="#222">request</text>
+  <rect x="155" y="110" width="123" height="48" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="216" y="130" text-anchor="middle" fill="#222" font-weight="bold">Mailbox</text>
+  <text x="216" y="146" text-anchor="middle" fill="#222">valid, status</text>
+  <rect x="522" y="110" width="123" height="48" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="584" y="130" text-anchor="middle" fill="#222" font-weight="bold">Mailbox</text>
+  <text x="584" y="146" text-anchor="middle" fill="#222">valid, status</text>
+  <rect x="655" y="110" width="123" height="48" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="716" y="130" text-anchor="middle" fill="#222" font-weight="bold">Buffer</text>
+  <text x="716" y="146" text-anchor="middle" fill="#222">request</text>
+  <polyline points="300,36 83,36 83,110" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <polyline points="300,58 240,58 240,110" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <polyline points="500,36 717,36 717,110" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <polyline points="500,58 560,58 560,110" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <circle cx="160" cy="36" r="11" fill="#444"/>
+  <text x="160" y="40" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">1</text>
+  <text x="178" y="28" text-anchor="start" fill="#444" font-size="11">request</text>
+  <circle cx="640" cy="36" r="11" fill="#444"/>
+  <text x="640" y="40" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">1</text>
+  <text x="622" y="28" text-anchor="end" fill="#444" font-size="11">request</text>
+  <circle cx="240" cy="78" r="11" fill="#444"/>
+  <text x="240" y="82" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">2</text>
+  <text x="224" y="82" text-anchor="end" fill="#444" font-size="11">valid = 1</text>
+  <circle cx="560" cy="78" r="11" fill="#444"/>
+  <text x="560" y="82" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">2</text>
+  <text x="576" y="82" text-anchor="start" fill="#444" font-size="11">valid = 1</text>
+  <polyline points="400,70 400,192" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="376" y="192" width="48" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="400" y="214" text-anchor="middle" fill="#222">MMI</text>
+  <polyline points="400,228 400,240" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <circle cx="420" cy="110" r="11" fill="#444"/>
+  <text x="420" y="114" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">2</text>
+  <text x="436" y="114" text-anchor="start" fill="#444" font-size="11">raise the MMI</text>
+  <!-- Ring 0: the BSP reads both mailboxes and routes -->
+  <rect x="300" y="240" width="200" height="60" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="400" y="258" text-anchor="middle" fill="#222" font-weight="bold">3. BSP reads both</text>
+  <text x="400" y="274" text-anchor="middle" fill="#222">mailboxes once</text>
+  <text x="400" y="290" text-anchor="middle" fill="#222">and routes the MMI</text>
+  <!-- Supervisor channel, served in Ring 0 -->
+  <rect x="22" y="322" width="150" height="48" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="97" y="342" text-anchor="middle" fill="#222" font-weight="bold">Internal copy</text>
+  <text x="97" y="358" text-anchor="middle" fill="#222">MMRAM, Ring 0</text>
+  <rect x="22" y="402" width="268" height="48" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="156" y="422" text-anchor="middle" fill="#222" font-weight="bold">S2. Built-in, then platform</text>
+  <text x="156" y="438" text-anchor="middle" fill="#222">handler for the header GUID</text>
+  <polyline points="60,158 60,322" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <polyline points="130,322 130,158" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <circle cx="60" cy="240" r="11" fill="#444"/>
+  <text x="60" y="244" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">S1</text>
+  <text x="76" y="244" text-anchor="start" fill="#444" font-size="11">copy in</text>
+  <circle cx="130" cy="295" r="11" fill="#444"/>
+  <text x="130" y="299" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">S3</text>
+  <text x="146" y="299" text-anchor="start" fill="#444" font-size="11">copy out</text>
+  <polyline points="97,402 97,370" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)" marker-start="url(#arrow-grey)"/>
+  <polyline points="330,300 330,426 290,426" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <text x="296" y="437" text-anchor="start" fill="#444" font-size="11">supervisor</text>
+  <text x="296" y="451" text-anchor="start" fill="#444" font-size="11">valid</text>
+  <polyline points="300,285 255,285 255,158" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <circle cx="255" cy="232" r="11" fill="#444"/>
+  <text x="255" y="236" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">S4</text>
+  <!-- User channel, served in Ring 3 -->
+  <rect x="520" y="520" width="130" height="52" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="585" y="542" text-anchor="middle" fill="#222" font-weight="bold">MmUserRequest</text>
+  <text x="585" y="558" text-anchor="middle" fill="#222">user page</text>
+  <rect x="660" y="520" width="120" height="52" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="720" y="542" text-anchor="middle" fill="#222" font-weight="bold">Internal copy</text>
+  <text x="720" y="558" text-anchor="middle" fill="#222">MMRAM, Ring 3</text>
+  <rect x="300" y="610" width="480" height="58" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="540" y="635" text-anchor="middle" fill="#222" font-weight="bold">U4. User core: run the handlers for the GUID and the</text>
+  <text x="540" y="651" text-anchor="middle" fill="#222">root handlers on the internal copy; write the status</text>
+  <polyline points="500,290 545,290 545,520" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <circle cx="545" cy="400" r="11" fill="#444"/>
+  <text x="545" y="404" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">U1</text>
+  <polyline points="690,158 690,520" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <polyline points="750,520 750,158" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)"/>
+  <circle cx="690" cy="330" r="11" fill="#444"/>
+  <text x="690" y="334" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">U2</text>
+  <text x="674" y="327" text-anchor="end" fill="#444" font-size="11">copy in</text>
+  <text x="674" y="341" text-anchor="end" fill="#444" font-size="11">(sync)</text>
+  <circle cx="750" cy="420" r="11" fill="#444"/>
+  <text x="750" y="424" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">U6</text>
+  <text x="734" y="417" text-anchor="end" fill="#444" font-size="11">copy</text>
+  <text x="734" y="431" text-anchor="end" fill="#444" font-size="11">out</text>
+  <polyline points="585,610 585,572" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)" marker-start="url(#arrow-grey)"/>
+  <polyline points="720,610 720,572" fill="none" stroke-width="1.5" stroke="#777" stroke-dasharray="5 4" marker-end="url(#arrow-grey)" marker-start="url(#arrow-grey)"/>
+  <polyline points="380,300 380,462" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="380,498 380,610" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="344" y="462" width="72" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="380" y="484" text-anchor="middle" fill="#222">demote</text>
+  <circle cx="380" cy="380" r="11" fill="#444"/>
+  <text x="380" y="384" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">U3</text>
+  <text x="396" y="397" text-anchor="start" fill="#444" font-size="11">user valid</text>
+  <text x="396" y="411" text-anchor="start" fill="#444" font-size="11">or async</text>
+  <polyline points="480,610 480,498" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="480,462 480,300" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="432" y="462" width="96" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="480" y="484" text-anchor="middle" fill="#222">call gate</text>
+  <circle cx="480" cy="560" r="11" fill="#444"/>
+  <text x="480" y="564" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">U5</text>
+  <polyline points="500,250 620,250 620,158" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <circle cx="620" cy="232" r="11" fill="#444"/>
+  <text x="620" y="236" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">U7</text>
+  <!-- Legend -->
+  <line x1="30" y1="540" x2="60" y2="540" stroke="#222" stroke-width="1.5"/>
+  <text x="68" y="544" text-anchor="start" fill="#444" font-size="11">control</text>
+  <line x1="30" y1="562" x2="60" y2="562" stroke="#777" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="68" y="566" text-anchor="start" fill="#444" font-size="11">data read or written</text>
+  <text x="30" y="590" text-anchor="start" fill="#444" font-size="11">An asynchronous MMI has no</text>
+  <text x="30" y="604" text-anchor="start" fill="#444" font-size="11">valid mailbox: U3 to U5 run,</text>
+  <text x="30" y="618" text-anchor="start" fill="#444" font-size="11">with no copies (U2, U6).</text>
+  <circle cx="41" cy="640" r="11" fill="#444"/>
+  <text x="41" y="644" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">S</text>
+  <text x="60" y="644" text-anchor="start" fill="#444" font-size="11">supervisor channel steps</text>
+  <circle cx="41" cy="666" r="11" fill="#444"/>
+  <text x="41" y="670" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="10">U</text>
+  <text x="60" y="670" text-anchor="start" fill="#444" font-size="11">user channel steps</text>
+</svg>
