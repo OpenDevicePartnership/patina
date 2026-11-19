@@ -23,8 +23,10 @@ use patina::{
         service::{
             Service,
             uefi_services::{
-                component_name::UefiDriverModelComponentName,
-                language::{LanguageEntry, LanguageTable},
+                driver_model::{
+                    component_name::UefiDriverModelComponentName,
+                    language::{LanguageEntry, LanguageTable},
+                },
                 protocol::{ProtocolServices, ProtocolServicesExt},
             },
         },

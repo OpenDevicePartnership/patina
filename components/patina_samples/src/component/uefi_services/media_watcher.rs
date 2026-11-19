@@ -9,10 +9,10 @@
 //! moved into the closure. The callback calls [`ControllerStateRef::with_protocol`] on each tick, and the driver
 //! closes the timer in `stop()`.
 //!
-//! [`ControllerDriver`]: patina::component::service::uefi_services::controller_driver::ControllerDriver
-//! [`StartContext::state_ref`]: patina::component::service::uefi_services::controller_driver::StartContext::state_ref
-//! [`ControllerStateRef`]: patina::component::service::uefi_services::controller_driver::ControllerStateRef
-//! [`ControllerStateRef::with_protocol`]: patina::component::service::uefi_services::controller_driver::ControllerStateRef::with_protocol
+//! [`ControllerDriver`]: patina::component::service::uefi_services::driver_model::controller_driver::ControllerDriver
+//! [`StartContext::state_ref`]: patina::component::service::uefi_services::driver_model::controller_driver::StartContext::state_ref
+//! [`ControllerStateRef`]: patina::component::service::uefi_services::driver_model::controller_driver::ControllerStateRef
+//! [`ControllerStateRef::with_protocol`]: patina::component::service::uefi_services::driver_model::controller_driver::ControllerStateRef::with_protocol
 //!
 //! ## License
 //!
@@ -29,10 +29,12 @@ use patina::{
         service::{
             Service,
             uefi_services::{
-                controller_driver::{
-                    ControllerDriver, StartContext, StopContext, SupportedContext, install_controller_driver,
+                driver_model::{
+                    controller_driver::{
+                        ControllerDriver, StartContext, StopContext, SupportedContext, install_controller_driver,
+                    },
+                    driver::DriverServices,
                 },
-                driver::DriverServices,
                 event::{Event, EventError, EventServices},
                 protocol::{Handle, ProtocolError, ProtocolServices, ProtocolServicesExt},
                 timer_event::{TimerEventServices, TimerEventServicesExt, TimerType, Tpl},

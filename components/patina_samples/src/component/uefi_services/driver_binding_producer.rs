@@ -7,7 +7,7 @@
 //! The SDK opens and closes the protocol and keeps each controller's state, so the driver only implements what
 //! is specific to it.
 //!
-//! [`ControllerDriver`]: patina::component::service::uefi_services::controller_driver::ControllerDriver
+//! [`ControllerDriver`]: patina::component::service::uefi_services::driver_model::controller_driver::ControllerDriver
 //!
 //! ## License
 //!
@@ -22,10 +22,12 @@ use patina::{
         service::{
             Service,
             uefi_services::{
-                controller_driver::{
-                    ControllerDriver, StartContext, StopContext, SupportedContext, install_controller_driver,
+                driver_model::{
+                    controller_driver::{
+                        ControllerDriver, StartContext, StopContext, SupportedContext, install_controller_driver,
+                    },
+                    driver::DriverServices,
                 },
-                driver::DriverServices,
                 protocol::{ProtocolError, ProtocolServices, ProtocolServicesExt},
                 tpl::TplServices,
             },

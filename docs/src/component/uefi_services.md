@@ -116,7 +116,7 @@ with no dispatch-ordering requirement, so components and the DXE Core call the p
 
 [ConfigurationTableServices]:
   https://docs.rs/patina/latest/patina/component/service/uefi_services/config_table/trait.ConfigurationTableServices.html
-[DriverServices]: https://docs.rs/patina/latest/patina/component/service/uefi_services/driver/trait.DriverServices.html
+[DriverServices]: https://docs.rs/patina/latest/patina/component/service/uefi_services/driver_model/driver/trait.DriverServices.html
 [EventServices]: https://docs.rs/patina/latest/patina/component/service/uefi_services/event/trait.EventServices.html
 [ImageServices]: https://docs.rs/patina/latest/patina/component/service/uefi_services/image/trait.ImageServices.html
 [calculate_crc32]: https://docs.rs/patina/latest/patina/crc32/fn.calculate_crc32.html

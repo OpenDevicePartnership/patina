@@ -23,14 +23,9 @@
 //! Services are split into cohesive functional groups so that a component can declare a more
 //! granular dependency on the functionality it needs:
 //!
-//! - [`component_name::UefiDriverModelComponentName`] - Publishing a driver and controller name.
 //! - [`config_table::ConfigurationTableServices`] - Configuration table installation and lookup.
-//! - [`controller_driver::ControllerDriver`] - A simple way to write a UEFI driver model driver that manages
-//!   controllers.
-//! - [`driver::DriverServices`] - Connecting and disconnecting drivers to controllers.
-//! - [`driver_binding::DriverBinding`] - Producing a driver binding protocol for a component.
-//! - [`driver_supported_efi_version`] - Publishing the UEFI Specification revision a driver
-//!   conforms to.
+//! - [`driver_model`] - UEFI Driver Model services: connecting drivers to controllers, producing driver binding,
+//!   and additional driver model functionality.
 //! - [`event::EventServices`] - Events, using Rust closures for notifications.
 //! - [`image::ImageServices`] - Loading, starting, and unloading UEFI images.
 //! - [`protocol::ProtocolServices`] - Typed protocol installation and discovery.
@@ -48,16 +43,11 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-pub mod component_name;
 pub mod config_table;
-pub mod controller_driver;
-pub mod driver;
-pub mod driver_binding;
-pub mod driver_supported_efi_version;
+pub mod driver_model;
 pub mod event;
 pub mod handle;
 pub mod image;
-pub mod language;
 pub mod protocol;
 pub mod timer_event;
 pub mod timing;
