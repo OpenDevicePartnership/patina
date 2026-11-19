@@ -310,27 +310,19 @@ impl<'a> VolumeRef<'a> {
     /// assert_eq!((offset, blk, rem), (0, 4096, 1));
     /// ```
     pub fn lba_info(&self, lba: u32) -> Result<(u32, u32, u32), FirmwareFileSystemError> {
-        let block_map = self.block_map();
-
-        let mut total_blocks = 0;
+        let mut first_lba = 0;
         let mut offset = 0;
-        let mut block_size = 0;
 
-        for entry in block_map {
-            total_blocks += entry.num_blocks;
-            block_size = entry.length;
-            if lba < total_blocks {
-                break;
+        for entry in self.block_map() {
+            let end_lba = first_lba + entry.num_blocks;
+            if lba < end_lba {
+                return Ok((offset + (lba - first_lba) * entry.length, entry.length, end_lba - lba));
             }
             offset += entry.num_blocks * entry.length;
+            first_lba = end_lba;
         }
 
-        if lba >= total_blocks {
-            return Err(FirmwareFileSystemError::InvalidParameter); //lba out of range.
-        }
-
-        let remaining_blocks = total_blocks - lba;
-        Ok((offset + lba * block_size, block_size, remaining_blocks))
+        Err(FirmwareFileSystemError::InvalidParameter) //lba out of range.
     }
 
     /// The FV attributes bitfield (`EFI_FVB_ATTRIBUTES_2`).
@@ -1599,5 +1591,18 @@ mod test {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn lba_info_maps_lbas_within_their_region() {
+        let block_map = vec![
+            fv::BlockMapEntry { num_blocks: 2, length: 0x1000 },
+            fv::BlockMapEntry { num_blocks: 3, length: 0x200 },
+        ];
+        let fv_bytes = Volume::new(block_map).serialize().unwrap();
+        let volume = VolumeRef::new(&fv_bytes).unwrap();
+        assert_eq!(volume.lba_info(1), Ok((0x1000, 0x1000, 1)));
+        assert_eq!(volume.lba_info(2), Ok((0x2000, 0x200, 3)));
+        assert_eq!(volume.lba_info(5), Err(FirmwareFileSystemError::InvalidParameter));
     }
 }
