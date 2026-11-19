@@ -75,8 +75,6 @@ asserts in debug builds and otherwise returns `Err(TplMutexError::AlreadyLocked)
 `TplMutex::try_lock()` returns `Err(TplMutexError::AlreadyLocked)` without asserting
 if it is already owned. The SDK also returns
 `Err(TplMutexError::UninitializedController)` if its deferred TPL controller has not been initialized.
-The SDK retains the infallible `TplMutex::lock()` as a deprecated compatibility
-method; consumers should use `checked_lock()` or `try_lock()` and handle the result.
 
 ```admonish warning
 Reentrant acquisition fails. Do not retry in a loop: the interrupted owner
@@ -115,10 +113,6 @@ to be instantiated independently of Boot Services availability.
 Ordinary direct transitions through `TplController` must use
 `checked_tpl_raise()` and handle its `Result`. It asserts in debug builds if
 the controller rejects the transition; non-debug builds return the error.
-The infallible `TplController::raise_tpl()` remains as a deprecated compatibility
-method that delegates to `checked_tpl_raise()` and panics on failure in all builds.
-This does not change the separate,
-infallible `TplServices::raise_tpl()` service interface.
 
 ## TplGuard
 
