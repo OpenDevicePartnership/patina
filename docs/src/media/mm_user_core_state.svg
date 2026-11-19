@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="560" viewBox="0 0 800 560" font-family="monospace" font-size="13">
+  <title>MM user core state</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="560" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="540" fill="#f0f0f0"/>
+  <!-- State, held by the MmUserCore static and the heap -->
+  <rect x="290" y="40" width="220" height="140" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="400" y="82" text-anchor="middle" fill="#222" font-weight="bold">Dispatch state</text>
+  <text x="400" y="98" text-anchor="middle" fill="#444"></text>
+  <text x="400" y="114" text-anchor="middle" fill="#444">driver queue</text>
+  <text x="400" y="130" text-anchor="middle" fill="#444">component storage</text>
+  <text x="400" y="146" text-anchor="middle" fill="#444">HOB list, System Table</text>
+  <rect x="290" y="200" width="220" height="160" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="400" y="252" text-anchor="middle" fill="#222" font-weight="bold">Databases</text>
+  <text x="400" y="268" text-anchor="middle" fill="#444"></text>
+  <text x="400" y="284" text-anchor="middle" fill="#444">protocol database</text>
+  <text x="400" y="300" text-anchor="middle" fill="#444">MMI handler database</text>
+  <text x="400" y="316" text-anchor="middle" fill="#444">configuration tables</text>
+  <rect x="290" y="380" width="220" height="112" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="400" y="416" text-anchor="middle" fill="#222" font-weight="bold">Heap</text>
+  <text x="400" y="432" text-anchor="middle" fill="#444"></text>
+  <text x="400" y="448" text-anchor="middle" fill="#444">pool allocator</text>
+  <text x="400" y="464" text-anchor="middle" fill="#444">pages from Ring 0</text>
+  <!-- Modules on the left -->
+  <rect x="30" y="40" width="200" height="210" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="130" y="117" text-anchor="middle" fill="#222" font-weight="bold">entry point</text>
+  <text x="130" y="133" text-anchor="middle" fill="#222">StartUserCore builds</text>
+  <text x="130" y="149" text-anchor="middle" fill="#222">the System Table;</text>
+  <text x="130" y="165" text-anchor="middle" fill="#222">UserRequest runs</text>
+  <text x="130" y="181" text-anchor="middle" fill="#222">the MMI handlers</text>
+  <line x1="230" y1="100" x2="290" y2="100" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="290" y1="230" x2="230" y2="230" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="30" y="280" width="200" height="70" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="130" y="303" text-anchor="middle" fill="#222" font-weight="bold">core_handlers</text>
+  <text x="130" y="319" text-anchor="middle" fill="#222">registers the</text>
+  <text x="130" y="335" text-anchor="middle" fill="#222">lifecycle handlers</text>
+  <line x1="230" y1="315" x2="290" y2="315" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="30" y="400" width="200" height="72" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="130" y="424" text-anchor="middle" fill="#222" font-weight="bold">MM drivers and</text>
+  <text x="130" y="440" text-anchor="middle" fill="#222">components</text>
+  <text x="130" y="456" text-anchor="middle" fill="#222">allocate memory</text>
+  <line x1="230" y1="436" x2="290" y2="436" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Modules on the right -->
+  <rect x="570" y="40" width="200" height="140" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="670" y="90" text-anchor="middle" fill="#222" font-weight="bold">mm_dispatcher,</text>
+  <text x="670" y="106" text-anchor="middle" fill="#222">component_dispatcher</text>
+  <text x="670" y="122" text-anchor="middle" fill="#222">dispatch in</text>
+  <text x="670" y="138" text-anchor="middle" fill="#222">dependency order</text>
+  <line x1="570" y1="110" x2="510" y2="110" stroke="#222" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <rect x="570" y="200" width="200" height="160" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="670" y="252" text-anchor="middle" fill="#222" font-weight="bold">mm_services</text>
+  <text x="670" y="268" text-anchor="middle" fill="#222">MM System Table</text>
+  <text x="670" y="284" text-anchor="middle" fill="#222">services: install</text>
+  <text x="670" y="300" text-anchor="middle" fill="#222">protocols, register</text>
+  <text x="670" y="316" text-anchor="middle" fill="#222">handlers, tables</text>
+  <line x1="570" y1="280" x2="510" y2="280" stroke="#222" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <rect x="570" y="400" width="200" height="72" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="670" y="424" text-anchor="middle" fill="#222" font-weight="bold">mm_mem</text>
+  <text x="670" y="440" text-anchor="middle" fill="#222">pages through</text>
+  <text x="670" y="456" text-anchor="middle" fill="#222">AllocPage syscalls</text>
+  <line x1="570" y1="436" x2="510" y2="436" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="20" y="540" text-anchor="start" fill="#555" font-weight="bold">Ring 3: patina_mm_user_core</text>
+</svg>

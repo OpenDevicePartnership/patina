@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480" viewBox="0 0 800 480" font-family="monospace" font-size="13">
+  <title>When the initialization checks run</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#888"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="480" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="90" fill="#f0f0f0"/>
+  <rect x="10" y="100" width="780" height="260" fill="#fff3cc"/>
+  <rect x="10" y="360" width="780" height="110" fill="#f0f0f0"/>
+  <line x1="10" y1="100" x2="790" y2="100" stroke="#999" stroke-dasharray="6 4"/>
+  <line x1="10" y1="360" x2="790" y2="360" stroke="#999" stroke-dasharray="6 4"/>
+  <text x="20" y="90" text-anchor="start" fill="#555" font-weight="bold">Outside MM: PEI</text>
+  <text x="20" y="350" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: mm_supervisor.efi</text>
+  <text x="20" y="460" text-anchor="start" fill="#555" font-weight="bold">Ring 3: mm_user_core.efi</text>
+  <rect x="290" y="22" width="220" height="44" rx="5" fill="#d8f3dc" stroke="#52b788" stroke-width="1.5"/>
+  <text x="400" y="40" text-anchor="middle" fill="#222" font-weight="bold">MM Init</text>
+  <text x="400" y="56" text-anchor="middle" fill="#222">raises the first MMI</text>
+  <polyline points="290,44 180,44 180,82" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="132" y="82" width="96" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="180" y="104" text-anchor="middle" fill="#222">first MMI</text>
+  <polyline points="180,118 180,130" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="30" y="130" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="115" y="161" text-anchor="middle" fill="#222" font-weight="bold">1. HOB list</text>
+  <text x="115" y="177" text-anchor="middle" fill="#222">structure</text>
+  <rect x="220" y="130" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="305" y="153" text-anchor="middle" fill="#222" font-weight="bold">2. MMRAM bound;</text>
+  <text x="305" y="169" text-anchor="middle" fill="#222">HOB list and MP</text>
+  <text x="305" y="185" text-anchor="middle" fill="#222">info inside MMRAM</text>
+  <rect x="410" y="130" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="495" y="161" text-anchor="middle" fill="#222" font-weight="bold">3. HOBs before</text>
+  <text x="495" y="177" text-anchor="middle" fill="#222">paging</text>
+  <rect x="600" y="130" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="685" y="161" text-anchor="middle" fill="#222" font-weight="bold">4. Adopt MM Init's</text>
+  <text x="685" y="177" text-anchor="middle" fill="#222">page table</text>
+  <rect x="30" y="250" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="115" y="273" text-anchor="middle" fill="#222" font-weight="bold">5. HOBs after</text>
+  <text x="115" y="289" text-anchor="middle" fill="#222">paging: named</text>
+  <text x="115" y="305" text-anchor="middle" fill="#222">regions</text>
+  <rect x="220" y="250" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="305" y="281" text-anchor="middle" fill="#222" font-weight="bold">6. Whole page</text>
+  <text x="305" y="297" text-anchor="middle" fill="#222">table sweep</text>
+  <rect x="410" y="250" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="495" y="281" text-anchor="middle" fill="#222" font-weight="bold">7. Policy and</text>
+  <text x="495" y="297" text-anchor="middle" fill="#222">buffers</text>
+  <rect x="600" y="250" width="170" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="685" y="273" text-anchor="middle" fill="#222" font-weight="bold">8. MMI entries</text>
+  <text x="685" y="289" text-anchor="middle" fill="#222">own entry, then</text>
+  <text x="685" y="305" text-anchor="middle" fill="#222">every core</text>
+  <polyline points="200,165 220,165" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="390,165 410,165" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="580,165 600,165" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="200,285 220,285" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="390,285 410,285" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="580,285 600,285" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="685,200 685,225 115,225 115,250" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="410" y="390" width="170" height="56" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="495" y="414" text-anchor="middle" fill="#222" font-weight="bold">StartUserCore</text>
+  <text x="495" y="430" text-anchor="middle" fill="#222">first Ring 3 code</text>
+  <polyline points="645,320 645,342" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <polyline points="645,378 645,418 580,418" fill="none" stroke-width="1.5" stroke="#222" marker-end="url(#arrow)"/>
+  <rect x="609" y="342" width="72" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="645" y="364" text-anchor="middle" fill="#222">demote</text>
+  <rect x="30" y="390" width="360" height="56" rx="5" fill="none" stroke="none" stroke-width="1.5"/>
+  <text x="210" y="414" text-anchor="middle" fill="#222">Then each AP, on its first MMI,</text>
+  <text x="210" y="430" text-anchor="middle" fill="#222">checks its own MMI entry</text>
+  <g transform="rotate(-6 38 126)">
+    <rect x="38" y="117" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="57" y="130" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 228 126)">
+    <rect x="228" y="117" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="247" y="130" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 418 126)">
+    <rect x="418" y="117" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="437" y="130" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 608 126)">
+    <rect x="608" y="117" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="627" y="130" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 38 246)">
+    <rect x="38" y="237" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="57" y="250" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 228 246)">
+    <rect x="228" y="237" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="247" y="250" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 418 246)">
+    <rect x="418" y="237" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="437" y="250" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 608 246)">
+    <rect x="608" y="237" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="627" y="250" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 418 384)">
+    <rect x="418" y="375" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="437" y="388" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+</svg>

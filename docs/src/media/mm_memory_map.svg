@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1418" viewBox="0 0 800 1418" font-family="monospace" font-size="16">
+  <title>Typical MM physical address map</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#444"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="1418" rx="8" fill="#ffffff"/>
+  <!-- Core 1 SMBASE window: SMBASE1 to SMBASE1 + 0x10000 -->
+  <rect x="198" y="673" width="582" height="472" rx="6" fill="#2a9d4b" fill-opacity="0.14" stroke="#2a9d4b" stroke-width="2" stroke-dasharray="8 4"/>
+  <!-- Core 0 SMBASE window: SMBASE0 to SMBASE0 + 0x10000 -->
+  <rect x="203" y="820" width="462" height="342" rx="6" fill="#3b6fe0" fill-opacity="0.14" stroke="#3b6fe0" stroke-width="2" stroke-dasharray="8 4"/>
+  <!-- Regions, top of the address space first -->
+  <rect x="210" y="20" width="340" height="52" rx="3" fill="#f2f2f2" stroke="#bbbbbb" stroke-dasharray="5 4" stroke-width="1.5"/>
+  <text x="380" y="51" text-anchor="middle" fill="#777">Not present</text>
+  <text x="100" y="41" text-anchor="middle" fill="#555">Physical address</text>
+  <text x="100" y="61" text-anchor="middle" fill="#555">width and above</text>
+  <rect x="210" y="80" width="340" height="52" rx="3" fill="#e6e6e6" stroke="#c8c8c8" stroke-width="1.5"/>
+  <text x="380" y="101" text-anchor="middle" fill="#888">System memory and MMIO</text>
+  <text x="380" y="121" text-anchor="middle" fill="#888">(only regions a HOB names)</text>
+  <text x="100" y="111" text-anchor="middle" fill="#555">Above 4 GiB</text>
+  <rect x="210" y="140" width="340" height="52" rx="3" fill="#e6e6e6" stroke="#c8c8c8" stroke-width="1.5"/>
+  <text x="380" y="161" text-anchor="middle" fill="#888">MMIO</text>
+  <text x="380" y="181" text-anchor="middle" fill="#888">(user, non-executable)</text>
+  <text x="100" y="171" text-anchor="middle" fill="#555">Below 4 GiB</text>
+  <rect x="210" y="200" width="340" height="52" rx="3" fill="#f2f2f2" stroke="#bbbbbb" stroke-dasharray="5 4" stroke-width="1.5"/>
+  <text x="380" y="231" text-anchor="middle" fill="#777">MSEG (optional): not present</text>
+  <text x="100" y="221" text-anchor="middle" fill="#555">MMRAM top</text>
+  <text x="100" y="241" text-anchor="middle" fill="#555">(at or below 4 GiB)</text>
+  <rect x="210" y="260" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="291" text-anchor="middle" fill="#222">Supervisor core image</text>
+  <rect x="210" y="320" width="340" height="52" rx="3" fill="#eafcff" stroke="#2ec4e6" stroke-width="1.5"/>
+  <text x="380" y="351" text-anchor="middle" fill="#222">User core and MM driver images</text>
+  <rect x="210" y="380" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="401" text-anchor="middle" fill="#222">MM Init image</text>
+  <text x="380" y="421" text-anchor="middle" fill="#222">(freed on the first runtime MMI)</text>
+  <rect x="210" y="440" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="461" text-anchor="middle" fill="#222">Firmware policy, SMBASE array,</text>
+  <text x="380" y="481" text-anchor="middle" fill="#222">MM-initialized buffer</text>
+  <rect x="210" y="500" width="340" height="52" rx="3" fill="#eafcff" stroke="#2ec4e6" stroke-width="1.5"/>
+  <text x="380" y="531" text-anchor="middle" fill="#222">Core 1 Ring 3 stack</text>
+  <rect x="210" y="560" width="340" height="52" rx="3" fill="#eafcff" stroke="#2ec4e6" stroke-width="1.5"/>
+  <text x="380" y="591" text-anchor="middle" fill="#222">Core 0 Ring 3 stack</text>
+  <rect x="210" y="620" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="641" text-anchor="middle" fill="#222">GDT, TSS and Ring 0 stacks,</text>
+  <text x="380" y="661" text-anchor="middle" fill="#222">one set per core</text>
+  <rect x="210" y="680" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="701" text-anchor="middle" fill="#222">Core 1 save state map</text>
+  <text x="380" y="721" text-anchor="middle" fill="#222">SMBASE1 + 0xFC00</text>
+  <rect x="210" y="740" width="340" height="34" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="762" text-anchor="middle" fill="#222">Core 1 PSD: SMBASE1 + 0xFB00</text>
+  <rect x="210" y="782" width="340" height="34" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="804" text-anchor="middle" fill="#222">Unused with two cores</text>
+  <rect x="210" y="824" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="845" text-anchor="middle" fill="#222">Core 0 save state map</text>
+  <text x="380" y="865" text-anchor="middle" fill="#222">SMBASE0 + 0xFC00</text>
+  <rect x="210" y="884" width="340" height="34" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="906" text-anchor="middle" fill="#222">Core 0 PSD: SMBASE0 + 0xFB00</text>
+  <rect x="210" y="926" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="947" text-anchor="middle" fill="#222">Unused with two cores</text>
+  <text x="380" y="967" text-anchor="middle" fill="#222">(more cores fill these tiles)</text>
+  <rect x="210" y="986" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="1007" text-anchor="middle" fill="#222">Core 1 MMI entry code</text>
+  <text x="380" y="1027" text-anchor="middle" fill="#222">SMBASE1 + 0x8000</text>
+  <rect x="210" y="1046" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="1067" text-anchor="middle" fill="#222">Core 0 MMI entry code</text>
+  <text x="380" y="1087" text-anchor="middle" fill="#222">SMBASE0 + 0x8000</text>
+  <rect x="210" y="1106" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="1127" text-anchor="middle" fill="#222">Below the entry code</text>
+  <text x="380" y="1147" text-anchor="middle" fill="#222">(no data for either core)</text>
+  <rect x="210" y="1166" width="340" height="52" rx="3" fill="#fff5eb" stroke="#f4a261" stroke-width="1.5"/>
+  <text x="380" y="1187" text-anchor="middle" fill="#222">Page allocator</text>
+  <text x="380" y="1207" text-anchor="middle" fill="#222">(supervisor and user pages)</text>
+  <rect x="210" y="1226" width="340" height="52" rx="3" fill="#fdf0ff" stroke="#c77dff" stroke-width="1.5"/>
+  <text x="380" y="1247" text-anchor="middle" fill="#222">Rest of MMRAM</text>
+  <text x="380" y="1267" text-anchor="middle" fill="#222">(supervisor-only)</text>
+  <text x="100" y="1247" text-anchor="middle" fill="#555">MMRAM base</text>
+  <text x="100" y="1267" text-anchor="middle" fill="#555">(at or above 1 MiB)</text>
+  <rect x="210" y="1286" width="340" height="52" rx="3" fill="#e6e6e6" stroke="#c8c8c8" stroke-width="1.5"/>
+  <text x="380" y="1307" text-anchor="middle" fill="#888">System memory</text>
+  <text x="380" y="1327" text-anchor="middle" fill="#888">(only regions a HOB names)</text>
+  <text x="100" y="1317" text-anchor="middle" fill="#555">1 MiB and above</text>
+  <rect x="210" y="1346" width="340" height="52" rx="3" fill="#e6e6e6" stroke="#c8c8c8" stroke-width="1.5"/>
+  <text x="380" y="1367" text-anchor="middle" fill="#888">Legacy memory</text>
+  <text x="380" y="1387" text-anchor="middle" fill="#888">(page 0 is never present)</text>
+  <text x="100" y="1377" text-anchor="middle" fill="#555">Below 1 MiB</text>
+  <!-- Dimensions -->
+  <line x1="179" y1="560" x2="196" y2="560" stroke="#999" stroke-width="1"/>
+  <line x1="179" y1="612" x2="196" y2="612" stroke="#999" stroke-width="1"/>
+  <line x1="185" y1="561" x2="185" y2="611" stroke="#444" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="177" y="581" text-anchor="end" fill="#444">stack size</text>
+  <text x="177" y="601" text-anchor="end" fill="#444">from the HOB</text>
+  <line x1="179" y1="824" x2="196" y2="824" stroke="#999" stroke-width="1"/>
+  <line x1="179" y1="1158" x2="196" y2="1158" stroke="#999" stroke-width="1"/>
+  <line x1="185" y1="825" x2="185" y2="1157" stroke="#444" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="177" y="996" text-anchor="end" fill="#444">64 KiB</text>
+  <text x="725" y="706" text-anchor="middle" fill="#1e7a39" font-weight="bold">Core 1</text>
+  <text x="725" y="726" text-anchor="middle" fill="#1e7a39" font-weight="bold">SMBASE</text>
+  <text x="725" y="746" text-anchor="middle" fill="#1e7a39" font-weight="bold">window</text>
+  <text x="608" y="853" text-anchor="middle" fill="#2a55b8" font-weight="bold">Core 0</text>
+  <text x="608" y="873" text-anchor="middle" fill="#2a55b8" font-weight="bold">SMBASE</text>
+  <text x="608" y="893" text-anchor="middle" fill="#2a55b8" font-weight="bold">window</text>
+  <text x="725" y="1141" text-anchor="middle" fill="#1e7a39">SMBASE1</text>
+  <text x="608" y="1158" text-anchor="middle" fill="#2a55b8">SMBASE0</text>
+</svg>

@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="442" viewBox="0 0 800 442" font-family="monospace" font-size="13">
+  <title>Demotion from Ring 0 to Ring 3 and back</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="442" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="254" fill="#fff3cc"/>
+  <rect x="10" y="264" width="780" height="168" fill="#f0f0f0"/>
+  <line x1="10" y1="264" x2="790" y2="264" stroke="#999" stroke-dasharray="6 4"/>
+  <text x="20" y="32" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: mm_supervisor.efi</text>
+  <text x="20" y="422" text-anchor="start" fill="#555" font-weight="bold">Ring 3: mm_user_core.efi and MM drivers</text>
+  <rect x="30" y="44" width="220" height="96" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="140" y="64" text-anchor="middle" fill="#222">1. Save nonvolatile</text>
+  <text x="140" y="80" text-anchor="middle" fill="#222">registers and MSRs;</text>
+  <text x="140" y="96" text-anchor="middle" fill="#222">program STAR, LSTAR,</text>
+  <text x="140" y="112" text-anchor="middle" fill="#222">FMASK, EFER.SCE and</text>
+  <text x="140" y="128" text-anchor="middle" fill="#222">the GS bases</text>
+  <rect x="30" y="158" width="220" height="64" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="140" y="178" text-anchor="middle" fill="#222">2. Install the return</text>
+  <text x="140" y="194" text-anchor="middle" fill="#222">call gate; TSS RSP0 =</text>
+  <text x="140" y="210" text-anchor="middle" fill="#222">this Ring 0 stack</text>
+  <rect x="550" y="44" width="220" height="64" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="660" y="64" text-anchor="middle" fill="#222">4. Restore the MSRs</text>
+  <text x="660" y="80" text-anchor="middle" fill="#222">and registers; return</text>
+  <text x="660" y="96" text-anchor="middle" fill="#222">the status</text>
+  <rect x="290" y="296" width="220" height="96" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="400" y="316" text-anchor="middle" fill="#222">3. User core entry</text>
+  <text x="400" y="332" text-anchor="middle" fill="#222">point runs the command:</text>
+  <text x="400" y="348" text-anchor="middle" fill="#222">StartUserCore,</text>
+  <text x="400" y="364" text-anchor="middle" fill="#222">UserRequest or</text>
+  <text x="400" y="380" text-anchor="middle" fill="#222">UserApProcedure</text>
+  <polyline points="140,140 140,158" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="140,222 140,246" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="140,282 140,344 290,344" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="510,344 660,344 660,282" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="660,246 660,108" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="68" y="246" width="144" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="140" y="260" text-anchor="middle" fill="#222">retfq</text>
+  <text x="140" y="276" text-anchor="middle" fill="#222">CS, SS = Ring 3</text>
+  <rect x="584" y="246" width="152" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="660" y="260" text-anchor="middle" fill="#222">far call through</text>
+  <text x="660" y="276" text-anchor="middle" fill="#222">the call gate</text>
+</svg>

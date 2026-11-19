@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500" font-family="monospace" font-size="13">
+  <title>The rendezvous on a runtime MMI</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="500" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="80" fill="#f0f0f0"/>
+  <rect x="10" y="90" width="780" height="280" fill="#fff3cc"/>
+  <rect x="10" y="370" width="780" height="120" fill="#f0f0f0"/>
+  <line x1="10" y1="90" x2="790" y2="90" stroke="#999" stroke-dasharray="6 4"/>
+  <line x1="10" y1="370" x2="790" y2="370" stroke="#999" stroke-dasharray="6 4"/>
+  <text x="20" y="80" text-anchor="start" fill="#555" font-weight="bold">Outside MM</text>
+  <text x="20" y="360" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: mm_supervisor.efi</text>
+  <text x="20" y="480" text-anchor="start" fill="#555" font-weight="bold">Ring 3: mm_user_core.efi</text>
+  <!-- The SMI enters every core, and every core leaves with RSM -->
+  <rect x="215" y="20" width="205" height="40" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="318" y="36" text-anchor="middle" fill="#222" font-weight="bold">SMI</text>
+  <text x="318" y="52" text-anchor="middle" fill="#222">reaches every core</text>
+  <polyline points="215,40 165,40 165,72" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="141" y="72" width="48" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="165" y="94" text-anchor="middle" fill="#222">SMI</text>
+  <polyline points="165,108 165,125" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="141,98 20,98 20,280 30,280" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="470" y="20" width="280" height="40" rx="5" fill="#ffffff" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="610" y="36" text-anchor="middle" fill="#222" font-weight="bold">Return</text>
+  <text x="610" y="52" text-anchor="middle" fill="#222">to the interrupted code</text>
+  <rect x="696" y="72" width="48" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="720" y="94" text-anchor="middle" fill="#222">RSM</text>
+  <polyline points="720,125 720,108" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="720,72 720,60" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="750,280 765,280 765,90 744,90" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- The APs -->
+  <rect x="30" y="125" width="165" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="112" y="156" text-anchor="middle" fill="#222" font-weight="bold">1. Check in</text>
+  <text x="112" y="172" text-anchor="middle" fill="#222">state InHoldingPen</text>
+  <rect x="215" y="125" width="350" height="70" rx="5" fill="#fff3cc" stroke="#b08a2e" stroke-dasharray="5 4" stroke-width="1.5"/>
+  <text x="390" y="148" text-anchor="middle" fill="#222" font-weight="bold">Wait in the holding pen</text>
+  <text x="390" y="164" text-anchor="middle" fill="#222">poll the AP mailbox and the release</text>
+  <text x="390" y="180" text-anchor="middle" fill="#222">semaphore; may run an AP procedure</text>
+  <rect x="585" y="125" width="165" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="668" y="148" text-anchor="middle" fill="#222" font-weight="bold">5. Check out</text>
+  <text x="668" y="164" text-anchor="middle" fill="#222">state NotPresent;</text>
+  <text x="668" y="180" text-anchor="middle" fill="#222">acknowledge</text>
+  <polyline points="195,160 215,160" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="565,160 585,160" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- The BSP -->
+  <rect x="30" y="245" width="165" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="112" y="268" text-anchor="middle" fill="#222" font-weight="bold">2. Wait until</text>
+  <text x="112" y="284" text-anchor="middle" fill="#222">every AP has</text>
+  <text x="112" y="300" text-anchor="middle" fill="#222">arrived</text>
+  <rect x="215" y="245" width="165" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="298" y="268" text-anchor="middle" fill="#222" font-weight="bold">3. Read the status</text>
+  <text x="298" y="284" text-anchor="middle" fill="#222">mailboxes; serve</text>
+  <text x="298" y="300" text-anchor="middle" fill="#222">the request</text>
+  <rect x="400" y="245" width="165" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="482" y="268" text-anchor="middle" fill="#222" font-weight="bold">4. Release: signal</text>
+  <text x="482" y="284" text-anchor="middle" fill="#222">each AP</text>
+  <text x="482" y="300" text-anchor="middle" fill="#222">semaphore</text>
+  <rect x="585" y="245" width="165" height="70" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="668" y="268" text-anchor="middle" fill="#222" font-weight="bold">6. Wait for every</text>
+  <text x="668" y="284" text-anchor="middle" fill="#222">ack; reset the</text>
+  <text x="668" y="300" text-anchor="middle" fill="#222">AP mailboxes</text>
+  <polyline points="195,280 215,280" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="380,280 400,280" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="565,280 585,280" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <!-- Signals between the rows -->
+  <polyline points="112,195 112,245" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="120" y="224" text-anchor="start" fill="#555" font-size="11">check in</text>
+  <polyline points="482,245 482,195" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="490" y="224" text-anchor="start" fill="#555" font-size="11">release</text>
+  <polyline points="640,195 640,245" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="648" y="224" text-anchor="start" fill="#555" font-size="11">ack</text>
+  <!-- A user request demotes once -->
+  <rect x="215" y="420" width="165" height="42" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="298" y="437" text-anchor="middle" fill="#222" font-weight="bold">UserRequest</text>
+  <text x="298" y="453" text-anchor="middle" fill="#222">user requests only</text>
+  <polyline points="262,315 262,352" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="262,388 262,420" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="226" y="352" width="72" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="262" y="374" text-anchor="middle" fill="#222">demote</text>
+  <polyline points="352,420 352,388" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="352,352 352,315" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="304" y="352" width="96" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="352" y="374" text-anchor="middle" fill="#222">call gate</text>
+  <g transform="rotate(-6 38 121)">
+    <rect x="38" y="112" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="53" y="125" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <g transform="rotate(-6 593 121)">
+    <rect x="593" y="112" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="608" y="125" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <g transform="rotate(-6 38 241)">
+    <rect x="38" y="232" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="57" y="245" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 223 241)">
+    <rect x="223" y="232" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="242" y="245" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 408 241)">
+    <rect x="408" y="232" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="427" y="245" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 593 241)">
+    <rect x="593" y="232" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="612" y="245" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+  <g transform="rotate(-6 223 121)">
+    <rect x="223" y="112" width="30" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="238" y="125" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">AP</text>
+  </g>
+  <g transform="rotate(-6 223 414)">
+    <rect x="223" y="405" width="38" height="18" rx="3" fill="#8c8c8c"/>
+    <text x="242" y="418" text-anchor="middle" fill="#ffffff" font-weight="bold" font-size="11">BSP</text>
+  </g>
+</svg>

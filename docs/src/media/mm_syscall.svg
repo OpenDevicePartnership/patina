@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="366" viewBox="0 0 800 366" font-family="monospace" font-size="13">
+  <title>A syscall from Ring 3 to Ring 0 and back</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="366" rx="8" fill="#ffffff"/>
+  <rect x="10" y="10" width="780" height="190" fill="#fff3cc"/>
+  <rect x="10" y="200" width="780" height="156" fill="#f0f0f0"/>
+  <line x1="10" y1="200" x2="790" y2="200" stroke="#999" stroke-dasharray="6 4"/>
+  <text x="20" y="32" text-anchor="start" fill="#7a5a00" font-weight="bold">Ring 0: mm_supervisor.efi</text>
+  <text x="20" y="346" text-anchor="start" fill="#555" font-weight="bold">Ring 3: mm_user_core.efi and MM drivers</text>
+  <rect x="30" y="44" width="220" height="96" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="140" y="72" text-anchor="middle" fill="#222">2. syscall_center:</text>
+  <text x="140" y="88" text-anchor="middle" fill="#222">swapgs, switch to the</text>
+  <text x="140" y="104" text-anchor="middle" fill="#222">Ring 0 stack, save</text>
+  <text x="140" y="120" text-anchor="middle" fill="#222">registers, fxsave</text>
+  <rect x="290" y="44" width="220" height="96" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="400" y="64" text-anchor="middle" fill="#222">3. syscall_dispatcher:</text>
+  <text x="400" y="80" text-anchor="middle" fill="#222">check the arguments,</text>
+  <text x="400" y="96" text-anchor="middle" fill="#222">page ownership and</text>
+  <text x="400" y="112" text-anchor="middle" fill="#222">the policy gate, then</text>
+  <text x="400" y="128" text-anchor="middle" fill="#222">perform the operation</text>
+  <rect x="550" y="44" width="220" height="96" rx="5" fill="#fde3a0" stroke="#b08a2e" stroke-width="1.5"/>
+  <text x="660" y="88" text-anchor="middle" fill="#222">4. fxrstor, restore</text>
+  <text x="660" y="104" text-anchor="middle" fill="#222">the registers, swapgs</text>
+  <polyline points="250,92 290,92" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="510,92 550,92" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="30" y="250" width="220" height="64" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="140" y="270" text-anchor="middle" fill="#222">1. syscall with</text>
+  <text x="140" y="286" text-anchor="middle" fill="#222">RAX = index and</text>
+  <text x="140" y="302" text-anchor="middle" fill="#222">RDX, R8, R9 = arguments</text>
+  <rect x="550" y="250" width="220" height="48" rx="5" fill="#e6e6e6" stroke="#8c8c8c" stroke-width="1.5"/>
+  <text x="660" y="270" text-anchor="middle" fill="#222">5. Ring 3 resumes with</text>
+  <text x="660" y="286" text-anchor="middle" fill="#222">the result in RAX</text>
+  <polyline points="140,250 140,218" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="140,182 140,140" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="660,140 660,182" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <polyline points="660,218 660,250" fill="none" stroke="#222" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="96" y="182" width="88" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="140" y="196" text-anchor="middle" fill="#222">syscall</text>
+  <text x="140" y="212" text-anchor="middle" fill="#222">to LSTAR</text>
+  <rect x="592" y="182" width="136" height="36" rx="5" fill="#d4d4d4" stroke="#6b6b6b" stroke-width="1.5"/>
+  <text x="660" y="196" text-anchor="middle" fill="#222">sysretq</text>
+  <text x="660" y="212" text-anchor="middle" fill="#222">back to Ring 3</text>
+</svg>
