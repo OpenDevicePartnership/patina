@@ -27,7 +27,7 @@ const BUILD_FLAG: u32 = if cfg!(debug_assertions) { 8 } else { 9 };
 
 // The version layout allows two decimal digits for the major version and three for the minor.
 const _: () = assert!(
-    CRATE_VERSION_MAJOR <= 99 && CRATE_VERSION_MINOR <= 999,
+    CRATE_VERSION_MAJOR < 100 && CRATE_VERSION_MINOR < 1000,
     "the crate version does not fit the MM Supervisor version layout"
 );
 
