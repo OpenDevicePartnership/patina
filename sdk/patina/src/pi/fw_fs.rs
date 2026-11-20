@@ -250,6 +250,10 @@ impl<'a> FirmwareVolume<'a> {
 
                 // SAFETY: .get() above guarantees the slice contains a full ExtHeader.
                 let ext_header = unsafe { &*ext_header_slice.as_ptr().cast::<fv::ExtHeader>() };
+                // ext_header_size includes the ExtHeader structure itself.
+                if (ext_header.ext_header_size as usize) < mem::size_of::<fv::ExtHeader>() {
+                    Err(efi::Status::VOLUME_CORRUPTED)?;
+                }
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
                 let ext_header_data =
                     buffer.get(ext_header_offset..ext_header_end).ok_or(efi::Status::VOLUME_CORRUPTED)?;
@@ -292,8 +296,15 @@ impl<'a> FirmwareVolume<'a> {
             Err(efi::Status::VOLUME_CORRUPTED)?;
         }
 
-        //other entries in block map must be non-zero.
-        if block_map.iter().any(|x| x == &fv::BlockMapEntry { num_blocks: 0, length: 0 }) {
+        //other entries in block map must have a non-zero block count and length.
+        if block_map.iter().any(|x| x.num_blocks == 0 || x.length == 0) {
+            Err(efi::Status::VOLUME_CORRUPTED)?;
+        }
+
+        //block map must describe the whole fv within a u32.
+        let block_map_size =
+            block_map.iter().try_fold(0u64, |size, x| size.checked_add(u64::from(x.num_blocks) * u64::from(x.length)));
+        if block_map_size != Some(fv_header.fv_length) || fv_header.fv_length > u64::from(u32::MAX) {
             Err(efi::Status::VOLUME_CORRUPTED)?;
         }
 
@@ -308,6 +319,12 @@ impl<'a> FirmwareVolume<'a> {
         };
 
         let data_offset = align_up(data_offset as u64, 8).map_err(|_| efi::Status::VOLUME_CORRUPTED)? as usize;
+
+        //content must start within the fv.
+        if data_offset as u64 > fv_header.fv_length {
+            Err(efi::Status::VOLUME_CORRUPTED)?;
+        }
+
         let erase_byte = if fv_header.attributes & Fvb2RawAttributes::ERASE_POLARITY != 0 { 0xff } else { 0 };
 
         Ok(Self { data: buffer, attributes: fv_header.attributes, block_map, ext_header, data_offset, erase_byte })
@@ -352,27 +369,19 @@ impl<'a> FirmwareVolume<'a> {
 
     /// returns the (linear block offset from FV base, `block_size`, `remaining_blocks`) given an LBA.
     pub fn lba_info(&self, lba: u32) -> Result<(u32, u32, u32), efi::Status> {
-        let block_map = self.block_map();
-
-        let mut total_blocks = 0;
+        let mut first_lba = 0;
         let mut offset = 0;
-        let mut block_size = 0;
 
-        for entry in block_map {
-            total_blocks += entry.num_blocks;
-            block_size = entry.length;
-            if lba < total_blocks {
-                break;
+        for entry in self.block_map() {
+            let end_lba = first_lba + entry.num_blocks;
+            if lba < end_lba {
+                return Ok((offset + (lba - first_lba) * entry.length, entry.length, end_lba - lba));
             }
             offset += entry.num_blocks * entry.length;
+            first_lba = end_lba;
         }
 
-        if lba >= total_blocks {
-            return Err(efi::Status::INVALID_PARAMETER); //lba out of range.
-        }
-
-        let remaining_blocks = total_blocks - lba;
-        Ok((offset + lba * block_size, block_size, remaining_blocks))
+        Err(efi::Status::INVALID_PARAMETER) //lba out of range.
     }
 
     /// Returns the attributes for the `FirmwareVolume`
@@ -1111,6 +1120,8 @@ mod unit_tests {
 
         let fv_bytes = fs::read(root.join("DXEFV.Fv"))?;
         let fv = FirmwareVolume::new(&fv_bytes).unwrap();
+        assert_eq!(fv.lba_info(1), Ok((0x10000, 0x10000, 191)));
+        assert_eq!(fv.lba_info(192), Err(efi::Status::INVALID_PARAMETER));
 
         let expected_values =
             toml::from_str::<TargetValues>(&fs::read_to_string(root.join("DXEFV_expected_values.toml"))?)?;
