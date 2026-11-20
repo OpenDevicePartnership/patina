@@ -61,6 +61,10 @@ impl<E: SectionExtractor> CoreExtractor<E> {
                 .try_into()
                 .map_err(|_| FirmwareFileSystemError::DataCorrupt)?,
         ) as usize;
+        // same limit patina_ffs_extractors applies to LZMA and Brotli sections.
+        if decompressed_size > patina::SIZE_512MB {
+            Err(FirmwareFileSystemError::DataCorrupt)?;
+        }
         let mut decompressed_buffer = vec![0u8; decompressed_size];
 
         // execute decompress
@@ -78,5 +82,31 @@ impl<E: SectionExtractor> SectionExtractor for CoreExtractor<E> {
             Ok(buffer) => return Ok(buffer),
         }
         self.0.extract(section)
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage, coverage(off))]
+mod tests {
+    use super::*;
+    use patina_ffs::section::Section;
+    use patina_ffs_extractors::NullSectionExtractor;
+
+    #[test]
+    fn uefi_decompress_limits_output_size() {
+        let section = |size: u32| {
+            let header = ffs::section::header::Compression {
+                uncompressed_length: size,
+                compression_type: ffs::section::header::STANDARD_COMPRESSION,
+            };
+            // UEFI compressed data header: compressed size, then decompressed size.
+            let data = [0, size].iter().flat_map(|x| x.to_le_bytes()).collect();
+            Section::new_from_header_with_data(SectionHeader::Compression(header, 8), data).unwrap()
+        };
+        assert_eq!(CoreExtractor::<NullSectionExtractor>::uefi_decompress_extract(&section(0)), Ok(vec![]));
+        assert_eq!(
+            CoreExtractor::<NullSectionExtractor>::uefi_decompress_extract(&section(u32::MAX)),
+            Err(FirmwareFileSystemError::DataCorrupt)
+        );
     }
 }
