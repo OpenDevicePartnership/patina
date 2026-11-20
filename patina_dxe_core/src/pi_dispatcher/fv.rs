@@ -157,7 +157,7 @@ impl<P: PlatformInfo> FvProtocolData<P> {
 
         let lba: u32 = lba.try_into().map_err(|_| EfiError::InvalidParameter)?;
 
-        let (block_size, remaining_blocks, _) = fv.lba_info(lba)?;
+        let (_, block_size, remaining_blocks) = fv.lba_info(lba)?;
 
         Ok((block_size as usize, remaining_blocks as usize))
     }
@@ -1366,6 +1366,17 @@ mod tests {
                         buffer_size_random_ref,
                         num_buffer_empty_ref,
                     );
+                    let (mut block_size, mut number_of_blocks) = (0usize, 0usize);
+                    assert_eq!(
+                        MockProtocolData::fvb_get_block_size_efiapi(
+                            fvb_ptr_mut_prot,
+                            LBA,
+                            &raw mut block_size,
+                            &raw mut number_of_blocks,
+                        ),
+                        efi::Status::SUCCESS
+                    );
+                    assert_eq!((block_size, number_of_blocks), (0x10000, 192));
                     /* Free Memory */
                     dealloc(buffer_valid3.cast::<u8>(), layout3);
                 };

@@ -136,6 +136,10 @@ impl<'a> VolumeRef<'a> {
                     .ok_or(FirmwareFileSystemError::InvalidHeader)?;
                 // SAFETY: .get() above guarantees the slice contains a full ExtHeader.
                 let ext_header = unsafe { ptr::read_unaligned(ext_header_slice.as_ptr().cast::<fv::ExtHeader>()) };
+                // ext_header_size includes the ExtHeader structure itself.
+                if (ext_header.ext_header_size as usize) < mem::size_of::<fv::ExtHeader>() {
+                    Err(FirmwareFileSystemError::InvalidHeader)?;
+                }
                 let ext_header_end = ext_header_offset + ext_header.ext_header_size as usize;
                 if ext_header_end > buffer.len() {
                     Err(FirmwareFileSystemError::InvalidHeader)?;
@@ -179,8 +183,15 @@ impl<'a> VolumeRef<'a> {
             Err(FirmwareFileSystemError::InvalidBlockMap)?;
         }
 
-        //other entries in block map must be non-zero.
-        if block_map.iter().any(|x| x == &fv::BlockMapEntry { num_blocks: 0, length: 0 }) {
+        //other entries in block map must have a non-zero block count and length.
+        if block_map.iter().any(|x| x.num_blocks == 0 || x.length == 0) {
+            Err(FirmwareFileSystemError::InvalidBlockMap)?;
+        }
+
+        //block map must describe the whole fv within a u32.
+        let block_map_size =
+            block_map.iter().try_fold(0u64, |size, x| size.checked_add(u64::from(x.num_blocks) * u64::from(x.length)));
+        if block_map_size != Some(fv_header.fv_length) || fv_header.fv_length > u64::from(u32::MAX) {
             Err(FirmwareFileSystemError::InvalidBlockMap)?;
         }
 
@@ -198,6 +209,10 @@ impl<'a> VolumeRef<'a> {
         // content_offset to account for this.
         let content_offset =
             align_up(content_offset as u64, 8).map_err(|_| FirmwareFileSystemError::InvalidHeader)? as usize;
+        //content must start within the fv.
+        if content_offset as u64 > fv_header.fv_length {
+            Err(FirmwareFileSystemError::InvalidHeader)?;
+        }
 
         Ok(Self { data: buffer, fv_header, ext_header, block_map, content_offset })
     }
@@ -295,27 +310,19 @@ impl<'a> VolumeRef<'a> {
     /// assert_eq!((offset, blk, rem), (0, 4096, 1));
     /// ```
     pub fn lba_info(&self, lba: u32) -> Result<(u32, u32, u32), FirmwareFileSystemError> {
-        let block_map = self.block_map();
-
-        let mut total_blocks = 0;
+        let mut first_lba = 0;
         let mut offset = 0;
-        let mut block_size = 0;
 
-        for entry in block_map {
-            total_blocks += entry.num_blocks;
-            block_size = entry.length;
-            if lba < total_blocks {
-                break;
+        for entry in self.block_map() {
+            let end_lba = first_lba + entry.num_blocks;
+            if lba < end_lba {
+                return Ok((offset + (lba - first_lba) * entry.length, entry.length, end_lba - lba));
             }
             offset += entry.num_blocks * entry.length;
+            first_lba = end_lba;
         }
 
-        if lba >= total_blocks {
-            return Err(FirmwareFileSystemError::InvalidParameter); //lba out of range.
-        }
-
-        let remaining_blocks = total_blocks - lba;
-        Ok((offset + lba * block_size, block_size, remaining_blocks))
+        Err(FirmwareFileSystemError::InvalidParameter) //lba out of range.
     }
 
     /// The FV attributes bitfield (`EFI_FVB_ATTRIBUTES_2`).
@@ -418,11 +425,6 @@ impl<'a> Iterator for FileRefIter<'a> {
     }
 }
 
-enum Capacity {
-    Unbounded,
-    Size(usize),
-}
-
 /// Owned, mutable representation of a Firmware Volume for composition and serialization.
 ///
 /// Use this to build an FV from a block map and a list of FFS files, set attributes,
@@ -433,13 +435,12 @@ pub struct Volume {
     ext_header: Option<(fv::ExtHeader, Vec<u8>)>,
     block_map: Vec<BlockMapEntry>,
     files: Vec<File>,
-    capacity: Capacity,
 }
 
 impl Volume {
     /// Create a new empty Firmware Volume builder with the given block map.
     ///
-    /// Defaults to the `FFSv3` filesystem GUID, no extended header, and unbounded capacity.
+    /// Defaults to the `FFSv3` filesystem GUID and no extended header.
     pub fn new(block_map: Vec<BlockMapEntry>) -> Self {
         Self {
             file_system_guid: ffs::guid::EFI_FIRMWARE_FILE_SYSTEM3_GUID,
@@ -447,7 +448,6 @@ impl Volume {
             ext_header: None,
             block_map,
             files: Vec::new(),
-            capacity: Capacity::Unbounded,
         }
     }
 
@@ -478,7 +478,7 @@ impl Volume {
     ///
     /// Produces a correct FV header (including checksum), inserts PAD files to
     /// satisfy file alignment and optional extended header placement, respects
-    /// filesystem capabilities (`FFSv2` vs `FFSv3`), and pads to capacity when set.
+    /// filesystem capabilities (`FFSv2` vs `FFSv3`), and pads to the size the block map describes.
     /// Errors propagate from serializing files and sections or when constraints
     /// are violated (e.g., file too large for `FFSv2`).
     ///
@@ -644,11 +644,16 @@ impl Volume {
             }
         }
 
-        if let Capacity::Size(size) = self.capacity
-            && size > fv_buffer.len()
-        {
-            fv_buffer.extend(iter::repeat_n(pad_byte, size - fv_buffer.len()));
+        // the fv is as long as its block map describes.
+        let fv_size = self
+            .block_map
+            .iter()
+            .try_fold(0usize, |size, x| size.checked_add((x.num_blocks as usize).checked_mul(x.length as usize)?))
+            .ok_or(FirmwareFileSystemError::InvalidBlockMap)?;
+        if fv_buffer.len() > fv_size {
+            Err(FirmwareFileSystemError::InvalidBlockMap)?;
         }
+        fv_buffer.resize(fv_size, pad_byte);
 
         // calculate/patch the various header fields that need knowledge of buffer.
         fv_header.fv_length = fv_buffer.len().try_into().map_err(|_| FirmwareFileSystemError::InvalidHeader)?;
@@ -747,7 +752,6 @@ impl TryFrom<&VolumeRef<'_>> for Volume {
             ext_header: src.ext_header(),
             block_map: src.block_map().clone(),
             files,
-            capacity: Capacity::Size(src.size() as usize),
         })
     }
 }
@@ -774,7 +778,6 @@ impl TryFrom<(&VolumeRef<'_>, &dyn SectionExtractor)> for Volume {
             ext_header: src.ext_header(),
             block_map: src.block_map().clone(),
             files,
-            capacity: Capacity::Size(src.size() as usize),
         })
     }
 }
@@ -1588,5 +1591,18 @@ mod test {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn lba_info_maps_lbas_within_their_region() {
+        let block_map = vec![
+            fv::BlockMapEntry { num_blocks: 2, length: 0x1000 },
+            fv::BlockMapEntry { num_blocks: 3, length: 0x200 },
+        ];
+        let fv_bytes = Volume::new(block_map).serialize().unwrap();
+        let volume = VolumeRef::new(&fv_bytes).unwrap();
+        assert_eq!(volume.lba_info(1), Ok((0x1000, 0x1000, 1)));
+        assert_eq!(volume.lba_info(2), Ok((0x2000, 0x200, 3)));
+        assert_eq!(volume.lba_info(5), Err(FirmwareFileSystemError::InvalidParameter));
     }
 }
