@@ -1238,7 +1238,7 @@ mod tests {
             .unwrap();
 
         // Get the raw pointer from the allocation.
-        let rsdp_ptr: *mut AcpiRsdp = rsdp_allocation.into_raw_ptr().unwrap();
+        let rsdp_ptr: *mut AcpiRsdp = Box::leak(rsdp_allocation.into_zeroed_bytes()).as_mut_ptr().cast();
         // SAFETY: Correctly allocated by test.
         let rsdp_allocated = unsafe { &mut *rsdp_ptr };
         rsdp_allocated.signature = signature::ACPI_RSDP_TABLE;

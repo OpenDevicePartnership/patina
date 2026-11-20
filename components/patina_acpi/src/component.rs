@@ -11,7 +11,7 @@ use crate::{
     hob::AcpiMemoryHob,
     service::{AcpiProvider, AcpiTableManager},
 };
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 
 use core::mem;
 
@@ -174,7 +174,7 @@ impl AcpiComponent {
             .map_err(|_e| EfiError::OutOfResources)?;
 
         // Get the raw pointer from the allocation
-        let rsdp_ptr = rsdp_allocation.into_raw_ptr().ok_or(EfiError::OutOfResources)?;
+        let rsdp_ptr = Box::leak(rsdp_allocation.into_uninit_bytes()).as_mut_ptr().cast();
 
         // Write the RSDP data to the allocated memory
         // SAFETY: `rsdp_ptr` is valid for writes of size `rsdp_size`; the RSDP has a well-defined layout.

@@ -13,7 +13,7 @@
 
 use core::ffi::c_void;
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use patina::{
     component::service::memory::{AllocationOptions, MemoryManager, PageAllocationStrategy},
     guid as base_guids,
@@ -101,7 +101,8 @@ fn allocate_buffer_command(args: &mut core::str::SplitWhitespace<'_>, out: &mut 
         }
     };
 
-    let address = pages.into_raw_ptr::<u8>().expect("Page allocation size check failed for u8") as usize;
+    let (ptr, _) = Box::into_raw_with_allocator(pages.into_uninit_bytes());
+    let address = ptr.cast::<u8>().expose_provenance();
     let _ = writelncrlf!(out, "{:x}", address);
 }
 
@@ -204,8 +205,7 @@ fn core_reload(image: &[u8], out: &mut dyn core::fmt::Write) {
     };
 
     // Step 2: load the image.
-    #[allow(deprecated)]
-    let loaded_image = alloc.leak_as_uninitialized_slice::<u8>();
+    let loaded_image = Box::leak(alloc.into_uninit_bytes());
     let loaded_image = match pecoff::load_image(&pe_info, image, loaded_image) {
         Ok(loaded_image) => loaded_image,
         Err(error) => {
