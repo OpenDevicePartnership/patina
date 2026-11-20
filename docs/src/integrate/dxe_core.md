@@ -367,7 +367,7 @@ In this example, we will talk about how to configure the loggers provided by Pat
 ```rust
 # extern crate patina;
 # extern crate log;
-use patina::peripheral::serial::uart::UartNull; // UartPl011 (AARCH64) and Uart16550 (X64) exist
+use patina::peripheral::serial::uart::UartNull; // UartPl011 (AARCH64), Uart16550 (X64) and UartQemuDebug (X64) exist
 use patina::debug::log::{Format, SerialLogger};
 use log::LevelFilter;
 
