@@ -64,7 +64,9 @@ impl UartPl011 {
         Self { regs }
     }
 
-    /// Writes a single byte to the UART.
+    /// Queues a single byte, waiting for space in the transmit FIFO.
+    ///
+    /// Use [`Self::flush`] to wait for transmission to complete.
     pub fn write_byte(&mut self, byte: u8) {
         let mut regs = self.regs.reborrow();
 
@@ -75,6 +77,11 @@ impl UartPl011 {
         field!(regs, dr).write(byte);
     }
 
+    /// Waits until the transmit FIFO and shift register are empty.
+    pub fn flush(&mut self) {
+        let mut regs = self.regs.reborrow();
+        while field!(regs, fr).read() & FR_BUSY != 0 {}
+    }
 
     /// Reads a single byte from the UART.
     pub fn read_byte(&mut self) -> Option<u8> {
@@ -97,6 +104,10 @@ impl crate::peripheral::serial::SerialIO for UartPl011 {
         for byte in buffer {
             self.write_byte(*byte);
         }
+    }
+
+    fn flush(&mut self) {
+        UartPl011::flush(self);
     }
 
     fn read(&mut self) -> u8 {
@@ -159,6 +170,32 @@ mod tests {
 
         // PL011 writes bytes one at a time, so the last byte written should be 'c'.
         assert_eq!(regs.dr.0, b'c');
+    }
+
+    #[test]
+    fn test_uart_pl011_write_byte_while_busy() {
+        let mut regs = fake_regs();
+        regs.fr = ReadPure(FR_BUSY);
+        let mut uart = fake_uart(&mut regs);
+        uart.write_byte(b'A');
+        assert_eq!(regs.dr.0, b'A');
+    }
+
+    #[test]
+    fn test_uart_pl011_write_while_busy() {
+        let mut regs = fake_regs();
+        regs.fr = ReadPure(FR_BUSY);
+        let mut uart = fake_uart(&mut regs);
+        uart.write(b"abc");
+        assert_eq!(regs.dr.0, b'c');
+    }
+
+    #[test]
+    fn test_uart_pl011_flush_idle() {
+        let mut regs = fake_regs();
+        let mut uart = fake_uart(&mut regs);
+        SerialIO::flush(&mut uart);
+        assert_eq!(regs.dr.0, 0);
     }
 
     #[test]

@@ -11,10 +11,17 @@ use core::ptr::NonNull;
 
 use crate::log_debug_assert;
 use uart_16550::backend::{MmioBackend, PioBackend};
+use uart_16550::spec::registers::LSR;
 use uart_16550::{BaudRate, Config, Uart16550 as Inner};
 
 /// The configuration applied the first time a `Uart16550` port is used.
 const CONFIG: Config = Config { baud_rate: BaudRate::Baud38400, ..Config::DEFAULT };
+
+fn flush_transmitter(mut line_status: impl FnMut() -> LSR) {
+    while !line_status().contains(LSR::TRANSMITTER_EMPTY) {
+        core::hint::spin_loop();
+    }
+}
 
 /// A lazily-initialized I/O port-mapped backend.
 ///
@@ -174,6 +181,21 @@ impl crate::peripheral::serial::SerialIO for Uart16550 {
         }
     }
 
+    fn flush(&mut self) {
+        match self {
+            Uart16550::Io(port) => {
+                if let Some(driver) = port.driver() {
+                    flush_transmitter(|| driver.lsr());
+                }
+            }
+            Uart16550::Mmio(port) => {
+                if let Some(driver) = port.driver() {
+                    flush_transmitter(|| driver.lsr());
+                }
+            }
+        }
+    }
+
     fn read(&mut self) -> u8 {
         // Blocks until a byte is available once the device is constructed. A rejected address
         // logs an error and panics in debug builds. In release builds, a `0` sentinel is returned
@@ -308,6 +330,22 @@ mod tests {
     }
 
     #[test]
+    fn test_uart_16550_flush_waits_for_shift_register() {
+        let statuses = [LSR::empty(), LSR::THR_EMPTY, LSR::THR_EMPTY | LSR::TRANSMITTER_EMPTY];
+        let mut statuses = statuses.into_iter();
+        flush_transmitter(|| statuses.next().expect("flush polled after transmission completed"));
+        assert_eq!(statuses.next(), None);
+    }
+
+    #[test]
+    fn test_uart_16550_mmio_flush_preserves_registers() {
+        let mut fake = FakeMmio::new();
+        let expected = fake.regs;
+        fake.uart().flush();
+        assert_eq!(fake.regs, expected);
+    }
+
+    #[test]
     fn test_uart_16550_mmio_write_works_without_explicit_init() {
         let mut fake = FakeMmio::new();
         fake.uart().write(b"A");
@@ -345,6 +383,7 @@ mod tests {
         let mut uart = unsafe { Uart16550::new_mmio(0, 1) };
         uart.init();
         uart.write(b"unreachable");
+        uart.flush();
         assert_eq!(uart.try_read(), None);
         assert_eq!(uart.read(), 0);
     }
@@ -358,6 +397,7 @@ mod tests {
         let mut uart = unsafe { Uart16550::new_mmio(base, 0) };
         uart.init();
         uart.write(b"unreachable");
+        uart.flush();
         assert_eq!(uart.try_read(), None);
         assert_eq!(uart.read(), 0);
     }
@@ -368,6 +408,7 @@ mod tests {
         let mut uart = unsafe { Uart16550::new_io(u16::MAX) };
         uart.init();
         uart.write(b"unreachable");
+        uart.flush();
         assert_eq!(uart.try_read(), None);
         assert_eq!(uart.read(), 0);
     }

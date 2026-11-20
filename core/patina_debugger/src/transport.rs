@@ -44,8 +44,7 @@ impl<T: SerialIO> Connection for SerialConnection<'_, T> {
 
     /// Flush the serial transport.
     fn flush(&mut self) -> Result<(), Self::Error> {
-        // Nothing to do for SerialIO.
-        Ok(())
+        self.transport.flush()
     }
 }
 
@@ -109,6 +108,7 @@ mod tests {
         impl SerialIO for Serial {
             fn init(&mut self);
             fn write(&mut self, buffer: &[u8]);
+            fn flush(&mut self);
             fn read(&mut self) -> u8;
             fn try_read(&mut self) -> Option<u8>;
         }
@@ -135,11 +135,11 @@ mod tests {
 
     #[test]
     fn test_connection_flush() {
-        let mock = MockSerial::new();
+        let mut mock = MockSerial::new();
+        mock.expect_flush().times(1).returning(|| ());
         let shared = SharedSerial::new(mock);
         let mut connection = SerialConnection::new(&shared);
 
-        // Flush should always succeed and do nothing for SerialIO
         let result = connection.flush();
         assert!(result.is_ok());
     }

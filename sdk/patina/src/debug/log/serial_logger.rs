@@ -96,7 +96,7 @@ where
     }
 
     fn flush(&self) {
-        // Do nothing
+        let _ = self.serial_port.flush();
     }
 }
 
@@ -176,10 +176,19 @@ mod tests {
     fn test_serial_logger_disabled_noop() {
         let mut mock = MockSerialIO::new();
         mock.expect_write().never();
+        mock.expect_flush().times(1).returning(|| ());
         let logger = Logger::new(Format::Standard, &[], LevelFilter::Warn, mock);
 
         let args = format_args!("should be filtered out");
         logger.log(&log::Record::builder().args(args).level(Level::Info).target("test").build());
+        logger.flush();
+    }
+
+    #[test]
+    fn test_serial_logger_flushes_serial_port() {
+        let mut mock = MockSerialIO::new();
+        mock.expect_flush().times(1).returning(|| ());
+        let logger = Logger::new(Format::Standard, &[], LevelFilter::Info, mock).with_blocking();
         logger.flush();
     }
 

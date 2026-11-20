@@ -78,6 +78,15 @@ impl<T: SerialIO> SharedSerial<T> {
         })
     }
 
+    /// Flush queued output using the underlying serial implementation.
+    pub fn flush(&self) -> Result<(), EfiError> {
+        with_interrupts_disabled(|| {
+            let mut serial = self.acquire()?;
+            serial.flush();
+            Ok(())
+        })
+    }
+
     /// Read a byte from the serial port, blocking until a byte is available.
     ///
     /// Interrupts will be disabled while waiting for data to be available. This may cause delays in servicing
@@ -110,12 +119,14 @@ mod tests {
         let mut mock = MockSerialIO::new();
         mock.expect_init().times(1).returning(|| ());
         mock.expect_write().with(eq(*b"hi")).times(1).returning(|_| ());
+        mock.expect_flush().times(1).returning(|| ());
         mock.expect_read().times(1).returning(|| 0xAB);
         mock.expect_try_read().times(1).returning(|| None);
 
         let shared = SharedSerial::new(mock);
         shared.init().unwrap();
         shared.write(b"hi").unwrap();
+        shared.flush().unwrap();
         assert_eq!(shared.read().unwrap(), 0xAB);
         assert_eq!(shared.try_read().unwrap(), None);
     }
@@ -127,6 +138,7 @@ mod tests {
         let _guard = shared.serial.try_lock().expect("lock should be available");
         assert_eq!(shared.init(), Err(EfiError::DeviceError));
         assert_eq!(shared.write(b"x"), Err(EfiError::DeviceError));
+        assert_eq!(shared.flush(), Err(EfiError::DeviceError));
         assert_eq!(shared.try_read(), Err(EfiError::DeviceError));
         assert_eq!(shared.read(), Err(EfiError::DeviceError));
     }
