@@ -302,7 +302,8 @@ where
     }
 
     fn flush(&self) {
-        // Do nothing
+        // nothing we can do if this fails, just ignore it
+        let _ = self.hardware_port.flush();
     }
 }
 
@@ -620,6 +621,7 @@ mod tests {
     #[test]
     fn test_advanced_logger_writes_message_to_hardware_port() {
         let mut port = MockSerialIO::new();
+        port.expect_flush().never();
         port.expect_write()
             .times(1)
             .withf(|data| core::str::from_utf8(data).is_ok_and(|s| s.contains("hello port")))
@@ -629,6 +631,15 @@ mod tests {
         logger.set_log_info_address(create_memory_log(DEBUG_ERROR));
 
         logger.log(&error_record("any", format_args!("hello port")));
+    }
+
+    #[test]
+    fn test_advanced_logger_flushes_hardware_port() {
+        let mut port = MockSerialIO::new();
+        port.expect_write().never();
+        port.expect_flush().times(1).returning(|| ());
+        let logger = AdvancedLogger::new(Format::Standard, &[], log::LevelFilter::Off, port);
+        logger.flush();
     }
 
     #[test]

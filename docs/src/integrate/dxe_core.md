@@ -379,6 +379,9 @@ const LOGGER: SerialLogger<UartNull> = SerialLogger::new(
 );
 ```
 
+UART writes can return while bytes are still transmitting. Call `log::logger().flush()` before resetting
+the platform, reconfiguring the UART, and in the platform panic handler to drain pending output.
+
 ### 6.2 Debugger Configuration
 
 Modify the `DEBUGGER` static to match your platform's debug serial infrastructure:
@@ -611,6 +614,8 @@ fn panic(info: &PanicInfo) -> ! {
     if let Err(err) = unsafe { StackTrace::dump() } {
         log::error!("StackTrace: {}", err);
     }
+
+    log::logger().flush();
 
     // The breakpoint() fn only issues a breakpoint instruction if
     // the debugger is enabled and initialized.
