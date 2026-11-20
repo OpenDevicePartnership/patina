@@ -73,10 +73,8 @@ impl UartPl011 {
 
         // Write to the TX buffer.
         field!(regs, dr).write(byte);
-
-        // Wait until the UART is no longer busy.
-        while field!(regs, fr).read() & FR_BUSY != 0 {}
     }
+
 
     /// Reads a single byte from the UART.
     pub fn read_byte(&mut self) -> Option<u8> {
