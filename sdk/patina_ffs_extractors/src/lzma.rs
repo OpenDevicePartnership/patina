@@ -56,7 +56,7 @@ impl SectionExtractor for LzmaSectionExtractor {
             // The section payload is a `.lzma` (FORMAT_ALONE) stream: a 13-byte header
             // (properties byte, dictionary size, uncompressed size) followed by the
             // range-coded payload. `LzmaReader::new_mem_limit` parses that header.
-            let mut reader = LzmaReader::new_mem_limit(data, DECOMPRESSION_MAX_MEMORY_LIMIT, None)
+            let mut reader = LzmaReader::new_mem_limit(data, DECOMPRESSION_MAX_MEMORY_LIMIT / 1024, None)
                 .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
 
             let mut chunk = [0u8; 4096];
@@ -66,6 +66,10 @@ impl SectionExtractor for LzmaSectionExtractor {
                     break;
                 }
                 let decoded = chunk.get(..read).ok_or(FirmwareFileSystemError::DataCorrupt)?;
+                // the header may not declare the output size, so bound it here.
+                if decompressed.len() + decoded.len() > DECOMPRESSION_MAX_MEMORY_LIMIT as usize {
+                    return Err(FirmwareFileSystemError::DataCorrupt);
+                }
                 decompressed.extend_from_slice(decoded);
             }
 
