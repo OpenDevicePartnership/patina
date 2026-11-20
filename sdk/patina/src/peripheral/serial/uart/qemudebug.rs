@@ -1,4 +1,4 @@
-//! QemuDebug [`SerialIO`](crate::peripheral::serial::SerialIO) implementation.
+//! [`UartQemuDebug`] - [`SerialIO`](crate::peripheral::serial::SerialIO) implementation.
 //!
 //! ## License
 //!
@@ -10,7 +10,7 @@ use core::arch::asm;
 /// qemu debug console
 #[derive(Debug)]
 pub struct UartQemuDebug {
-    iobase: u16,
+    io_base: u16,
     present: bool,
 }
 
@@ -18,20 +18,20 @@ impl UartQemuDebug {
     // read value indicating the device is present
     const PROBE: u8 = 0xe9;
 
-    pub const fn new(iobase: u16) -> Self {
-        Self { iobase, present: false }
+    pub const fn new(io_base: u16) -> Self {
+        Self { io_base, present: false }
     }
 
     fn outb(&self, value: u8) {
         // SAFETY: write output byte to isa-debugcon device
-        unsafe { asm!("outb %al, %dx", in("al") value, in("dx") self.iobase, options(att_syntax)) }
+        unsafe { asm!("outb %al, %dx", in("al") value, in("dx") self.io_base, options(att_syntax)) }
     }
 
     fn inb(&self) -> u8 {
         // SAFETY: read device detection byte from isa-debugcon device
         unsafe {
             let ret: u8;
-            asm!("inb %dx, %al", in("dx") self.iobase, out("al") ret, options(att_syntax));
+            asm!("inb %dx, %al", in("dx") self.io_base, out("al") ret, options(att_syntax));
             ret
         }
     }
