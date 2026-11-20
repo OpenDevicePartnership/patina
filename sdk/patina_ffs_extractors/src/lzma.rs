@@ -9,7 +9,7 @@
 use alloc::vec::Vec;
 use core::result::Result;
 use lzma_rust2::{LzmaReader, Read};
-use patina::pi::fw_fs::guid::LZMA_SECTION_GUID;
+use patina::{SIZE_1KB, pi::fw_fs::guid::LZMA_SECTION_GUID};
 use patina_ffs::{
     FirmwareFileSystemError,
     section::{Section, SectionExtractor, SectionHeader},
@@ -56,7 +56,7 @@ impl SectionExtractor for LzmaSectionExtractor {
             // The section payload is a `.lzma` (FORMAT_ALONE) stream: a 13-byte header
             // (properties byte, dictionary size, uncompressed size) followed by the
             // range-coded payload. `LzmaReader::new_mem_limit` parses that header.
-            let mut reader = LzmaReader::new_mem_limit(data, DECOMPRESSION_MAX_MEMORY_LIMIT / 1024, None)
+            let mut reader = LzmaReader::new_mem_limit(data, DECOMPRESSION_MAX_MEMORY_LIMIT / SIZE_1KB as u32, None)
                 .map_err(|_| FirmwareFileSystemError::DataCorrupt)?;
 
             let mut chunk = [0u8; 4096];
