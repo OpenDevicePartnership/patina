@@ -44,14 +44,18 @@ impl UartQemuDebug {
 
     fn outb(&self, value: u8) {
         // SAFETY: write output byte to isa-debugcon device
-        unsafe { asm!("outb %al, %dx", in("al") value, in("dx") self.io_base, options(att_syntax)) }
+        unsafe {
+            asm!("outb dx, al", in("al") value, in("dx") self.io_base,
+                 options(nomem,nostack,preserves_flags)
+            )
+        }
     }
 
     fn inb(&self) -> u8 {
         // SAFETY: read device detection byte from isa-debugcon device
         unsafe {
             let ret: u8;
-            asm!("inb %dx, %al", in("dx") self.io_base, out("al") ret, options(att_syntax));
+            asm!("inb al, dx", in("dx") self.io_base, out("al") ret);
             ret
         }
     }
