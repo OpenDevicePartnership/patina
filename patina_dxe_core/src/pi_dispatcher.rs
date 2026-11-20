@@ -28,7 +28,6 @@ use patina::{
     crc32,
     error::EfiError,
     guid::DXE_CORE_ID,
-    log_debug_assert,
     pi::{
         fw_fs::ffs,
         hob::{Hob, HobList},
@@ -848,7 +847,7 @@ impl DispatcherContext {
 
                 let fv_name = fv.fv_name();
 
-                // A file that fails to parse is skipped, like EDK2 does, so it does not stop the rest of the FV.
+                // A file that fails to parse is skipped so it does not stop the rest of the FV.
                 let read_sections = |file: &patina_ffs::file::FileRef<'_>| {
                     let sections = file.sections_with_extractor(extractor)?;
                     let depex = sections
@@ -866,7 +865,7 @@ impl DispatcherContext {
                     let file = match file {
                         Ok(file) => file,
                         Err(err) => {
-                            log_debug_assert!("stopped enumerating fvb handle {handle:#x?} at a corrupt file: {err:?}");
+                            log::error!("stopped enumerating fvb handle {handle:#x?} at a corrupt file: {err:?}");
                             break;
                         }
                     };
@@ -879,7 +878,7 @@ impl DispatcherContext {
                         let (sections, depex) = match read_sections(&file) {
                             Ok(result) => result,
                             Err(err) => {
-                                log_debug_assert!("skipping driver {:?}: {err:?}", OwnedGuid::from(file_name));
+                                log::error!("skipping driver {:?}: {err:?}", OwnedGuid::from(file_name));
                                 continue;
                             }
                         };
@@ -974,10 +973,7 @@ impl DispatcherContext {
                         let (sections, depex) = match read_sections(&file) {
                             Ok(result) => result,
                             Err(err) => {
-                                log_debug_assert!(
-                                    "skipping firmware volume image {:?}: {err:?}",
-                                    OwnedGuid::from(file_name)
-                                );
+                                log::error!("skipping firmware volume image {:?}: {err:?}", OwnedGuid::from(file_name));
                                 continue;
                             }
                         };
