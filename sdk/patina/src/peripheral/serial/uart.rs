@@ -15,5 +15,10 @@ mod uart_16550;
 #[cfg(target_arch = "x86_64")]
 pub use uart_16550::Uart16550;
 
+#[cfg(target_arch = "x86_64")]
+mod qemudebug;
+#[cfg(target_arch = "x86_64")]
+pub use qemudebug::UartQemuDebug;
+
 mod pl011;
 pub use pl011::UartPl011;

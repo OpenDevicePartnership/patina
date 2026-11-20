@@ -6,7 +6,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use crate::peripheral::serial::{SerialIO, shared::SharedSerial};
+use crate::peripheral::serial::{shared::SharedSerial, SerialIO};
 use core::marker::Send;
 use spin::Mutex;
 
@@ -55,6 +55,11 @@ where
             blocking: false,
             write_lock: Mutex::new(()),
         }
+    }
+
+    /// Initialize serial port.
+    pub fn init(&self) {
+        let _ = self.serial_port.init();
     }
 
     /// Switches the logger to blocking (spinning) serial acquisition, consuming and returning `self`.
@@ -150,6 +155,7 @@ mod tests {
         ] {
             let (mock, buffer) = recording_serial();
             let logger = Logger::new(format, &[], LevelFilter::Trace, mock);
+            logger.init();
             let args = format_args!("hello");
             logger.log(&log::Record::builder().args(args).level(level).target("test").build());
             assert_eq!(String::from_utf8(buffer.lock().clone()).expect("valid utf8"), expected);
@@ -159,12 +165,14 @@ mod tests {
     #[test]
     fn test_serial_logger_filters() {
         let logger = Logger::new(Format::Standard, &[], LevelFilter::Warn, MockSerialIO::new());
+        logger.init();
         assert!(logger.enabled(&metadata(Level::Error, "any")));
         assert!(logger.enabled(&metadata(Level::Warn, "any")));
         assert!(!logger.enabled(&metadata(Level::Info, "any")));
 
         let filters = &[("noisy::module", LevelFilter::Off), ("app", LevelFilter::Debug)];
         let logger = Logger::new(Format::Standard, filters, LevelFilter::Info, MockSerialIO::new());
+        logger.init();
         assert!(!logger.enabled(&metadata(Level::Error, "noisy::module::inner")));
         assert!(logger.enabled(&metadata(Level::Debug, "app::sub")));
         assert!(!logger.enabled(&metadata(Level::Trace, "app::sub")));
@@ -177,6 +185,7 @@ mod tests {
         let mut mock = MockSerialIO::new();
         mock.expect_write().never();
         let logger = Logger::new(Format::Standard, &[], LevelFilter::Warn, mock);
+        logger.init();
 
         let args = format_args!("should be filtered out");
         logger.log(&log::Record::builder().args(args).level(Level::Info).target("test").build());
@@ -187,6 +196,7 @@ mod tests {
     fn test_serial_logger_blocking_writes_intact_record() {
         let (mock, buffer) = recording_serial();
         let logger = Logger::new(Format::Standard, &[], LevelFilter::Trace, mock).with_blocking();
+        logger.init();
         assert!(logger.blocking);
 
         let args = format_args!("hello");
@@ -206,6 +216,7 @@ mod tests {
 
         let (mock, buffer) = recording_serial();
         let logger = Logger::new(Format::Standard, &[], LevelFilter::Trace, mock).with_blocking();
+        logger.init();
 
         thread::scope(|scope| {
             for message in ["aaaa", "bbbb"] {

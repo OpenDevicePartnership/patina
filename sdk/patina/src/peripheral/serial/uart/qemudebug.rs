@@ -1,0 +1,86 @@
+//! [`UartQemuDebug`] - [`SerialIO`](crate::peripheral::serial::SerialIO) implementation.
+//!
+//! ## License
+//!
+//! SPDX-License-Identifier: Apache-2.0
+//!
+
+use core::arch::asm;
+
+/// interface for the qemu debug console
+///
+/// The `isa-debugcon` device logs any data written to the port
+/// specified via `iobase` property.  On reads it returns 0xe9.  The
+/// latter allows presense detection, it is not possible to actually
+/// read input data, this is a output-only device.
+///
+/// By convention `iobase=0x402` is used for firmware logging.
+///
+/// typical usage:
+/// ```
+/// qemu-system-x86_64 \
+///     -chardev file,path=/path/to/firmware.log,id=fw \
+///     -device isa-debugcon,iobase=0x402,chardev=fw \
+///     $moreargs
+/// ```
+#[derive(Debug)]
+pub struct UartQemuDebug {
+    io_base: u16,
+    present: bool,
+}
+
+impl UartQemuDebug {
+    // read value indicating the device is present
+    const PROBE: u8 = 0xe9;
+
+    /// create `UartQemuDebug` with io base specified
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure `io_base` points to a valid isa-debugcon io port.
+    pub const unsafe fn new(io_base: u16) -> Self {
+        Self { io_base, present: false }
+    }
+
+    fn outb(&self, value: u8) {
+        // SAFETY: write output byte to isa-debugcon device
+        unsafe {
+            asm!("outb dx, al", in("al") value, in("dx") self.io_base,
+                 options(nomem,nostack,preserves_flags)
+            )
+        }
+    }
+
+    fn inb(&self) -> u8 {
+        // SAFETY: read device detection byte from isa-debugcon device
+        unsafe {
+            let ret: u8;
+            asm!("inb al, dx", in("dx") self.io_base, out("al") ret);
+            ret
+        }
+    }
+}
+
+impl crate::peripheral::serial::SerialIO for UartQemuDebug {
+    fn init(&mut self) {
+        let value = self.inb();
+        self.present = value == Self::PROBE;
+    }
+
+    fn write(&mut self, buffer: &[u8]) {
+        if self.present {
+            for c in buffer {
+                self.outb(*c);
+            }
+        }
+    }
+
+    fn read(&mut self) -> u8 {
+        // PANIC: Would loop forever, better to panic.
+        panic!();
+    }
+
+    fn try_read(&mut self) -> Option<u8> {
+        None
+    }
+}
