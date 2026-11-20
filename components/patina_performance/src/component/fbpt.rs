@@ -12,7 +12,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use core::{cell::Cell, mem, ptr};
 
 use patina::{
@@ -265,7 +265,7 @@ fn allocate_fbpt_buffer(
                 .ok()
         })?;
 
-    Some(allocation.leak_as_slice::<u8>())
+    Some(Box::leak(allocation.into_zeroed_bytes()))
 }
 
 /// Frees the FBPT buffer allocated by `allocate_fbpt_buffer`.
