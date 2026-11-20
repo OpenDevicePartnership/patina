@@ -18,6 +18,7 @@ impl UartQemuDebug {
     // read value indicating the device is present
     const PROBE: u8 = 0xe9;
 
+    // create `UartQemuDebug` with io base specified
     pub const fn new(io_base: u16) -> Self {
         Self { io_base, present: false }
     }
