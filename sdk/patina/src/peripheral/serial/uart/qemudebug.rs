@@ -7,7 +7,22 @@
 
 use core::arch::asm;
 
-/// qemu debug console
+/// interface for the qemu debug console
+///
+/// The `isa-debugcon` device logs any data written to the port
+/// specified via `iobase` property.  On reads it returns 0xe9.  The
+/// latter allows presense detection, it is not possible to actually
+/// read input data, this is a output-only device.
+///
+/// By convention `iobase=0x402` is used for firmware logging.
+///
+/// typical usage:
+/// ```
+/// qemu-system-x86_64 \
+///     -chardev file,path=/path/to/firmware.log,id=fw \
+///     -device isa-debugcon,iobase=0x402,chardev=fw \
+///     $moreargs
+/// ```
 #[derive(Debug)]
 pub struct UartQemuDebug {
     io_base: u16,
@@ -18,8 +33,12 @@ impl UartQemuDebug {
     // read value indicating the device is present
     const PROBE: u8 = 0xe9;
 
-    // create `UartQemuDebug` with io base specified
-    pub const fn new(io_base: u16) -> Self {
+    /// create `UartQemuDebug` with io base specified
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure `io_base` points to a valid isa-debugcon io port.
+    pub const unsafe fn new(io_base: u16) -> Self {
         Self { io_base, present: false }
     }
 
