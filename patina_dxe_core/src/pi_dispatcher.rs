@@ -2576,17 +2576,32 @@ mod tests {
             let handle = unsafe {
                 CORE.pi_dispatcher
                     .fv_data
-                    .lock()
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
                     .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
                     .unwrap()
             };
 
             CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
 
-            let pending: Vec<efi::Guid> =
-                CORE.pi_dispatcher.dispatcher_context.lock().pending_drivers.iter().map(|d| d.file_name).collect();
+            let pending: Vec<efi::Guid> = CORE
+                .pi_dispatcher
+                .dispatcher_context
+                .checked_lock()
+                .expect("test dispatcher state should be available")
+                .pending_drivers
+                .iter()
+                .map(|d| d.file_name)
+                .collect();
             assert_eq!(pending, [efi::Guid::from_bytes(&[1; 16]), efi::Guid::from_bytes(&[4; 16])]);
-            assert!(CORE.pi_dispatcher.dispatcher_context.lock().pending_firmware_volume_images.is_empty());
+            assert!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_firmware_volume_images
+                    .is_empty()
+            );
         });
 
         // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
