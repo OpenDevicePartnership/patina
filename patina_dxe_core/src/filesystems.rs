@@ -6,7 +6,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use core::{ffi::c_void, mem::size_of};
 use patina::{Char16Str, error::EfiError, standard::efi};
 
@@ -85,20 +85,28 @@ impl SimpleFile<'_> {
             err => EfiError::status_to_result(err)?,             // unexpected failure.
         }
 
-        let mut file_info_buffer = vec![0u8; info_size];
+        let mut file_info_buffer = Vec::new();
+        file_info_buffer.try_reserve_exact(info_size).map_err(|_| EfiError::OutOfResources)?;
+        let reserved_size = info_size;
         // SAFETY: self.file is a valid pointer to a file protocol instance
         // obtained from the protocol database during the construction of this
-        // SimpleFile instance.
+        // SimpleFile instance. file_info_buffer has room for info_size bytes.
         let status = unsafe {
             (self.file.get_info)(
                 self.file,
                 core::ptr::from_ref::<efi::Guid>(&efi::protocols::file::INFO_ID).cast_mut(),
                 core::ptr::addr_of_mut!(info_size),
-                file_info_buffer.as_mut_ptr().cast::<c_void>(),
+                file_info_buffer.spare_capacity_mut().as_mut_ptr().cast::<c_void>(),
             )
         };
+        EfiError::status_to_result(status)?;
 
-        EfiError::status_to_result(status).map(|()| file_info_buffer)
+        if info_size > reserved_size {
+            Err(EfiError::DeviceError)?;
+        }
+        // SAFETY: GetInfo() initialized the first info_size bytes of the buffer.
+        unsafe { file_info_buffer.set_len(info_size) };
+        Ok(file_info_buffer)
     }
 
     /// Returns the size of the file
@@ -134,7 +142,9 @@ impl SimpleFile<'_> {
         }
 
         let mut file_size = self.get_size()? as usize;
-        let mut file_buffer = vec![0u8; file_size];
+        let mut file_buffer = Vec::new();
+        file_buffer.try_reserve_exact(file_size).map_err(|_| EfiError::OutOfResources)?;
+        let reserved_size = file_size;
         // SAFETY: self.file is a valid pointer to a file protocol instance
         // obtained from the protocol database during the construction of this
         // SimpleFile instance.
@@ -143,19 +153,21 @@ impl SimpleFile<'_> {
 
         // SAFETY: self.file is a valid pointer to a file protocol instance
         // obtained from the protocol database during the construction of this
-        // SimpleFile instance.
+        // SimpleFile instance. file_buffer has room for file_size bytes.
         let status = unsafe {
-            (self.file.read)(self.file, core::ptr::addr_of_mut!(file_size), file_buffer.as_mut_ptr().cast::<c_void>())
+            (self.file.read)(
+                self.file,
+                core::ptr::addr_of_mut!(file_size),
+                file_buffer.spare_capacity_mut().as_mut_ptr().cast::<c_void>(),
+            )
         };
-
         EfiError::status_to_result(status)?;
 
-        //in case the read somehow returned fewer bytes than indicated by get_size, truncate the vector returned to the
-        //actual read size.
-        if file_size < file_buffer.len() {
-            Ok(file_buffer.get(0..file_size).ok_or(EfiError::DeviceError)?.to_vec())
-        } else {
-            Ok(file_buffer)
+        if file_size > reserved_size {
+            Err(EfiError::DeviceError)?;
         }
+        // SAFETY: Read() initialized the first file_size bytes of the buffer.
+        unsafe { file_buffer.set_len(file_size) };
+        Ok(file_buffer)
     }
 }

@@ -6,7 +6,7 @@
 //!
 //! SPDX-License-Identifier: Apache-2.0
 //!
-use alloc::{boxed::Box, collections::BTreeMap, vec, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, vec::Vec};
 use core::{
     convert::TryInto,
     ffi::c_void,
@@ -613,14 +613,18 @@ impl ImageData {
     fn locate_image_metadata_by_buffer(
         image: &[u8],
         file_path: Option<NonNull<Protocol>>,
-    ) -> (Vec<u8>, bool, *mut c_void, u32) {
+    ) -> Result<(Vec<u8>, bool, *mut c_void, u32), EfiError> {
+        let mut image_to_load = Vec::new();
+        image_to_load.try_reserve_exact(image.len()).map_err(|_| EfiError::OutOfResources)?;
+        image_to_load.extend_from_slice(image);
+
         if let Some(file_path) = file_path
             && let Ok((_, device_handle)) =
                 core_locate_device_path(efi::protocols::device_path::PROTOCOL_GUID, file_path)
         {
-            (image.to_vec(), false, device_handle, 0)
+            Ok((image_to_load, false, device_handle, 0))
         } else {
-            (image.to_vec(), false, protocol_db::INVALID_HANDLE, 0)
+            Ok((image_to_load, false, protocol_db::INVALID_HANDLE, 0))
         }
     }
 
@@ -1085,7 +1089,7 @@ impl<P: super::PlatformInfo> super::PiDispatcher<P> {
         ImageData::validate_parent(parent_image_handle)?;
 
         let (image_to_load, from_fv, device_handle, auth_status) = match image {
-            Some(buffer) => ImageData::locate_image_metadata_by_buffer(buffer, file_path),
+            Some(buffer) => ImageData::locate_image_metadata_by_buffer(buffer, file_path)?,
             None => {
                 // image.is_none() implies file_path.is_some() per the check above.
                 ImageData::locate_image_metadata_by_file_path(boot_policy, file_path.expect("file_path is not None"))?
@@ -1628,7 +1632,10 @@ fn get_file_buffer_from_fw(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, efi
 
     // SAFETY: buffer/buffer_size are returned by read_section and are valid for that length.
     let section_slice = unsafe { slice::from_raw_parts(buffer, buffer_size) };
-    Ok((section_slice.to_vec(), handle))
+    let mut image = Vec::new();
+    image.try_reserve_exact(buffer_size).map_err(|_| EfiError::OutOfResources)?;
+    image.extend_from_slice(section_slice);
+    Ok((image, handle))
 }
 
 fn get_file_buffer_from_sfs(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, efi::Handle), EfiError> {
@@ -1698,19 +1705,28 @@ fn get_file_buffer_from_load_protocol(
         _ => EfiError::status_to_result(status)?,            // unexpected error.
     }
 
-    let mut file_buffer = vec![0u8; buffer_size];
+    let mut file_buffer = Vec::new();
+    file_buffer.try_reserve_exact(buffer_size).map_err(|_| EfiError::OutOfResources)?;
+    let reserved_size = buffer_size;
     // SAFETY: load_file is a valid pointer to a load_file protocol instance obtained from the protocol database above.
+    // file_buffer has room for buffer_size bytes.
     let status = unsafe {
         (load_file.load_file)(
             load_file,
             remaining_file_path.as_ptr(),
             boot_policy.into(),
             core::ptr::addr_of_mut!(buffer_size),
-            file_buffer.as_mut_ptr().cast::<c_void>(),
+            file_buffer.spare_capacity_mut().as_mut_ptr().cast::<c_void>(),
         )
     };
+    EfiError::status_to_result(status)?;
 
-    EfiError::status_to_result(status).map(|()| (file_buffer, handle))
+    if buffer_size > reserved_size {
+        Err(EfiError::DeviceError)?;
+    }
+    // SAFETY: LoadFile() initialized the first buffer_size bytes of the buffer.
+    unsafe { file_buffer.set_len(buffer_size) };
+    Ok((file_buffer, handle))
 }
 
 // authenticate the given image against the Security and Security2 Architectural Protocols
@@ -2949,6 +2965,31 @@ mod tests {
     ];
 
     #[test]
+    fn locate_image_metadata_by_file_path_should_work_over_fv() {
+        with_locked_state(|| {
+            static CORE: crate::Core<MockPlatformInfo> =
+                crate::Core::<MockPlatformInfo>::new(patina_ffs_extractors::NullSectionExtractor);
+            CORE.override_instance();
+
+            let fv = std::fs::read(test_collateral!("DXEFV.Fv")).expect("failed to read test FV").leak();
+            // SAFETY: `fv` is leaked, so it stays valid for the rest of the test process.
+            let fv_handle = unsafe { CORE.pi_dispatcher.install_firmware_volume(fv.as_ptr() as u64, None) }.unwrap();
+
+            // A driver in DXEFV.Fv with an uncompressed PE32 section.
+            let file_name =
+                efi::Guid::from_fields(0xd93ce3d8, 0xa7eb, 0x4730, 0x8c, 0x8e, &[0xcc, 0x46, 0x6a, 0x9e, 0xcc, 0x3c]);
+            let file_path = device_path_bytes_for_fv_file(fv_handle, file_name).unwrap();
+
+            let (buffer, from_fv, device_handle, _) =
+                ImageData::locate_image_metadata_by_file_path(false, NonNull::from(&*file_path).cast::<Protocol>())
+                    .unwrap();
+            assert!(from_fv);
+            assert_eq!(device_handle, fv_handle);
+            assert_eq!(&buffer[..2], b"MZ");
+        });
+    }
+
+    #[test]
     fn locate_image_metadata_by_file_path_should_work_over_sfs() {
         with_locked_state(|| {
             extern "efiapi" fn open_volume(
@@ -3062,6 +3103,52 @@ mod tests {
             test_file.read_to_end(&mut image).expect("failed to read test file");
 
             assert_eq!(ImageData::locate_image_metadata_by_file_path(true, device_path), Ok((image, false, handle, 0)));
+        });
+    }
+
+    #[test]
+    fn locate_image_metadata_by_file_path_should_fail_when_load_protocol_size_cannot_be_allocated() {
+        with_locked_state(|| {
+            extern "efiapi" fn load_file(
+                _this: *mut efi::protocols::load_file::Protocol,
+                _file_path: *mut efi::protocols::device_path::Protocol,
+                _boot_policy: efi::Boolean,
+                buffer_size: *mut usize,
+                _buffer: *mut c_void,
+            ) -> efi::Status {
+                // SAFETY: Test mock - reporting a buffer size that cannot be allocated.
+                unsafe { buffer_size.write(usize::MAX) };
+                efi::Status::BUFFER_TOO_SMALL
+            }
+
+            let protocol = efi::protocols::load_file::Protocol { load_file };
+            //Note: deliberate leak for simplicity.
+            let protocol_ptr = Box::into_raw(Box::new(protocol));
+            let handle = core_install_protocol_interface(
+                None,
+                efi::protocols::load_file::PROTOCOL_GUID,
+                protocol_ptr.cast::<c_void>(),
+            )
+            .unwrap();
+
+            //deliberate leak
+            let root_device_path_ptr =
+                Box::into_raw(Box::new(ROOT_DEVICE_PATH_BYTES)).cast::<efi::protocols::device_path::Protocol>();
+
+            core_install_protocol_interface(
+                Some(handle),
+                efi::protocols::device_path::PROTOCOL_GUID,
+                root_device_path_ptr.cast::<c_void>(),
+            )
+            .unwrap();
+
+            let mut full_device_path_bytes = FULL_DEVICE_PATH_BYTES;
+
+            let device_path_ptr = full_device_path_bytes.as_mut_ptr().cast::<efi::protocols::device_path::Protocol>();
+            // SAFETY: full_device_path_bytes is a valid device path byte array for test code.
+            let device_path = unsafe { NonNull::new_unchecked(device_path_ptr) };
+
+            assert_eq!(ImageData::locate_image_metadata_by_file_path(true, device_path), Err(EfiError::NotFound));
         });
     }
 
