@@ -34,6 +34,7 @@ use patina::{
 
 use crate::{
     GCD,
+    allocator::core_free_pool,
     dxe_services::{self, core_set_memory_space_attributes},
     events::EVENT_DB,
     filesystems::SimpleFile,
@@ -1633,8 +1634,12 @@ fn get_file_buffer_from_fw(file_path: NonNull<Protocol>) -> Result<(Vec<u8>, efi
     // SAFETY: buffer/buffer_size are returned by read_section and are valid for that length.
     let section_slice = unsafe { slice::from_raw_parts(buffer, buffer_size) };
     let mut image = Vec::new();
-    image.try_reserve_exact(buffer_size).map_err(|_| EfiError::OutOfResources)?;
-    image.extend_from_slice(section_slice);
+    let copied = image.try_reserve_exact(buffer_size).map(|()| image.extend_from_slice(section_slice));
+    // SAFETY: read_section allocated buffer from pool for the caller to free, and it is not used past this point.
+    if let Err(err) = unsafe { core_free_pool(buffer.cast::<c_void>()) } {
+        log::error!("Failed to free the section buffer: {err:?}");
+    }
+    copied.map_err(|_| EfiError::OutOfResources)?;
     Ok((image, handle))
 }
 
