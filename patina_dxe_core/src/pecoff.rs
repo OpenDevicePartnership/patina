@@ -10,7 +10,7 @@ extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
 use core::mem::MaybeUninit;
-use patina::{UEFI_PAGE_SIZE, align_up, log_debug_assert};
+use patina::{align_up, log_debug_assert};
 use scroll::{LE, Pread, Pwrite};
 
 pub mod error;
@@ -103,7 +103,7 @@ impl UefiPeInfo {
         {
             let alignment = info.section_alignment;
             let size = info.size_of_image;
-            if alignment == 0 || !alignment.is_multiple_of(UEFI_PAGE_SIZE as u32) {
+            if alignment == 0 {
                 return res;
             }
 
@@ -548,6 +548,7 @@ pub fn get_section<'a>(target: &str, pe_info: &UefiPeInfo, image: &'a [u8]) -> e
 #[cfg_attr(coverage, coverage(off))]
 mod tests {
     use crate::test_support;
+    use patina::UEFI_PAGE_SIZE;
 
     use super::*;
     extern crate std;
@@ -675,6 +676,69 @@ mod tests {
                     "subsystem {subsystem:#x}, declared size {declared_size:#x}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_pe_image_size_rounding_uses_section_alignment_for_applications() {
+        let original_image = include_bytes!("../resources/test/pe32/test_image.pe32");
+        let header = goblin::pe::header::Header::parse(original_image).unwrap();
+        let optional_header_offset = header.dos_header.pe_pointer as usize + SIZEOF_PE32_SIGNATURE + SIZEOF_COFF_HEADER;
+
+        for (section_alignment, declared_size, application_size) in [
+            (0x40u32, 0x14001u32, 0x14040u32),
+            (0x40, 0x14040, 0x14040),
+            (0x40, 0x14FFF, 0x15000),
+            (0x40, 0x15000, 0x15000),
+            (0x40, 0x15001, 0x15040),
+            (0x200, 0x14200, 0x14200),
+            (0x800, 0x14800, 0x14800),
+            (0x1000, 0x14001, 0x15000),
+            (0x2000, 0x14001, 0x16000),
+            (0x2000, 0x15000, 0x16000),
+            (0x2000, 0x16000, 0x16000),
+            (0, 0x14001, 0x14001),
+            (0x40, 0, 0),
+        ] {
+            for subsystem in [
+                EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION,
+                EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER,
+                EFI_IMAGE_SUBSYSTEM_EFI_RUNTIME_DRIVER,
+            ] {
+                let mut image = original_image.to_vec();
+                image.pwrite_with(section_alignment, optional_header_offset + 32, LE).unwrap();
+                image.pwrite_with(declared_size, optional_header_offset + 56, LE).unwrap();
+                image.pwrite_with(subsystem, optional_header_offset + 68, LE).unwrap();
+
+                let pe_info = UefiPeInfo::parse(&image).unwrap();
+                let expected_size =
+                    if subsystem == EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION { application_size } else { declared_size };
+
+                assert_eq!(pe_info.section_alignment, section_alignment);
+                assert_eq!(
+                    pe_info.size_of_image, expected_size,
+                    "subsystem {subsystem:#x}, section alignment {section_alignment:#x}, declared size {declared_size:#x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_pe_image_size_rounding_rejects_overflow_for_applications() {
+        let original_image = include_bytes!("../resources/test/pe32/test_image.pe32");
+        let header = goblin::pe::header::Header::parse(original_image).unwrap();
+        let optional_header_offset = header.dos_header.pe_pointer as usize + SIZEOF_PE32_SIGNATURE + SIZEOF_COFF_HEADER;
+
+        for section_alignment in [0x40u32, 0x1000, 0x2000] {
+            let mut image = original_image.to_vec();
+            image.pwrite_with(section_alignment, optional_header_offset + 32, LE).unwrap();
+            image.pwrite_with(u32::MAX, optional_header_offset + 56, LE).unwrap();
+            image.pwrite_with(EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION, optional_header_offset + 68, LE).unwrap();
+
+            assert!(
+                matches!(UefiPeInfo::parse(&image), Err(error::Error::InvalidAlignment)),
+                "rounding u32::MAX with section alignment {section_alignment:#x} must fail"
+            );
         }
     }
 
