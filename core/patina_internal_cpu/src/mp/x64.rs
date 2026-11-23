@@ -15,6 +15,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //!
 
+use alloc::boxed::Box;
 use core::{
     num::{NonZeroU64, NonZeroUsize},
     sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -366,7 +367,7 @@ impl MpDispatcher for MpSupport {
                 EfiError::OutOfResources
             })?;
 
-        let bootstrap_page = bootstrap_allocation.leak_as_slice::<u8>();
+        let bootstrap_page = Box::leak(bootstrap_allocation.into_zeroed_bytes());
         let bootstrap_base = bootstrap_page.as_mut_ptr();
         ap_bootstrap::prepare(bootstrap_page)?;
         let startup_vector = ap_bootstrap::startup_vector(bootstrap_base as usize, bootstrap_page.len())?;
@@ -391,7 +392,7 @@ impl MpDispatcher for MpSupport {
                 log::error!("Failed to allocate AP park pages: {e:?}");
                 EfiError::OutOfResources
             })?;
-        let park_pages = park_allocation.leak_as_slice::<u8>();
+        let park_pages = Box::leak(park_allocation.into_zeroed_bytes());
         let park_base = park_pages.as_mut_ptr();
         park::prepare(park_pages)?;
         // SAFETY: The complete range is the reserved park allocation initialized above.

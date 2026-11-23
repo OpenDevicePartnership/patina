@@ -127,7 +127,8 @@ impl MpServicesComponent {
                 EfiError::OutOfResources
             })?;
 
-            let stack_base = stack_allocation.into_raw_ptr::<u8>().ok_or(EfiError::OutOfResources)? as usize;
+            let (stack_ptr, _) = Box::into_raw_with_allocator(stack_allocation.into_uninit_bytes());
+            let stack_base = stack_ptr.cast::<u8>().expose_provenance();
 
             // SAFETY: The first page belongs to this AP stack allocation and is
             // intentionally made inaccessible as its stack-overflow guard.
