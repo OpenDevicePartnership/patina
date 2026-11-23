@@ -3,14 +3,16 @@
 This RFC proposes a common mechanism for discovering Software Bill of Materials (SBOM) data from
 multiple firmware sources and publishing them as an N-entry list in one ACPI SBOM table. Each table
 entry contains one standalone SBOM; the individual SBOM payloads are not merged into a single SBOM
-document. Independent producers expose discovered entries through an SBOM entry protocol whose
-interface represents one serialized ACPI SBOM table entry. A GUIDed HOB consumer that also owns
-ACPI table publication may instead add its HOB-derived entries directly to the table collection.
-The entry consists of a metadata header prepended to opaque raw SBOM bytes. During boot, firmware
-validates only that header and the entry's byte boundaries; it does not decompress, parse, or
-semantically validate the raw SBOM. The table publisher deduplicates entries based on their raw
-bytes and copies each unique entry unchanged into the table
-and publishes it through the platform's ACPI implementation. A primary requirement is compatibility
+document. Pre-DXE firmware provides entries through GUIDed HOBs, while DXE producers expose entries
+through an SBOM entry protocol. A component or driver collects entries from both sources and publishes
+the ACPI table through the platform's ACPI implementation. A combined HOB consumer and table publisher
+may add HOB-derived entries directly; a separate HOB consumer exposes them through the protocol.
+
+Each entry consists of a metadata header followed by opaque raw SBOM bytes. During boot, firmware
+validates only the header and the entry's byte boundaries; it does not decompress, parse, or
+semantically validate the raw SBOM. The table publisher deduplicates entries based on their complete
+serialized bytes, including the header and payload, and copies each unique entry unchanged into the
+table. A primary requirement is compatibility
 between Patina-based and EDK II-based firmware: every discovery method described by this RFC must
 be possible in both implementations, and both implementations must produce the same serialized
 entry format. Patina and EDK II may use different internal integration points to perform discovery.
