@@ -105,8 +105,7 @@ impl PrivateImageData {
             .with_memory_type(EfiMemoryType::from_efi(image_info.image_code_type)?)
             .with_alignment(section_alignment);
 
-        #[allow(deprecated)]
-        let bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_uninitialized_boxed_slice::<u8>();
+        let bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_uninit_bytes();
 
         image_info.image_base = bytes.as_ptr() as *mut c_void;
 
@@ -179,8 +178,7 @@ impl PrivateImageData {
 
         let options = AllocationOptions::new().with_memory_type(memory_type).with_alignment(alignment);
 
-        #[allow(deprecated)]
-        let mut bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_uninitialized_boxed_slice::<u8>();
+        let mut bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_uninit_bytes();
         if bytes.len() < resource_section.len() {
             return Err(EfiError::LoadError);
         }
@@ -696,10 +694,7 @@ mod dispatch {
             // allocate an extra page for the stack guard page.
             let page_count = uefi_size_to_pages!(len) + 1;
 
-            #[allow(deprecated)]
-            let stack = CoreMemoryManager
-                .allocate_pages(page_count, AllocationOptions::default())?
-                .into_uninitialized_boxed_slice::<u8>();
+            let stack = CoreMemoryManager.allocate_pages(page_count, AllocationOptions::default())?.into_uninit_bytes();
 
             let base_address = stack.as_ptr() as efi::PhysicalAddress;
             // attempt to set the memory space attributes for the stack guard page.
@@ -3414,16 +3409,14 @@ mod tests {
 
             // Hold the top of memory while the image is allocated so that the image lands below it, then release it
             // and allocate a neighbor at exactly the first address after the image.
-            #[allow(deprecated)]
             let top = CoreMemoryManager
                 .allocate_pages(0x20, AllocationOptions::new().with_memory_type(data_type))
                 .unwrap()
-                .into_uninitialized_boxed_slice::<u8>();
+                .into_uninit_bytes();
             let private_info = PrivateImageData::new(image_info, pe_info).unwrap();
             let image_end = private_info.image_info.image_base as u64 + private_info.image_info.image_size;
             drop(top);
 
-            #[allow(deprecated)]
             let neighbor = CoreMemoryManager
                 .allocate_pages(
                     0x20,
@@ -3432,7 +3425,7 @@ mod tests {
                     ),
                 )
                 .unwrap()
-                .into_uninitialized_boxed_slice::<u8>();
+                .into_uninit_bytes();
 
             let before = dxe_services::core_get_memory_space_descriptor(image_end).unwrap();
 

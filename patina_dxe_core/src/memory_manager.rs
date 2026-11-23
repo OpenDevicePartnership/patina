@@ -222,7 +222,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_tes
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");
     let allocation = result.unwrap();
-    let mut data = allocation.into_boxed_slice::<u8>();
+    let mut data = allocation.into_zeroed_bytes();
     u_assert_eq!(data.len(), UEFI_PAGE_SIZE, "Failed to free page.");
     data[0] = 42;
     drop(data);
@@ -231,14 +231,15 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_tes
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");
     let allocation = result.unwrap();
-    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
-    // SAFETY: address was returned by allocate_pages for this manager.
-    let result = unsafe { mm.free_pages(address, 1) };
-    u_assert!(result.is_ok(), "Failed to free page.");
+    let bytes = allocation.into_uninit_bytes();
+    let address = bytes.as_ptr() as usize;
+    drop(bytes);
     let options = AllocationOptions::new().with_strategy(PageAllocationStrategy::Address(address));
     let result = mm.allocate_pages(1, options);
     u_assert!(result.is_ok(), "Failed to allocate page by address");
-    u_assert_eq!(result.unwrap().into_raw_ptr::<u8>().unwrap() as usize, address, "Failed to allocate correct address");
+    let bytes = result.unwrap().into_uninit_bytes();
+    u_assert_eq!(bytes.as_ptr() as usize, address, "Failed to allocate correct address");
+    drop(bytes);
 
     // Allocate an aligned address.
     const TEST_ALIGNMENT: usize = 0x400000;
@@ -246,11 +247,10 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_tes
     u_assert!(result.is_ok(), "Failed to allocate single aligned pages.");
     let allocation = result.unwrap();
     u_assert_eq!(allocation.page_count(), 8);
-    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
+    let bytes = allocation.into_uninit_bytes();
+    let address = bytes.as_ptr() as usize;
     u_assert_eq!(address % TEST_ALIGNMENT, 0, "Allocated page not correctly aligned.");
-    // SAFETY: address was returned by allocate_pages for this manager.
-    let result = unsafe { mm.free_pages(address, 8) };
-    u_assert!(result.is_ok(), "Failed to free page.");
+    drop(bytes);
 
     // Allocate with a max address limit.
     let max_address = 0x100_8000_0000;
@@ -258,7 +258,8 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_tes
     let result = mm.allocate_pages(1, options);
     u_assert!(result.is_ok(), "Failed to allocate with max address limit.");
     let allocation = result.unwrap();
-    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
+    let bytes = allocation.into_uninit_bytes();
+    let address = bytes.as_ptr() as usize;
     u_assert!((address + UEFI_PAGE_SIZE - 1) <= max_address, "Allocated address exceeds max address limit.");
 
     // Get an allocator.
@@ -290,7 +291,8 @@ fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina_test
     let result = mm.allocate_pages(1, AllocationOptions::new());
     u_assert!(result.is_ok(), "Failed to allocate single page.");
     let allocation = result.unwrap();
-    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
+    let (ptr, _) = Box::into_raw_with_allocator(allocation.into_uninit_bytes());
+    let address = ptr.cast::<u8>().expose_provenance();
     let result = mm.get_page_attributes(address, 1);
     u_assert!(result.is_ok(), "Failed to get original page attributes.");
     let (access, caching) = result.unwrap();
