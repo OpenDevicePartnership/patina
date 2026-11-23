@@ -237,6 +237,7 @@ words:
   - unrepresentable
   - unspec
   - unsynchronized
+  - uswid
   - variadics
   - vcvarsamd
   - vcvarsarm
