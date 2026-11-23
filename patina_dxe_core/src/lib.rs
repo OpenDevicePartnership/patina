@@ -502,21 +502,22 @@ impl<P: PlatformInfo> Core<P> {
 
         log::info!("GCD - After memory init:\n{GCD}");
 
-        let mut component_dispatcher = self.component_dispatcher.checked_lock().expect(
+        self.component_dispatcher.with_checked_lock(|component_dispatcher| {
+            component_dispatcher.add_service(DxeInterruptManager(interrupt_manager));
+            component_dispatcher.add_service(CoreMemoryManager);
+            component_dispatcher.add_service(CoreCompatMemoryManager);
+            component_dispatcher.add_service(dxe_dispatch_service::CoreDxeDispatch::new(self));
+            component_dispatcher.add_service(cpu::PerfTimer::with_frequency(perf_frequency));
+            component_dispatcher.add_service(uefi_services::CoreEventServices);
+            component_dispatcher.add_service(uefi_services::CoreProtocolServices);
+            component_dispatcher.add_service(uefi_services::CoreConfigurationTableServices);
+            component_dispatcher.add_service(uefi_services::CoreDriverServices);
+            component_dispatcher.add_service(uefi_services::CoreImageServices::new::<P>());
+            component_dispatcher.add_service(uefi_services::CoreTplServices);
+            self.initialize_performance(perf_frequency, component_dispatcher);
+        }).expect(
             "Cannot initialize core services: component dispatcher is already in use before core memory initialization completes",
         );
-        component_dispatcher.add_service(DxeInterruptManager(interrupt_manager));
-        component_dispatcher.add_service(CoreMemoryManager);
-        component_dispatcher.add_service(CoreCompatMemoryManager);
-        component_dispatcher.add_service(dxe_dispatch_service::CoreDxeDispatch::new(self));
-        component_dispatcher.add_service(cpu::PerfTimer::with_frequency(perf_frequency));
-        component_dispatcher.add_service(uefi_services::CoreEventServices);
-        component_dispatcher.add_service(uefi_services::CoreProtocolServices);
-        component_dispatcher.add_service(uefi_services::CoreConfigurationTableServices);
-        component_dispatcher.add_service(uefi_services::CoreDriverServices);
-        component_dispatcher.add_service(uefi_services::CoreImageServices::new::<P>());
-        component_dispatcher.add_service(uefi_services::CoreTplServices);
-        self.initialize_performance(perf_frequency, &mut component_dispatcher);
 
         relocated_hob_list
     }
@@ -561,10 +562,13 @@ impl<P: PlatformInfo> Core<P> {
     fn try_register_timing_service(&self) -> Result<()> {
         static REGISTERED: Once<()> = Once::new();
         if !REGISTERED.is_completed() && misc_boot_services::timing_arch_protocols_ready() {
-            let mut dispatcher = self.component_dispatcher.checked_lock().map_err(|_| error::EfiError::NotReady)?;
-            REGISTERED.call_once(|| {
-                dispatcher.add_service(uefi_services::CoreTimingServices);
-            });
+            self.component_dispatcher
+                .with_checked_lock(|dispatcher| {
+                    REGISTERED.call_once(|| {
+                        dispatcher.add_service(uefi_services::CoreTimingServices);
+                    });
+                })
+                .map_err(|_| error::EfiError::NotReady)?;
         }
         Ok(())
     }
@@ -576,10 +580,13 @@ impl<P: PlatformInfo> Core<P> {
     fn try_register_timer_event_service(&self) -> Result<()> {
         static REGISTERED: Once<()> = Once::new();
         if !REGISTERED.is_completed() && events::timer_arch_protocol_ready() {
-            let mut dispatcher = self.component_dispatcher.checked_lock().map_err(|_| error::EfiError::NotReady)?;
-            REGISTERED.call_once(|| {
-                dispatcher.add_service(uefi_services::CoreTimerEventServices);
-            });
+            self.component_dispatcher
+                .with_checked_lock(|dispatcher| {
+                    REGISTERED.call_once(|| {
+                        dispatcher.add_service(uefi_services::CoreTimerEventServices);
+                    });
+                })
+                .map_err(|_| error::EfiError::NotReady)?;
         }
         Ok(())
     }
@@ -662,9 +669,12 @@ impl<P: PlatformInfo> Core<P> {
         let runtime_services = StandardRuntimeServices::new(st.runtime_services().as_mut_ptr());
         drop(st_guard);
 
-        let mut dispatcher = self.component_dispatcher.checked_lock().map_err(|_| error::EfiError::NotReady)?;
-        dispatcher.set_runtime_services(runtime_services);
-        dispatcher.set_image_handle(protocol_db::DXE_CORE_HANDLE);
+        self.component_dispatcher
+            .with_checked_lock(|dispatcher| {
+                dispatcher.set_runtime_services(runtime_services);
+                dispatcher.set_image_handle(protocol_db::DXE_CORE_HANDLE);
+            })
+            .map_err(|_| error::EfiError::NotReady)?;
 
         Ok(())
     }
@@ -688,19 +698,24 @@ impl<P: PlatformInfo> Core<P> {
     /// The caller must be at `TPL == TPL_APPLICATION` to acquire the component-dispatcher lock.
     #[allow(clippy::default_constructed_unit_structs)]
     fn add_core_components(&self) -> Result<()> {
-        let mut dispatcher = self.component_dispatcher.checked_lock().map_err(|_| error::EfiError::NotReady)?;
-        dispatcher.insert_component(0, decompress::DecompressProtocolInstaller::default().into_component());
-        dispatcher.insert_component(0, systemtables::SystemTableChecksumInstaller::default().into_component());
-        dispatcher.insert_component(0, cpu::CpuArchProtocolInstaller::default().into_component());
-        if P::CpuInfo::ENABLE_MP_SERVICES {
-            dispatcher.add_config(cpu::MpServicesEnabled(true));
-            dispatcher.insert_component(0, cpu::MpServicesComponent::default().into_component());
-            dispatcher.insert_component(0, cpu::MpServicesProtocolInstaller::default().into_component());
-            dispatcher.insert_component(0, cpu::MpBistReporter.into_component());
-        }
-        #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
-        dispatcher
-            .insert_component(0, cpu::HwInterruptProtocolInstaller::new(P::CpuInfo::gic_bases()).into_component());
+        self.component_dispatcher
+            .with_checked_lock(|dispatcher| {
+                dispatcher.insert_component(0, decompress::DecompressProtocolInstaller::default().into_component());
+                dispatcher.insert_component(0, systemtables::SystemTableChecksumInstaller::default().into_component());
+                dispatcher.insert_component(0, cpu::CpuArchProtocolInstaller::default().into_component());
+                if P::CpuInfo::ENABLE_MP_SERVICES {
+                    dispatcher.add_config(cpu::MpServicesEnabled(true));
+                    dispatcher.insert_component(0, cpu::MpServicesComponent::default().into_component());
+                    dispatcher.insert_component(0, cpu::MpServicesProtocolInstaller::default().into_component());
+                    dispatcher.insert_component(0, cpu::MpBistReporter.into_component());
+                }
+                #[cfg(all(target_os = "uefi", target_arch = "aarch64"))]
+                dispatcher.insert_component(
+                    0,
+                    cpu::HwInterruptProtocolInstaller::new(P::CpuInfo::gic_bases()).into_component(),
+                );
+            })
+            .map_err(|_| error::EfiError::NotReady)?;
         Ok(())
     }
 

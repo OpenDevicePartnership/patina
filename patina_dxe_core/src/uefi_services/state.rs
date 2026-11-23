@@ -62,14 +62,15 @@ impl ActiveDispatchStack {
     /// returns `true`. Returns `false` if no matching dispatch is active, so the caller can free the
     /// context immediately instead.
     pub(crate) fn request_close(&self, context: *mut c_void) -> Result<bool, EfiError> {
-        let mut entries = self.entries.checked_lock()?;
-        match entries.iter_mut().rev().find(|entry| entry.context == context) {
-            Some(active) => {
-                active.close_requested = true;
-                Ok(true)
+        Ok(self.entries.with_checked_lock(|entries| {
+            match entries.iter_mut().rev().find(|entry| entry.context == context) {
+                Some(active) => {
+                    active.close_requested = true;
+                    true
+                }
+                None => false,
             }
-            None => Ok(false),
-        }
+        })?)
     }
 }
 

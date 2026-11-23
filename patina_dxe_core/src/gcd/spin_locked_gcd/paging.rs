@@ -279,44 +279,48 @@ impl SpinLockedGcd {
             // We can't hold the GCD lock while allocating heap memory (extending the aliased mapping vec).
             // Check the capacity. We only take a single desc at a time, so just use a simple heuristic of
             // doubling the capacity if we are below 10 available descs.
-            let mut aliased_mappings_guard = self.aliased_mappings.checked_lock()?;
-            if aliased_mappings_guard.capacity() - aliased_mappings_guard.len() >= MIN_ALIASED_VEC_BUFFER {
-                let mut page_table_guard = self.page_table.checked_lock()?;
-                let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
+            let required_capacity = self.aliased_mappings.with_checked_lock(|aliased_mappings| {
+                if aliased_mappings.capacity() - aliased_mappings.len() >= MIN_ALIASED_VEC_BUFFER {
+                    let mut page_table_guard = self.page_table.checked_lock()?;
+                    let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
 
-                page_table.map_aliased_memory_region(virtual_address, physical_address, len, paging_attrs).map_err(
-                    |err| match err {
-                        PagingError::OutOfResources => EfiError::OutOfResources,
-                        PagingError::NoMapping => EfiError::NoMapping,
-                        _ => EfiError::InvalidParameter,
-                    },
-                )?;
+                    page_table
+                        .map_aliased_memory_region(virtual_address, physical_address, len, paging_attrs)
+                        .map_err(|err| match err {
+                            PagingError::OutOfResources => EfiError::OutOfResources,
+                            PagingError::NoMapping => EfiError::NoMapping,
+                            _ => EfiError::InvalidParameter,
+                        })?;
 
-                aliased_mappings_guard.push(AliasedMapping {
-                    virtual_address,
-                    physical_address,
-                    length: len,
-                    attributes,
-                });
+                    aliased_mappings.push(AliasedMapping {
+                        virtual_address,
+                        physical_address,
+                        length: len,
+                        attributes,
+                    });
+                    return Ok::<_, EfiError>(None);
+                }
+
+                let capacity = aliased_mappings
+                    .capacity()
+                    .checked_mul(2)
+                    .ok_or(EfiError::OutOfResources)?
+                    .max(MIN_ALIASED_VEC_EXPANSION);
+                Ok(Some(capacity))
+            })??;
+            let Some(required_capacity) = required_capacity else {
                 return Ok(());
-            }
-
-            let required_capacity = aliased_mappings_guard
-                .capacity()
-                .checked_mul(2)
-                .ok_or(EfiError::OutOfResources)?
-                .max(MIN_ALIASED_VEC_EXPANSION);
-            drop(aliased_mappings_guard);
+            };
 
             let mut replacement = Vec::new();
             replacement.try_reserve(required_capacity).map_err(|_| EfiError::OutOfResources)?;
 
-            let mut aliased_mappings_guard = self.aliased_mappings.checked_lock()?;
-            if replacement.capacity().saturating_sub(aliased_mappings_guard.len()) >= MIN_ALIASED_VEC_BUFFER {
-                replacement.extend_from_slice(&aliased_mappings_guard);
-                core::mem::swap(&mut *aliased_mappings_guard, &mut replacement);
-            }
-            drop(aliased_mappings_guard);
+            self.aliased_mappings.with_checked_lock(|aliased_mappings| {
+                if replacement.capacity().saturating_sub(aliased_mappings.len()) >= MIN_ALIASED_VEC_BUFFER {
+                    replacement.extend_from_slice(aliased_mappings);
+                    core::mem::swap(aliased_mappings, &mut replacement);
+                }
+            })?;
             drop(replacement);
         }
     }

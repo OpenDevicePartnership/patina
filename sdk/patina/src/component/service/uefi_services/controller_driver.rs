@@ -687,24 +687,29 @@ impl<D: ControllerDriver> Inner<D> {
 
     /// The entry for `controller`, unless it is not managed or is being stopped.
     fn managed(&self, controller: Handle) -> Option<Arc<Entry<D>>> {
-        let records = self.records.checked_lock().expect("controller records must be available for lookup");
-        let record = records.iter().find(|r| r.entry.controller == controller && r.phase != Phase::Stopping)?;
-        Some(Arc::clone(&record.entry))
+        self.records
+            .with_checked_lock(|records| {
+                let record = records.iter().find(|r| r.entry.controller == controller && r.phase != Phase::Stopping)?;
+                Some(Arc::clone(&record.entry))
+            })
+            .expect("controller records must be available for lookup")
     }
 
     /// Runs `f` on `entry`'s record, which exists while its state is `Some`.
     fn with_record<R>(&self, entry: &Arc<Entry<D>>, f: impl FnOnce(&mut Record<D>) -> R) -> Option<R> {
-        let mut records = self.records.checked_lock().expect("controller records must be available for update");
-        records.iter_mut().find(|r| Arc::ptr_eq(&r.entry, entry)).map(f)
+        self.records
+            .with_checked_lock(|records| records.iter_mut().find(|r| Arc::ptr_eq(&r.entry, entry)).map(f))
+            .expect("controller records must be available for update")
     }
 
     /// Removes `entry`'s record and returns its usages.
     fn remove(&self, entry: &Arc<Entry<D>>) -> Vec<Usage> {
-        let mut records = self.records.checked_lock().expect("controller records must be available for cleanup");
-        match records.iter().position(|r| Arc::ptr_eq(&r.entry, entry)) {
-            Some(index) => records.remove(index).usages,
-            None => Vec::new(),
-        }
+        self.records
+            .with_checked_lock(|records| match records.iter().position(|r| Arc::ptr_eq(&r.entry, entry)) {
+                Some(index) => records.remove(index).usages,
+                None => Vec::new(),
+            })
+            .expect("controller records must be available for cleanup")
     }
 
     /// Releases what every managed controller holds on `handle`.
@@ -778,15 +783,14 @@ impl<D: ControllerDriver> Inner<D> {
 
     /// Destroys `children` of `controller` through the driver, then closes what was opened for them.
     fn stop_children(&self, controller: Handle, children: &[Handle]) -> Result<(), ProtocolError> {
-        let entry = {
-            let records = self.records.checked_lock()?;
+        let entry = self.records.with_checked_lock(|records| {
             let record = records.iter().find(|r| r.entry.controller == controller).ok_or(ProtocolError::NotFound)?;
             if record.phase == Phase::Stopping {
                 // The outer stop may still fail and keep managing the controller.
                 return Err(ProtocolError::AccessDenied);
             }
-            Arc::clone(&record.entry)
-        };
+            Ok(Arc::clone(&record.entry))
+        })??;
         let mut guard = entry.state.try_borrow_mut().map_err(|_| ProtocolError::AccessDenied)?;
         let state = guard.as_mut().ok_or(ProtocolError::NotFound)?;
         self.with_record(&entry, |r| r.phase = Phase::StoppingChildren(children.to_vec()));
