@@ -32,8 +32,8 @@ entry format. Patina and EDK II may use different internal integration points to
   - Explain the `python-uswid` compatibility rationale for entry revision `0x04` and require
     that exact revision during validation.
   - Remove the undefined "oversized" entry category.
-  - Describe pending coordination to reconcile the `.sbom` entry envelope with the existing
-    embedding specification and producer/extractor tooling.
+  - Clarify coordination with the Firmware Embedded SBOM Specification author and the
+    relationship between its embedding guidance, the proposed entry layout, and tooling.
   - Show the owned `Option<Box<[u8]>>` field added to `PrivateImageData`.
   - Clarify the Patina-first plan: approve the RFC, merge and actively use the implementation,
     then pursue specification proposals based on that experience.
@@ -172,8 +172,8 @@ implementation, and put it into active use in Patina before taking the design to
 specification working groups. Implementation and usage experience will inform those proposals.
 
 The subsequent specification work is expected to cover the ACPI table contract and the applicable
-UEFI/PI image-discovery, protocol, and HOB contracts. The `.sbom` embedding guidance also requires
-the coordination described under Prior Art. No specification-change request has been filed yet;
+UEFI/PI image-discovery, protocol, and HOB contracts. The `.sbom` embedding work includes the
+coordination described under Prior Art. No specification-change request has been filed yet;
 references and status will be recorded here once available.
 
 This Patina-first sequence differs from the documented
@@ -184,7 +184,7 @@ already been approved.
 
 ## Unresolved Questions
 
-Specification acceptance and the final `.sbom` encoding remain pending the coordination above.
+ACPI and UEFI/PI specification acceptance remain pending the work described above.
 
 ## Out of Scope
 
@@ -206,18 +206,17 @@ the closest prior art for embedding metadata. Its
 describes `.sbom` PE/COFF sections, but it does not define the DXE
 producer-to-aggregator interface proposed here.
 
-That guidance describes a `.sbom` section containing the CoSWID payload directly. This RFC instead
-proposes that `.sbom` contain a complete `ACPI_SBOM_TABLE_ENTRY`, including its format and
-compression fields. The prepended header allows the DXE Core to validate the entry boundary without
-interpreting the opaque payload and allows the aggregator to copy the entry directly into the ACPI
-table. The operating system can later use the header to select the payload decompressor and parser.
-Tooling that produces or extracts `.sbom` sections must distinguish these encodings.
+The entry layout is being developed directly with Richard Hughes, the author of the Firmware
+Embedded SBOM Specification, and is supported by the existing `python-uswid` tooling. It follows
+the layout proposed in that specification while omitting the uSWID magic header from PE sections.
+The entry header carries format and compression information, allowing the DXE Core to validate
+entry boundaries and the aggregator to copy entries without interpreting their payloads.
 
-The proposed reconciliation is to coordinate an update to the Firmware Embedded SBOM Specification
-with its maintainers so its embedding guidance describes the complete entry envelope, then update
-producer and extractor tooling to write and read that encoding. This coordination is pending;
-the existing specification has not adopted this proposal. Until an encoding is agreed, consumers
-must not assume that existing direct-CoSWID `.sbom` sections use this RFC's entry format.
+The published embedding guidance describes CoSWID metadata in `.sbom` sections and prohibits the
+uSWID magic header in PE binaries; it does not explicitly describe this RFC's complete entry
+envelope in that section. Coordination with the specification author continues to clarify the
+guidance and interoperability of producer and extractor tooling. Existing direct-CoSWID sections
+must not be assumed to contain this RFC's entry header.
 
 [RFC 0001](0001-guided-hob-to-hob-param.md) describes Patina's typed GUIDed HOB parsing model. A
 component uses that model to parse the SBOM HOB format defined below. The component may also publish
