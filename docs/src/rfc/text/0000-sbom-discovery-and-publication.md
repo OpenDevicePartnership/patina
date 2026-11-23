@@ -22,6 +22,19 @@ entry format. Patina and EDK II may use different internal integration points to
   `EFI_ACPI_TABLE_PROTOCOL`.
 - 2026-11-10: Use the serialized entry directly as the protocol interface and retain
   image-discovered entries after image unload.
+- 2026-11-23:
+  - Remove the `EFI_` prefix from proposed SBOM table and protocol identifiers
+    because they are not defined by the UEFI specification.
+  - Define `Flags` as a reserved bitmask: producers write zero and consumers preserve it
+    without interpretation or rejection based solely on nonzero flags.
+  - Explain the `python-uswid` compatibility rationale for entry revision `0x04` and require
+    that exact revision during validation.
+  - Remove the undefined "oversized" entry category.
+  - Describe pending coordination to reconcile the `.sbom` entry envelope with the existing
+    embedding specification and producer/extractor tooling.
+  - Show the owned `Option<Box<[u8]>>` field added to `PrivateImageData`.
+  - Clarify the Patina-first plan: approve the RFC, merge and actively use the implementation,
+    then pursue specification proposals based on that experience.
 
 ## Motivation
 
@@ -108,9 +121,9 @@ installation.
 
 1. Every discovery method defined by this RFC must be implementable in both Patina-based and EDK
    II-based firmware. The implementations may use different internal integration points, but must
-   produce the same serialized `EFI_ACPI_SBOM_TABLE_ENTRY` format.
+   produce the same serialized `ACPI_SBOM_TABLE_ENTRY` format.
 2. One protocol instance must represent exactly one complete serialized
-   `EFI_ACPI_SBOM_TABLE_ENTRY`, consisting of the entry header followed by the opaque raw SBOM
+   `ACPI_SBOM_TABLE_ENTRY`, consisting of the entry header followed by the opaque raw SBOM
    payload.
 3. A producer must structurally validate the entry header, supported revision, header length,
    payload length, checked length arithmetic, and exact serialized entry boundary before installing
@@ -121,7 +134,7 @@ installation.
    readable for the complete entry length.
 6. A producer must own the complete serialized entry for as long as the protocol remains installed.
 7. Protocol data must be immutable after installation.
-8. Missing, unreadable, malformed, unsupported-revision, or oversized SBOM entries must be
+8. Missing, unreadable, malformed, or unsupported-revision SBOM entries must be
    reported and ignored without failing the image load that discovered them.
 9. Allocation failures and SBOM protocol installation failures must also be reported and ignored
    without failing the image load.
@@ -149,9 +162,27 @@ installation.
     remain available. Repeated signals must not trigger another attempt, even after a
     failure. When no entries are available, no table is installed.
 
+## Specification and Code-First Plan
+
+The proposed ACPI table and firmware discovery interfaces are not approved specification
+definitions. The intended sequence is to obtain approval for this RFC in Patina, merge the
+implementation, and put it into active use in Patina before taking the design to the relevant
+specification working groups. Implementation and usage experience will inform those proposals.
+
+The subsequent specification work is expected to cover the ACPI table contract and the applicable
+UEFI/PI image-discovery, protocol, and HOB contracts. The `.sbom` embedding guidance also requires
+the coordination described under Prior Art. No specification-change request has been filed yet;
+references and status will be recorded here once available.
+
+This Patina-first sequence differs from the documented
+[code-first process](../../code_first/code_first_process.md), which requires working-group approval
+before merging a corresponding code-first implementation. Agreement on that sequencing difference
+is therefore needed as part of this RFC's review; this RFC does not claim that an exception has
+already been approved.
+
 ## Unresolved Questions
 
-N/A.
+Specification acceptance and the final `.sbom` encoding remain pending the coordination above.
 
 ## Out of Scope
 
@@ -174,11 +205,17 @@ describes `.sbom` PE/COFF sections, but it does not define the DXE
 producer-to-aggregator interface proposed here.
 
 That guidance describes a `.sbom` section containing the CoSWID payload directly. This RFC instead
-proposes that `.sbom` contain a complete `EFI_ACPI_SBOM_TABLE_ENTRY`, including its format and
+proposes that `.sbom` contain a complete `ACPI_SBOM_TABLE_ENTRY`, including its format and
 compression fields. The prepended header allows the DXE Core to validate the entry boundary without
 interpreting the opaque payload and allows the aggregator to copy the entry directly into the ACPI
 table. The operating system can later use the header to select the payload decompressor and parser.
 Tooling that produces or extracts `.sbom` sections must distinguish these encodings.
+
+The proposed reconciliation is to coordinate an update to the Firmware Embedded SBOM Specification
+with its maintainers so its embedding guidance describes the complete entry envelope, then update
+producer and extractor tooling to write and read that encoding. This coordination is pending;
+the existing specification has not adopted this proposal. Until an encoding is agreed, consumers
+must not assume that existing direct-CoSWID `.sbom` sections use this RFC's entry format.
 
 [RFC 0001](0001-guided-hob-to-hob-param.md) describes Patina's typed GUIDed HOB parsing model. A
 component uses that model to parse the SBOM HOB format defined below. The component may also publish
@@ -261,8 +298,8 @@ or more variable-length SBOM table entries:
 
 typedef struct {
   EFI_ACPI_DESCRIPTION_HEADER Header;
-  // EFI_ACPI_SBOM_TABLE_ENTRY Entries[];
-} EFI_ACPI_SBOM_TABLE;
+  // ACPI_SBOM_TABLE_ENTRY Entries[];
+} ACPI_SBOM_TABLE;
 
 typedef struct {
   UINT8   Revision;
@@ -272,7 +309,7 @@ typedef struct {
   UINT8   Format;
   UINT8   Compression;
   UINT8   Payload[];      // Opaque raw SBOM bytes
-} EFI_ACPI_SBOM_TABLE_ENTRY;
+} ACPI_SBOM_TABLE_ENTRY;
 
 #pragma pack()
 ```
@@ -294,6 +331,7 @@ The initial wire-format values are:
 | ACPI table revision | `0x01` |
 | Entry revision | `0x04` |
 | Fixed entry header length | `0x000A` |
+| Flags: no flags set | `0x00` |
 | Format: CoSWID | `0x00` |
 | Format: CycloneDX | `0x01` |
 | Format: SPDX | `0x02` |
@@ -302,6 +340,13 @@ The initial wire-format values are:
 | Compression: zlib | `0x01` |
 | Compression: LZMA | `0x02` |
 | Compression: vendor-defined | `0xFF` |
+
+The entry revision starts at `0x04` for compatibility with the `python-uswid` tool, which expects
+that revision value.
+
+`Flags` is a reserved bitmask. Producers must set it to `0x00`; all bits are reserved for
+future use. Consumers preserve the byte unchanged without interpreting it and must not reject
+an entry solely because its flags are nonzero.
 
 The raw packed structures describe the wire format. Implementations must structurally validate the
 entry header and byte boundaries before exposing an entry through the protocol or copying an entry
@@ -315,7 +360,7 @@ not mean validating the raw SBOM document contained in `Payload`.
 Structural entry validation checks that:
 
 - The fixed header can be read from the available bytes.
-- `Revision` is supported.
+- `Revision` is exactly `0x04`; all other revision values are rejected.
 - `HeaderLength` describes the expected entry header.
 - `HeaderLength + PayloadLength` can be calculated without integer overflow.
 - The calculated entry length exactly matches the serialized entry bytes retained by the producer.
@@ -338,11 +383,11 @@ The firmware preserves the header and opaque payload. An operating system consum
 The protocol interface is one serialized SBOM table entry:
 
 ```c
-#define EFI_SBOM_ENTRY_PROTOCOL_GUID \
+#define SBOM_ENTRY_PROTOCOL_GUID \
   { 0x6F84698B, 0xC4E9, 0x4BD0, \
     { 0x9C, 0x8F, 0x5E, 0xB6, 0xC6, 0xF4, 0x68, 0x71 } }
 
-typedef EFI_ACPI_SBOM_TABLE_ENTRY EFI_SBOM_ENTRY_PROTOCOL;
+typedef ACPI_SBOM_TABLE_ENTRY SBOM_ENTRY_PROTOCOL;
 ```
 
 Patina's proposed interface lives in `patina::vendor_protocols::sbom`, using the wire type from
@@ -388,7 +433,7 @@ The Patina and EDK II DXE Cores implement the same behavior in their image-loadi
 
 1. Parse the source PE/COFF image and search for a section named `.sbom`.
 2. If the section is absent, continue without logging an error.
-3. Parse one structurally well-formed serialized `EFI_ACPI_SBOM_TABLE_ENTRY`, including its payload,
+3. Parse one structurally well-formed serialized `ACPI_SBOM_TABLE_ENTRY`, including its payload,
    from the section. If the section cannot be read, parsing fails, or any trailing byte is nonzero,
    log a warning and continue loading the image.
 4. Copy the validated entry into independently allocated storage.
@@ -412,7 +457,7 @@ Pre-DXE firmware publishes one entry per GUIDed HOB using this GUID:
     { 0xBF, 0x33, 0x3D, 0xF9, 0x25, 0x75, 0x6F, 0x05 } }
 ```
 
-The data after `EFI_HOB_GUID_TYPE` is one `EFI_ACPI_SBOM_TABLE_ENTRY`, not a complete ACPI table.
+The data after `EFI_HOB_GUID_TYPE` is one `ACPI_SBOM_TABLE_ENTRY`, not a complete ACPI table.
 The entry lengths describe its header and payload. Multiple instances contribute multiple
 independent entries.
 
@@ -509,7 +554,18 @@ interface in the UEFI protocol database.
 For a PE/COFF image, the DXE Core looks for `.sbom` while it already has the image bytes available.
 If there is no section, loading proceeds normally. If the section cannot be read or is structurally
 malformed, the core logs a warning and still loads the image. A structurally well-formed entry is
-copied into `PrivateImageData`:
+copied into a new owned field on `PrivateImageData` (unrelated fields omitted):
+
+```rust,ignore
+struct PrivateImageData {
+    // Existing image state fields are unchanged.
+    #[cfg(feature = "unstable-sbom")]
+    sbom_section: Option<Box<[u8]>>,
+}
+```
+
+`sbom_section` owns the validated entry header and payload, excluding trailing section padding.
+`None` indicates that no entry has been retained.
 
 ```rust
 fn load_sbom_section(&mut self, image: &[u8]) {
