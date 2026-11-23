@@ -116,7 +116,10 @@ impl Default for ComponentDispatcher {
     }
 }
 
-/// SAFETY: The `ComponentDispatcher` is `Send` as all data stored within this structure is owned by it, and not shared.
+// SAFETY: ComponentDispatcher executes only on the BSP only and controls dispatch of
+// all components. Components are the only safe way to access interior storage managed by the
+// dispatcher. The one exception to this are `Service`'s which once obtained, can be shared
+// across the system. These services must ensure their own safety when accessed concurrently.
 unsafe impl Send for ComponentDispatcher {}
 
 impl ComponentDispatcher {

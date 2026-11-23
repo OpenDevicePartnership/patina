@@ -134,7 +134,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// The caller must be at or below `TPL_NOTIFY` to process pending notifications.
     pub(super) fn mark_ready_to_boot(&self) -> Result<(), MpError> {
         self.ready_to_boot.store(true, Ordering::Release);
-        self.notifications.finish_pending(&self.mp, *self.timer)
+        self.notifications.finish_pending(&self.mp, &*self.timer)
     }
 
     /// Replicates the BSP's dynamic state (MTRRs for x64) to every enabled AP.
@@ -143,7 +143,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     ///
     /// The caller must be at or below `TPL_NOTIFY` to acquire the dispatch lock.
     pub(super) fn synchronize(&self) {
-        self.notifications.finish_pending(&self.mp, *self.timer).expect("failed to finish pending MP notifications");
+        self.notifications.finish_pending(&self.mp, &*self.timer).expect("failed to finish pending MP notifications");
         let synchronized = self
             .notifications
             .with_dispatch_lock(|pending| {
@@ -222,7 +222,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
             log::error!("non-blocking requests should not be made after ReadyToBoot per the PI Specification!");
         }
 
-        let deadline = deadline_for(*self.timer, timeout_us);
+        let deadline = deadline_for(&*self.timer, timeout_us);
 
         // The registry lock is the dispatch lock: it raises to TPL_NOTIFY, which the
         // periodic poll also needs, so no processor can be taken between being selected
@@ -244,7 +244,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
         })?;
 
         let Some(dispatch) = started else { return Ok(()) };
-        let failed = dispatch.complete_blocking(&self.mp, *self.timer);
+        let failed = dispatch.complete_blocking(&self.mp, &*self.timer);
         if failed.is_empty() { Ok(()) } else { Err(MpError::Timeout(failed)) }
     }
 
@@ -322,7 +322,7 @@ impl<D: MpDispatcher + 'static> MpServices<D> {
     /// Resolves any pending non-blocking dispatches. Invoked by the component's
     /// periodic timer callback.
     pub(super) fn poll_notifications(&self) {
-        self.notifications.poll(&self.mp, *self.timer);
+        self.notifications.poll(&self.mp, &*self.timer);
     }
 
     fn bsp_check(&self) -> Result<(), MpError> {

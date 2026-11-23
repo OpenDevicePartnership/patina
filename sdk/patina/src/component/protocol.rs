@@ -141,12 +141,10 @@ impl<P: ProtocolInterface + 'static> Deref for Protocol<P> {
     }
 }
 
-impl<P: ProtocolInterface + 'static> Copy for Protocol<P> {}
-
 impl<P: ProtocolInterface + 'static> Clone for Protocol<P> {
     #[cfg_attr(coverage, coverage(off))]
     fn clone(&self) -> Self {
-        *self
+        Self { protocols: self.protocols.clone(), _marker: PhantomData }
     }
 }
 
@@ -179,7 +177,7 @@ unsafe impl<P: ProtocolInterface + 'static> Param for Protocol<P> {
         }
 
         // SAFETY: The service Param validated successfully immediately above, so retrieving its
-        // immutable, static service reference is valid.
+        // shared service handle is valid.
         let protocols = unsafe { <Service<dyn ProtocolServices> as Param>::get_param(state, storage) };
         protocols.locate_interface(P::PROTOCOL_GUID).is_ok()
     }

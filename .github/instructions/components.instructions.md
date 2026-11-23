@@ -58,7 +58,8 @@ safe reuse in UEFI's memory-constrained environment.
 - **Initialization phase:** Store all dependency references in struct fields.
 - **Execution phase:** Use stored references via methods - no additional parameter
   resolution needed.
-- Use `Service<T>` for service references (these are `Clone` with static lifetimes).
+- Use `Service<T>` for service references (these are cheap `Clone` handles that share ownership of the
+  implementation, and are `'static` so they can be stored freely).
 - Use `Option<T>` for optional dependencies to handle unavailable services gracefully.
 
 ## Parameter Semantics
