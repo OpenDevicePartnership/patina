@@ -30,6 +30,7 @@ use patina::align_up;
 
 use crate::test_support::{self, MockPageTable, MockPageTableWrapper};
 
+use super::paging::*;
 use super::*;
 use alloc::vec::Vec;
 use patina::pi::dxe_services::GcdMemoryType;
@@ -3243,6 +3244,55 @@ fn test_map_aliased_memory_region() {
                 MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect,
             )]
         );
+    });
+}
+
+#[test]
+fn test_map_aliased_memory_region_preserves_aliases_across_growth() {
+    // Note, this test does not test that the GCD lock is not re-entrant because the host test don't do GlobalAlloc
+    // through the UEFI allocators and GCD. It simply tests that the expansion works correctly in preserving aliases.
+    with_locked_state(|| {
+        let gcd = SpinLockedGcd::new(None);
+        let mock_table = Rc::new(RefCell::new(MockPageTable::new()));
+        gcd.add_test_page_table(Box::new(MockPageTableWrapper::new(Rc::clone(&mock_table))));
+
+        let attributes = efi::MEMORY_WB | efi::MEMORY_XP;
+        let mut expected = Vec::new();
+        let mut growth_count = 0;
+        for index in 0..65 {
+            let virtual_address = 0x8000_0000 + index * 0x1000;
+            let physical_address = 0x1000_0000 + index * 0x1000;
+            let old_capacity = gcd.aliased_mappings.checked_lock().unwrap().capacity();
+            let remaining_capacity = old_capacity - expected.len();
+
+            assert_eq!(gcd.map_aliased_memory_region(virtual_address, physical_address, 0x1000, attributes), Ok(()));
+            expected.push(AliasedMapping { virtual_address, physical_address, length: 0x1000, attributes });
+            assert_eq!(gcd.get_aliased_mappings(), expected);
+
+            let new_capacity = gcd.aliased_mappings.checked_lock().unwrap().capacity();
+            if remaining_capacity < 10 {
+                assert!(new_capacity >= (old_capacity * 2).max(MIN_ALIASED_VEC_EXPANSION));
+                growth_count += 1;
+            } else {
+                assert_eq!(new_capacity, old_capacity);
+            }
+            assert!(new_capacity - expected.len() >= MIN_ALIASED_VEC_BUFFER - 1);
+        }
+
+        assert!(growth_count > 1);
+        let mapped_regions = mock_table.borrow().get_aliased_mapped_regions();
+        assert_eq!(mapped_regions.len(), expected.len());
+        for (mapped, alias) in mapped_regions.iter().zip(&expected) {
+            assert_eq!(
+                *mapped,
+                (
+                    alias.virtual_address,
+                    alias.physical_address,
+                    alias.length,
+                    MemoryAttributes::Writeback | MemoryAttributes::ExecuteProtect,
+                )
+            );
+        }
     });
 }
 
