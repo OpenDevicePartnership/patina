@@ -104,7 +104,10 @@ impl PrivateImageData {
 
         let options = AllocationOptions::new()
             .with_memory_type(EfiMemoryType::from_efi(image_info.image_code_type)?)
-            .with_alignment(section_alignment);
+            // in order to support compatibility mode, we need to allow for section alignment that is less than the page
+            // size. We are allocating pages, the section alignment must be a power of two and if we are less than the
+            // page size it will be guaranteed that the alignment is valid for a page.
+            .with_alignment(section_alignment.max(UEFI_PAGE_SIZE));
 
         #[allow(deprecated)]
         let bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_uninitialized_boxed_slice::<u8>();
@@ -178,7 +181,11 @@ impl PrivateImageData {
         let page_count: usize =
             if alignment > UEFI_PAGE_SIZE { uefi_size_to_pages!(size + alignment) } else { uefi_size_to_pages!(size) };
 
-        let options = AllocationOptions::new().with_memory_type(memory_type).with_alignment(alignment);
+        // in order to handle compatibility mode, we need to account for section alignment less than the page size
+        // section alignment is a power of two and if we are less than the page size, the alignment will be valid to
+        // be at a page.
+        let options =
+            AllocationOptions::new().with_memory_type(memory_type).with_alignment(alignment.max(UEFI_PAGE_SIZE));
 
         #[allow(deprecated)]
         let mut bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_uninitialized_boxed_slice::<u8>();
@@ -1531,8 +1538,12 @@ fn core_load_pe_image(
     let alignment = pe_info.section_alignment as usize; // Need to align the base address with section alignment via overallocation
     let size = pe_info.size_of_image as usize;
 
-    // the section alignment must be at least the size of a page
-    if alignment == 0 || !alignment.is_multiple_of(UEFI_PAGE_SIZE) {
+    let compat_mode_required = pe_info.image_type == pecoff::EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION && !pe_info.nx_compat;
+
+    // the section alignment must be at least the size of a page in order to enable memory protections. However, if
+    // we are going to enter compat mode anyway, this is a moot point, so we can allow non-page-aligned section
+    // alignment.
+    if !compat_mode_required && (alignment == 0 || !alignment.is_multiple_of(UEFI_PAGE_SIZE)) {
         log::error!(
             "core_load_pe_image failed: {pe_file_name} section alignment of {alignment:#x?} is not a multiple of page size {UEFI_PAGE_SIZE:#x?}"
         );
@@ -1570,8 +1581,7 @@ fn core_load_pe_image(
     // If we are not NX compatible and a EFI Application, we need to attempt to activate compatibility mode.
     // Compatability mode may or may not actually activate depending on how we are configured.
     // Otherwise apply the memory protections.
-    if private_info.pe_info.image_type == pecoff::EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION && !private_info.pe_info.nx_compat
-    {
+    if compat_mode_required {
         private_info.activate_compatibility_mode()?;
     } else {
         // finally, update the GCD attributes for this image so that code sections have RO set and data sections
@@ -2188,6 +2198,69 @@ mod tests {
             );
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
             assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))), "{status:?}");
+        });
+    }
+
+    fn image_with_section_alignment_40(image_type: u16, nx_compat: bool) -> Vec<u8> {
+        use goblin::pe::{dll_characteristic::IMAGE_DLLCHARACTERISTICS_NX_COMPAT, header::Header};
+        use scroll::{LE, Pread, Pwrite};
+
+        let mut image = std::fs::read(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to read test image");
+        assert_eq!(UefiPeInfo::parse(&image).unwrap().section_alignment, 0x1000);
+        let header = Header::parse(&image).unwrap();
+        let optional_header_offset = header.dos_header.pe_pointer as usize
+            + core::mem::size_of_val(&header.signature)
+            + goblin::pe::header::SIZEOF_COFF_HEADER;
+        image.pwrite_with(0x40u32, optional_header_offset + 32, LE).unwrap();
+        image.pwrite_with(image_type, optional_header_offset + 68, LE).unwrap();
+        let mut dll_characteristics = image.pread_with::<u16>(optional_header_offset + 70, LE).unwrap();
+        if nx_compat {
+            dll_characteristics |= IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+        } else {
+            dll_characteristics &= !IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+        }
+        image.pwrite_with(dll_characteristics, optional_header_offset + 70, LE).unwrap();
+
+        let pe_info = UefiPeInfo::parse(&image).unwrap();
+        assert_eq!(pe_info.section_alignment, 0x40);
+        assert_eq!(pe_info.image_type, image_type);
+        assert_eq!(pe_info.nx_compat, nx_compat);
+        image
+    }
+
+    #[test]
+    #[cfg(feature = "compatibility_mode_allowed")]
+    fn load_image_should_pass_for_section_alignment_40_in_compatibility_mode() {
+        with_locked_state(|| {
+            let image = image_with_section_alignment_40(pecoff::EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION, false);
+
+            let image_data = core_load_pe_image(&image, empty_image_info()).expect("compatibility image should load");
+
+            assert_eq!(image_data.pe_info.section_alignment, 0x40);
+            assert_eq!(image_data.image_buffer.len(), image_data.image_info.image_size as usize);
+            assert_eq!(image_data.image_buffer.as_ptr() as usize % UEFI_PAGE_SIZE, 0);
+            assert_eq!(image_data.image_info.image_code_type, efi::LOADER_CODE);
+            assert_eq!(image_data.image_info.image_data_type, efi::LOADER_DATA);
+            assert_ne!(image_data.entry_point as usize, 0);
+            assert!(!image_data.relocation_data.is_empty());
+            assert!(image_data.hii_resource_section.is_some());
+            let descriptor = crate::GCD
+                .get_memory_descriptor_for_address(image_data.image_info.image_base as u64, |_, _| true)
+                .unwrap();
+            assert_eq!(descriptor.attributes & efi::MEMORY_ACCESS_MASK, 0);
+        });
+    }
+
+    #[test]
+    fn load_image_should_fail_for_section_alignment_40_when_image_does_not_trigger_compatibility_mode() {
+        with_locked_state(|| {
+            for (image_type, nx_compat) in [
+                (pecoff::EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION, true),
+                (pecoff::EFI_IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER, false),
+            ] {
+                let image = image_with_section_alignment_40(image_type, nx_compat);
+                assert!(matches!(core_load_pe_image(&image, empty_image_info()), Err(EfiError::LoadError)));
+            }
         });
     }
 
