@@ -9,8 +9,9 @@
 //! ## Examples
 //!
 //! SDK consumers normally construct a [`TplMutex`] with an owned or cloned Boot
-//! Services implementation and access the protected data through the guard
-//! returned by [`TplMutex::checked_lock`].
+//! Services implementation. [`TplMutex::with_checked_lock`] and [`TplMutex::with_try_lock`]
+//! scope access to a closure, releasing the lock and restoring TPL before returning.
+//! Guard-based access is also available through [`TplMutex::checked_lock`].
 //!
 //! ```
 //! use patina::uefi::{
@@ -40,8 +41,7 @@
 //!     }
 //!
 //!     fn increment(&self) -> Result<(), TplMutexError> {
-//!         self.state.checked_lock()?.value += 1;
-//!         Ok(())
+//!         self.state.with_checked_lock(|state| state.value += 1)
 //!     }
 //! }
 //! ```
@@ -70,8 +70,7 @@
 //! }
 //!
 //! fn increment() -> Result<(), TplMutexError> {
-//!     STATE.checked_lock()?.value += 1;
-//!     Ok(())
+//!     STATE.with_checked_lock(|state| state.value += 1)
 //! }
 //! ```
 //!
@@ -264,6 +263,82 @@ impl<T: ?Sized, B: TplController> TplMutex<T, B> {
         result
     }
 
+    /// Runs `f` while holding the mutex and its acquired TPL.
+    ///
+    /// The lock is held and the acquired TPL is maintained throughout `f`. Before returning,
+    /// the lock is released and the previous TPL is restored.
+    /// The closure runs exactly once on success and is not called if acquisition fails.
+    /// Its return value is preserved, including any nested `Result`.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::checked_lock`].
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if acquisition fails. Propagates panics from `f`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use patina::uefi::{
+    ///     boot_services::{StandardBootServices, tpl::Tpl},
+    ///     tpl_mutex::{TplMutex, TplMutexError},
+    /// };
+    ///
+    /// fn increment(services: StandardBootServices) -> Result<usize, TplMutexError> {
+    ///     let mutex = TplMutex::new(services, Tpl::NOTIFY, 0);
+    ///     mutex.with_checked_lock(|value| {
+    ///         *value += 1;
+    ///         *value
+    ///     })
+    /// }
+    /// ```
+    ///
+    /// References borrowed from the protected data cannot escape the closure:
+    ///
+    /// ```compile_fail
+    /// use patina::uefi::tpl_mutex::TplMutex;
+    ///
+    /// fn escape(mutex: &TplMutex<usize>) -> &usize {
+    ///     mutex.with_checked_lock(|value| &*value).unwrap()
+    /// }
+    /// ```
+    pub fn with_checked_lock<R>(&self, f: impl FnOnce(&mut T) -> R) -> Result<R, TplMutexError> {
+        let mut guard = self.checked_lock()?;
+        Ok(f(&mut guard))
+    }
+
+    /// Runs `f` while holding the mutex and its acquired TPL.
+    ///
+    /// The lock and TPL lifetime, closure execution, and return-value behavior match
+    /// [`Self::with_checked_lock`], but acquisition uses [`Self::try_lock`].
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::try_lock`].
+    ///
+    /// # Panics
+    ///
+    /// The controller may panic in debug builds if the TPL transition is invalid.
+    /// Propagates panics from `f`.
+    ///
+    /// # Examples
+    ///
+    /// References borrowed from the protected data cannot escape the closure:
+    ///
+    /// ```compile_fail
+    /// use patina::uefi::tpl_mutex::TplMutex;
+    ///
+    /// fn escape(mutex: &TplMutex<usize>) -> &mut usize {
+    ///     mutex.with_try_lock(|value| value).unwrap()
+    /// }
+    /// ```
+    pub fn with_try_lock<R>(&self, f: impl FnOnce(&mut T) -> R) -> Result<R, TplMutexError> {
+        let mut guard = self.try_lock()?;
+        Ok(f(&mut guard))
+    }
+
     /// Attempt to lock the mutex and return [`TplMutexGuard`] if the mutex was not locked.
     ///
     /// # Errors
@@ -386,6 +461,123 @@ mod tests {
         boot_services.expect_raise_tpl().with(eq(Tpl::NOTIFY)).return_const(Tpl::APPLICATION);
         boot_services.expect_restore_tpl().with(eq(Tpl::APPLICATION)).return_const(());
         boot_services
+    }
+
+    #[test]
+    fn test_tpl_mutex_scoped_locks_hold_lock_and_restore_tpl() {
+        for checked in [true, false] {
+            let current_tpl = core::cell::Cell::new(Tpl::APPLICATION);
+            let mut controller = MockBootServices::new();
+            controller.expect_raise_tpl().with(eq(Tpl::NOTIFY)).times(1).return_const(Tpl::APPLICATION);
+            controller.expect_restore_tpl().with(eq(Tpl::APPLICATION)).times(1).return_const(());
+            // Track transitions as well as their exact number to verify closure boundaries.
+            struct TrackingController<'a> {
+                inner: MockBootServices,
+                current: &'a core::cell::Cell<Tpl>,
+            }
+            impl TplController for TrackingController<'_> {
+                fn checked_tpl_raise(&self, tpl: Tpl) -> Result<Tpl, ()> {
+                    let previous = TplController::checked_tpl_raise(&self.inner, tpl)?;
+                    self.current.set(tpl);
+                    Ok(previous)
+                }
+
+                fn restore_tpl(&self, tpl: Tpl) {
+                    self.current.set(tpl);
+                    TplController::restore_tpl(&self.inner, tpl);
+                }
+            }
+            let mutex = TplMutex::new(TrackingController { inner: controller, current: &current_tpl }, Tpl::NOTIFY, 41);
+            let owned = alloc::boxed::Box::new(1);
+            let operation = |value: &mut usize| {
+                assert_eq!(current_tpl.get(), Tpl::NOTIFY);
+                assert_eq!(mutex.with_try_lock(|_| panic!("must not run")), Err(TplMutexError::AlreadyLocked));
+                *value += *owned;
+                drop(owned);
+                Err::<(), _>(*value)
+            };
+            let result = if checked { mutex.with_checked_lock(operation) } else { mutex.with_try_lock(operation) };
+            assert_eq!(result, Ok(Err(42)));
+            assert_eq!(current_tpl.get(), Tpl::APPLICATION);
+            assert!(!mutex.lock.load(Ordering::Relaxed));
+        }
+    }
+
+    #[test]
+    fn test_tpl_mutex_scoped_locks_skip_closure_on_acquisition_failure() {
+        for checked in [true, false] {
+            let mutex = TplMutex::<_, MockBootServices>::new_uninit(Tpl::NOTIFY, 42);
+            let called = core::cell::Cell::new(false);
+            let attempt = || {
+                let operation = |_: &mut i32| called.set(true);
+                if checked { mutex.with_checked_lock(operation) } else { mutex.with_try_lock(operation) }
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(attempt));
+            assert!(!called.get());
+            if checked && cfg!(debug_assertions) {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap(), Err::<(), _>(TplMutexError::UninitializedController));
+            }
+
+            mutex.init(boot_services());
+            let guard = mutex.checked_lock().unwrap();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(attempt));
+            assert!(!called.get());
+            if checked && cfg!(debug_assertions) {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap(), Err::<(), _>(TplMutexError::AlreadyLocked));
+            }
+            drop(guard);
+            assert_eq!(mutex.with_try_lock(|value| *value), Ok(42));
+        }
+    }
+
+    #[test]
+    fn test_tpl_mutex_scoped_locks_reject_invalid_tpl_transition() {
+        struct RejectController;
+
+        impl TplController for RejectController {
+            fn checked_tpl_raise(&self, _: Tpl) -> Result<Tpl, ()> {
+                Err(())
+            }
+
+            fn restore_tpl(&self, _: Tpl) {
+                panic!("rejected acquisition must not restore TPL");
+            }
+        }
+
+        let mutex = TplMutex::new(RejectController, Tpl::NOTIFY, 42);
+        let called = core::cell::Cell::new(false);
+        assert_eq!(mutex.with_try_lock(|_| called.set(true)), Err(TplMutexError::InvalidTplTransition));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mutex.with_checked_lock(|_| called.set(true))));
+        #[cfg(debug_assertions)]
+        assert!(result.is_err());
+        #[cfg(not(debug_assertions))]
+        assert_eq!(result.unwrap(), Err(TplMutexError::InvalidTplTransition));
+        assert!(!called.get());
+        assert!(!mutex.lock.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_tpl_mutex_scoped_locks_release_on_unwind() {
+        for checked in [true, false] {
+            let mut controller = MockBootServices::new();
+            controller.expect_raise_tpl().with(eq(Tpl::NOTIFY)).times(2).return_const(Tpl::APPLICATION);
+            controller.expect_restore_tpl().with(eq(Tpl::APPLICATION)).times(2).return_const(());
+            let mutex = TplMutex::new(controller, Tpl::NOTIFY, 42);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let operation = |value: &mut usize| {
+                    *value = 43;
+                    panic!("test closure panic");
+                };
+                if checked { mutex.with_checked_lock(operation) } else { mutex.with_try_lock(operation) }
+            }));
+            assert!(result.is_err());
+            assert_eq!(mutex.with_try_lock(|value| *value), Ok(43));
+        }
     }
 
     #[test]

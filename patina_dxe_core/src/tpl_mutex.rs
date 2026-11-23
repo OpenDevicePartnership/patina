@@ -71,6 +71,42 @@ impl<T: ?Sized> TplMutex<T> {
     pub fn try_lock(&self) -> Result<TplGuard<'_, T>, TplMutexError> {
         self.inner.try_lock()
     }
+
+    /// Runs `f` while holding the mutex and its acquired TPL.
+    ///
+    /// Releases the lock and restores the previous TPL before returning.
+    /// The closure is not called if acquisition fails.
+    /// See [`patina::uefi::tpl_mutex::TplMutex::with_checked_lock`].
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::checked_lock`].
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if acquisition fails. Propagates panics from `f`.
+    pub fn with_checked_lock<R>(&self, f: impl FnOnce(&mut T) -> R) -> Result<R, TplMutexError> {
+        self.inner.with_checked_lock(f)
+    }
+
+    /// Runs `f` while holding the mutex and its acquired TPL.
+    ///
+    /// Releases the lock and restores the previous TPL before returning.
+    /// The closure is not called if acquisition fails.
+    /// See [`patina::uefi::tpl_mutex::TplMutex::with_try_lock`].
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::try_lock`].
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if the requested TPL transition is invalid.
+    /// Propagates panics from `f`.
+    #[allow(dead_code)] // Preserve SDK API parity even when Core callers only use checked acquisition.
+    pub fn with_try_lock<R>(&self, f: impl FnOnce(&mut T) -> R) -> Result<R, TplMutexError> {
+        self.inner.with_try_lock(f)
+    }
 }
 
 impl<T: ?Sized + fmt::Debug> fmt::Debug for TplMutex<T> {
@@ -120,6 +156,30 @@ mod tests {
                 std::panic::resume_unwind(e);
             }
         }
+    }
+
+    #[test]
+    fn test_tpl_mutex_scoped_locks() {
+        with_reset_state(|| {
+            let lock = TplMutex::new(efi::TPL_NOTIFY, 41, "test_lock");
+            assert_eq!(
+                lock.with_checked_lock(|value| {
+                    assert_eq!(checked_tpl_raise(efi::TPL_HIGH_LEVEL), Some(efi::TPL_NOTIFY));
+                    restore_tpl(efi::TPL_NOTIFY);
+                    assert_eq!(
+                        lock.with_try_lock(|_| panic!("must not run")),
+                        Err::<(), _>(TplMutexError::AlreadyLocked)
+                    );
+                    *value += 1;
+                    *value
+                }),
+                Ok(42)
+            );
+            assert_eq!(checked_tpl_raise(efi::TPL_HIGH_LEVEL), Some(efi::TPL_APPLICATION));
+            restore_tpl(efi::TPL_APPLICATION);
+            assert_eq!(lock.with_try_lock(|value| *value), Ok(42));
+            assert_eq!(checked_tpl_raise(efi::TPL_HIGH_LEVEL), Some(efi::TPL_APPLICATION));
+        });
     }
 
     #[test]
