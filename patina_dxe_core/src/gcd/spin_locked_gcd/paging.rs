@@ -19,6 +19,8 @@ use patina::uefi::event::CACHE_ATTRIBUTE_CHANGE_EVENT_GROUP_GUID;
 use patina_internal_cpu::paging::PagingError;
 
 const PAGE_POOL_CAPACITY: usize = 512;
+pub(crate) const MIN_ALIASED_VEC_EXPANSION: usize = 20;
+pub(crate) const MIN_ALIASED_VEC_BUFFER: usize = 10;
 
 #[derive(Debug)]
 pub(crate) struct PagingAllocator<'a> {
@@ -273,21 +275,50 @@ impl SpinLockedGcd {
         let paging_attrs = MemoryAttributes::from_bits_truncate(attributes)
             & (MemoryAttributes::AccessAttributesMask | MemoryAttributes::CacheAttributesMask);
 
-        let mut page_table_guard = self.page_table.checked_lock()?;
-        let mut aliased_mappings_guard = self.aliased_mappings.checked_lock()?;
-        aliased_mappings_guard.try_reserve(1).map_err(|_| EfiError::OutOfResources)?;
-        let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
+        loop {
+            // We can't hold the GCD lock while allocating heap memory (extending the aliased mapping vec).
+            // Check the capacity. We only take a single desc at a time, so just use a simple heuristic of
+            // doubling the capacity if we are below 10 available descs.
+            let mut aliased_mappings_guard = self.aliased_mappings.checked_lock()?;
+            if aliased_mappings_guard.capacity() - aliased_mappings_guard.len() >= MIN_ALIASED_VEC_BUFFER {
+                let mut page_table_guard = self.page_table.checked_lock()?;
+                let page_table = page_table_guard.as_mut().ok_or(EfiError::NotReady)?;
 
-        page_table.map_aliased_memory_region(virtual_address, physical_address, len, paging_attrs).map_err(|err| {
-            match err {
-                PagingError::OutOfResources => EfiError::OutOfResources,
-                PagingError::NoMapping => EfiError::NoMapping,
-                _ => EfiError::InvalidParameter,
+                page_table.map_aliased_memory_region(virtual_address, physical_address, len, paging_attrs).map_err(
+                    |err| match err {
+                        PagingError::OutOfResources => EfiError::OutOfResources,
+                        PagingError::NoMapping => EfiError::NoMapping,
+                        _ => EfiError::InvalidParameter,
+                    },
+                )?;
+
+                aliased_mappings_guard.push(AliasedMapping {
+                    virtual_address,
+                    physical_address,
+                    length: len,
+                    attributes,
+                });
+                return Ok(());
             }
-        })?;
 
-        aliased_mappings_guard.push(AliasedMapping { virtual_address, physical_address, length: len, attributes });
-        Ok(())
+            let required_capacity = aliased_mappings_guard
+                .capacity()
+                .checked_mul(2)
+                .ok_or(EfiError::OutOfResources)?
+                .max(MIN_ALIASED_VEC_EXPANSION);
+            drop(aliased_mappings_guard);
+
+            let mut replacement = Vec::new();
+            replacement.try_reserve(required_capacity).map_err(|_| EfiError::OutOfResources)?;
+
+            let mut aliased_mappings_guard = self.aliased_mappings.checked_lock()?;
+            if replacement.capacity().saturating_sub(aliased_mappings_guard.len()) >= MIN_ALIASED_VEC_BUFFER {
+                replacement.extend_from_slice(&aliased_mappings_guard);
+                core::mem::swap(&mut *aliased_mappings_guard, &mut replacement);
+            }
+            drop(aliased_mappings_guard);
+            drop(replacement);
+        }
     }
 
     pub(crate) fn unmap_aliased_memory_region(&self, virtual_address: u64, len: u64) -> Result<(), EfiError> {
