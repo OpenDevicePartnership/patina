@@ -357,7 +357,8 @@ impl AllocationOptions {
     }
 
     /// Specifies the alignment to use for the allocation. This must be a power
-    /// of two and greater then the page size.
+    /// of two. Allocations are always page aligned, so an alignment smaller than
+    /// the page size is satisfied by the page alignment.
     ///
     /// Alignment will be ignored if the allocation strategy is [`PageAllocationStrategy::Address`].
     #[inline(always)]
@@ -859,7 +860,7 @@ pub enum MemoryError {
     NoAvailableMemory,
     /// The address provided is not aligned to the default or provided alignment.
     UnalignedAddress,
-    /// The alignment provided is not page aligned.
+    /// The alignment provided is not a power of two.
     InvalidAlignment,
     /// The provided address is not a valid address for the given operation.
     InvalidAddress,

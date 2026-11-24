@@ -9,6 +9,7 @@
 use alloc::boxed::Box;
 use patina::standard::efi;
 use patina::{
+    UEFI_PAGE_SIZE,
     component::service::{
         IntoService, Service,
         memory::{
@@ -18,7 +19,7 @@ use patina::{
     },
     error::EfiError,
     uefi::memory::EfiMemoryType,
-    uefi_pages_to_size, {UEFI_PAGE_MASK, UEFI_PAGE_SIZE},
+    uefi_pages_to_size,
 };
 use patina_test::{patina_test, u_assert, u_assert_eq};
 
@@ -39,9 +40,12 @@ impl MemoryManager for CoreMemoryManager {
         let mut address: efi::PhysicalAddress = 0;
         let alignment = options.alignment();
 
-        if !alignment.is_power_of_two() || alignment & UEFI_PAGE_MASK != 0 {
+        if !alignment.is_power_of_two() {
             return Err(MemoryError::InvalidAlignment);
         }
+
+        // Pages are always page aligned, so any power of two alignment below the page size is satisfied by it.
+        let alignment = alignment.max(UEFI_PAGE_SIZE);
 
         let alloc_type = match options.strategy() {
             PageAllocationStrategy::Any => efi::ALLOCATE_ANY_PAGES,
@@ -250,6 +254,15 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_tes
     u_assert_eq!(address % TEST_ALIGNMENT, 0, "Allocated page not correctly aligned.");
     // SAFETY: address was returned by allocate_pages for this manager.
     let result = unsafe { mm.free_pages(address, 8) };
+    u_assert!(result.is_ok(), "Failed to free page.");
+
+    // Allocate an aligned address smaller than the page size.
+    let result = mm.allocate_pages(1, AllocationOptions::new().with_alignment(0x40));
+    u_assert!(result.is_ok(), "Failed to allocate with sub-page alignment.");
+    let address = result.unwrap().into_raw_ptr::<u8>().unwrap() as usize;
+    u_assert_eq!(address % UEFI_PAGE_SIZE, 0, "Sub-page aligned allocation is not page aligned.");
+    // SAFETY: address was returned by allocate_pages for this manager.
+    let result = unsafe { mm.free_pages(address, 1) };
     u_assert!(result.is_ok(), "Failed to free page.");
 
     // Allocate with a max address limit.
