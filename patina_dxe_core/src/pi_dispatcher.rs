@@ -847,24 +847,41 @@ impl DispatcherContext {
 
                 let fv_name = fv.fv_name();
 
+                // A file that fails to parse is skipped so it does not stop the rest of the FV.
+                let read_sections = |file: &patina_ffs::file::FileRef<'_>| {
+                    let sections = file.sections_with_extractor(extractor)?;
+                    let depex = sections
+                        .iter()
+                        .find_map(|x| match x.section_type() {
+                            Some(ffs::section::Type::DxeDepex) => Some(x.try_content_as_slice()),
+                            _ => None,
+                        })
+                        .transpose()?
+                        .map(Depex::from);
+                    Ok::<_, patina_ffs::FirmwareFileSystemError>((sections, depex))
+                };
+
                 for file in fv.files() {
-                    let file = file?;
+                    let file = match file {
+                        Ok(file) => file,
+                        Err(err) => {
+                            log::error!("stopped enumerating fvb handle {handle:#x?} at a corrupt file: {err:?}");
+                            break;
+                        }
+                    };
                     if file.file_type_raw() == ffs::file::raw::r#type::DXE_CORE && file.name() == DXE_CORE_ID {
                         self.dxe_core_file.get_or_insert((handle, file.name().into_inner()));
                     }
                     if file.file_type_raw() == ffs::file::raw::r#type::DRIVER {
                         let file = file.clone();
                         let file_name = file.name().into_inner();
-                        let sections = file.sections_with_extractor(extractor)?;
-
-                        let depex = sections
-                            .iter()
-                            .find_map(|x| match x.section_type() {
-                                Some(ffs::section::Type::DxeDepex) => Some(x.try_content_as_slice()),
-                                _ => None,
-                            })
-                            .transpose()?
-                            .map(Depex::from);
+                        let (sections, depex) = match read_sections(&file) {
+                            Ok(result) => result,
+                            Err(err) => {
+                                log::error!("skipping driver {:?}: {err:?}", OwnedGuid::from(file_name));
+                                continue;
+                            }
+                        };
 
                         let name = sections
                             .iter()
@@ -953,16 +970,13 @@ impl DispatcherContext {
                             continue;
                         }
 
-                        let sections = file.sections_with_extractor(extractor)?;
-
-                        let depex = sections
-                            .iter()
-                            .find_map(|x| match x.section_type() {
-                                Some(ffs::section::Type::DxeDepex) => Some(x.try_content_as_slice()),
-                                _ => None,
-                            })
-                            .transpose()?
-                            .map(Depex::from);
+                        let (sections, depex) = match read_sections(&file) {
+                            Ok(result) => result,
+                            Err(err) => {
+                                log::error!("skipping firmware volume image {:?}: {err:?}", OwnedGuid::from(file_name));
+                                continue;
+                            }
+                        };
 
                         let fv_sections = sections
                             .into_iter()
@@ -2512,6 +2526,81 @@ mod tests {
                     .len(),
                 0,
                 "Child FV should be skipped when a matching extracted FV3 HOB exists"
+            );
+        });
+
+        // SAFETY: fv_raw was created from Box::into_raw and is dropped only once here.
+        let _dropped_fv = unsafe { Box::from_raw(fv_raw) };
+    }
+
+    #[test]
+    fn test_add_fv_handles_skips_files_with_corrupt_sections() {
+        use patina_ffs::{file::File as FfsFile, section::SectionHeader, volume::Volume};
+
+        set_logger();
+        let pe32 =
+            || Section::new_from_header_with_data(SectionHeader::Standard(ffs::section::raw_type::PE32, 4), vec![0; 4]);
+        let file = |id: u8, file_type: u8, sections: Vec<Section>| {
+            let mut file = FfsFile::new(BinaryGuid::from_bytes(&[id; 16]), file_type);
+            file.sections_mut().extend(sections);
+            file
+        };
+        // A compressed section whose payload does not decompress to the declared size.
+        let corrupt = || {
+            Section::new_from_header_with_data(
+                SectionHeader::Compression(
+                    ffs::section::header::Compression {
+                        uncompressed_length: 16,
+                        compression_type: ffs::section::header::STANDARD_COMPRESSION,
+                    },
+                    8,
+                ),
+                vec![4, 0, 0, 0, 16, 0, 0, 0],
+            )
+        };
+        let driver = ffs::file::raw::r#type::DRIVER;
+        let fv_image = ffs::file::raw::r#type::FIRMWARE_VOLUME_IMAGE;
+
+        let mut volume = Volume::new(vec![pi::fw_fs::fv::BlockMapEntry { num_blocks: 1, length: 0x1000 }]);
+        volume.files_mut().push(file(1, driver, vec![pe32().unwrap()]));
+        volume.files_mut().push(file(2, driver, vec![pe32().unwrap(), corrupt().unwrap()]));
+        volume.files_mut().push(file(3, fv_image, vec![corrupt().unwrap()]));
+        volume.files_mut().push(file(4, driver, vec![pe32().unwrap()]));
+        let fv_raw = Box::into_raw(volume.serialize().unwrap().into_boxed_slice());
+
+        with_locked_state(|| {
+            static CORE: MockCore = MockCore::new(NullSectionExtractor::new());
+            CORE.override_instance();
+
+            // SAFETY: fv_raw is leaked for the duration of this test scope.
+            let handle = unsafe {
+                CORE.pi_dispatcher
+                    .fv_data
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .install_firmware_volume(fv_raw.expose_provenance() as u64, None)
+                    .unwrap()
+            };
+
+            CORE.pi_dispatcher.add_fv_handles(vec![handle]).expect("Failed to add FV handle");
+
+            let pending: Vec<efi::Guid> = CORE
+                .pi_dispatcher
+                .dispatcher_context
+                .checked_lock()
+                .expect("test dispatcher state should be available")
+                .pending_drivers
+                .iter()
+                .map(|d| d.file_name)
+                .collect();
+            assert_eq!(pending, [efi::Guid::from_bytes(&[1; 16]), efi::Guid::from_bytes(&[4; 16])]);
+            assert!(
+                CORE.pi_dispatcher
+                    .dispatcher_context
+                    .checked_lock()
+                    .expect("test dispatcher state should be available")
+                    .pending_firmware_volume_images
+                    .is_empty()
             );
         });
 
