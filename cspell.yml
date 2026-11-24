@@ -54,6 +54,7 @@ words:
   - cdram
   - cdrom
   - celeron
+  - chardev
   - mwait
   - xapic
   - clangpdb
@@ -126,6 +127,7 @@ words:
   - impls
   - inmodule
   - intid
+  - iobase
   - iommu
   - irouter
   - iscsi
