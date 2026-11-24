@@ -1542,8 +1542,9 @@ fn core_load_pe_image(
 
     // the section alignment must be at least the size of a page in order to enable memory protections. However, if
     // we are going to enter compat mode anyway, this is a moot point, so we can allow non-page-aligned section
-    // alignment.
-    if !compat_mode_required && (alignment == 0 || !alignment.is_multiple_of(UEFI_PAGE_SIZE)) {
+    // alignment. If the platform does not allow compat mode, the image will be rejected, so reject it up front.
+    let allow_sub_page_alignment = compat_mode_required && cfg!(feature = "compatibility_mode_allowed");
+    if !allow_sub_page_alignment && (alignment == 0 || !alignment.is_multiple_of(UEFI_PAGE_SIZE)) {
         log::error!(
             "core_load_pe_image failed: {pe_file_name} section alignment of {alignment:#x?} is not a multiple of page size {UEFI_PAGE_SIZE:#x?}"
         );
@@ -2248,6 +2249,26 @@ mod tests {
                 .get_memory_descriptor_for_address(image_data.image_info.image_base as u64, |_, _| true)
                 .unwrap();
             assert_eq!(descriptor.attributes & efi::MEMORY_ACCESS_MASK, 0);
+        });
+    }
+
+    #[test]
+    #[cfg(not(feature = "compatibility_mode_allowed"))]
+    fn load_image_should_fail_for_section_alignment_40_when_compatibility_mode_is_not_allowed() {
+        with_locked_state(|| {
+            let image = image_with_section_alignment_40(pecoff::EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION, false);
+            let allocator = crate::allocator::core_get_allocator(efi::LOADER_CODE)
+                .expect("loader code allocator should be available");
+            let allocation_calls_before =
+                allocator.stats().expect("loader code allocator statistics should be available").page_allocation_calls;
+
+            assert!(matches!(core_load_pe_image(&image, empty_image_info()), Err(EfiError::LoadError)));
+
+            assert_eq!(
+                allocator.stats().expect("loader code allocator statistics should be available").page_allocation_calls,
+                allocation_calls_before,
+                "sub-page-aligned images must be rejected before allocating image or HII resource pages"
+            );
         });
     }
 
