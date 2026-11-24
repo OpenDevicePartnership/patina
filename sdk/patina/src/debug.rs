@@ -8,9 +8,13 @@
 
 pub mod log;
 
+#[doc(hidden)]
+pub use ::log::error as __log_error;
+
 /// Logs an error message and fires a [`debug_assert!`]`(false)` with the same message.
 ///
 /// In debug builds, this will panic after logging. In release builds, only the [`::log::error!`] is emitted.
+/// Callers do not need a direct dependency on the `log` crate.
 ///
 /// # Parameters
 ///
@@ -26,7 +30,7 @@ pub mod log;
 #[macro_export]
 macro_rules! log_debug_assert {
     ($($arg:tt)*) => {{
-        log::error!($($arg)*);
+        $crate::debug::__log_error!($($arg)*);
         debug_assert!(false, $($arg)*);
     }};
 }
