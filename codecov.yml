@@ -16,15 +16,15 @@ codecov:
 coverage:
   precision: 2
   round: nearest
-  range: 80..90 # 0-79% red, 80-89% yellow, 90-100% green
+  range: 85..90 # 0-84% red, 85-89% yellow, 90-100% green
   status:
     project:
       default:
-        target: 80% # Target 80% coverage for the project
+        target: 85% # Target 85% coverage for the project
         only_pulls: true
     patch:
       default:
-        target: 80% # Target 80% coverage for the patch
+        target: 85% # Target 85% coverage for the patch
         only_pulls: true
 comment:
   after_n_builds: 2
