@@ -102,22 +102,22 @@ Needing to change a test's output expectation is a good indication that your cha
 or be a breaking change. Any submitted PR should be marked as such.
 ```
 
-Patina's goal is to keep code coverage over 80%. This gives some leniency for code that cannot be tested (e.g. a error
+Patina requires at least 85% code coverage. This gives some leniency for code that cannot be tested (e.g. a error
 return after a debug assert), or code that does not need to be tested (e.g. `Debug` implementations, wrappers, etc).
 If the code is testable, it should have tests. Importantly, however, unit tests should not be written with the intent
-to satisfy the 80% rule. They should be written to meaningfully cover critical logic and edge cases.
+to satisfy the 85% rule. They should be written to meaningfully cover critical logic and edge cases.
 
 ```admonish warning
-Having a hard target of code coverage (e.g. 80%) can lead to tests being written purely to bump up code coverage. If
+Having a hard target of code coverage (e.g. 85%) can lead to tests being written purely to bump up code coverage. If
 this is happening, consider disabling code coverage for that section of code (`#[coverage(off)]`) with valid
 justification as to why no code coverage is needed.
 ```
 
 We use [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) as our code coverage reporting tool, as it works
 well with Windows and Linux, and can generate different report types. All of our repositories have CI that calculates
-and uploads code coverage results to [codecov](https://codecov.io) with an expected patch coverage of at least 80%.
+and uploads code coverage results to [codecov](https://codecov.io) with an expected patch coverage of at least 85%.
 
-Submitting a PR with less than 80% of changed code covered by tests will result in the check failing. This is a
+Submitting a PR with less than 85% of changed code covered by tests will result in the check failing. This is a
 required check in Patina that will prevent PRs from being merged. If you believe that your code is truly not suitable
 to be covered with a unit test, then you can use the `#[coverage(off)]` attribute to disable coverage for that code
 section. Provide justification in the PR description as to why the code cannot be tested and add a comment in the code
@@ -142,7 +142,7 @@ config:
 graph TD
     A[Write Tests] --> B[Run Tests]
     B --> C[Check Coverage]
-    C --> D{Coverage >= 80%?}
+    C --> D{Coverage >= 85%?}
     D -- Yes --> E[Pass CI]
     D -- No --> F[Fail CI]
 ```

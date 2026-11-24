@@ -111,7 +111,7 @@ See `docs/src/component/interface.md` and
 
 ## Mocking and Testing
 
-- Target ≥80% code coverage. Patch coverage ≥80% is a required PR check.
+- Target ≥85% code coverage. Patch coverage ≥85% is a required PR check.
   - Write tests to cover critical logic and edge cases, not just to hit coverage numbers.
 - Test naming: prefix with `test_<component_name>_` or `test_<service_name>_`.
 - Prefer `mockall` for trait mocking in unit tests. Use `#[automock]` on traits to generate mocks.
