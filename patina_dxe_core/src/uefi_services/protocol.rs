@@ -52,7 +52,7 @@ struct NotifyHolder {
 /// # TPL
 ///
 /// The caller must be at or below `TPL_NOTIFY` to access the protocol database.
-extern "efiapi" fn notify_install_trampoline(_event: efi::Event, context: *mut c_void) {
+extern "efiapi" fn notify_install_trampoline(event: efi::Event, context: *mut c_void) {
     if context.is_null() {
         return;
     }
@@ -75,7 +75,7 @@ extern "efiapi" fn notify_install_trampoline(_event: efi::Event, context: *mut c
             }
         };
         if let Some(handle) = Handle::from_raw(handle) {
-            (holder.callback)(handle);
+            (holder.callback)(handle, NotifyRegistration::from_raw(event, holder.registration, context));
         }
     }
 
@@ -260,18 +260,18 @@ impl ProtocolServices for CoreProtocolServices {
             }
         };
 
-        // Record the registration key so the trampoline can drain matching handles. This runs
-        // before any notification can fire, since queued notifications dispatch only once the TPL
-        // drops below TPL_CALLBACK after this call returns.
+        // Record the registration key before signaling the event: the callback may run before
+        // this method returns.
         // SAFETY: `context` is the `NotifyHolder` pointer created above and has not been freed.
         unsafe {
             (*context.cast::<NotifyHolder>()).registration = registration;
         }
 
         // Deliver handles that already have the protocol installed.
+        let token = NotifyRegistration::from_raw(event, registration, context);
         let _ = EVENT_DB.signal_event(event);
 
-        Ok(NotifyRegistration::from_raw(event, registration, context))
+        Ok(token)
     }
 
     fn cancel_install_notify(&self, registration: NotifyRegistration) -> Result<(), ProtocolError> {
@@ -1141,7 +1141,7 @@ mod tests {
             let seen: Rc<RefCell<Vec<Handle>>> = Rc::new(RefCell::new(Vec::new()));
             let recorder = Rc::clone(&seen);
             let registration = service
-                .register_install_notify(guid, Tpl::Callback, Box::new(move |h| recorder.borrow_mut().push(h)))
+                .register_install_notify(guid, Tpl::Callback, Box::new(move |h, _| recorder.borrow_mut().push(h)))
                 .unwrap();
 
             // The handle already had the protocol installed, so the callback fires synchronously
@@ -1162,7 +1162,7 @@ mod tests {
             let seen: Rc<RefCell<Vec<Handle>>> = Rc::new(RefCell::new(Vec::new()));
             let recorder = Rc::clone(&seen);
             let registration = service
-                .register_install_notify(guid, Tpl::Callback, Box::new(move |h| recorder.borrow_mut().push(h)))
+                .register_install_notify(guid, Tpl::Callback, Box::new(move |h, _| recorder.borrow_mut().push(h)))
                 .unwrap();
 
             // Nothing was installed for this protocol at registration time.
@@ -1187,7 +1187,7 @@ mod tests {
             let seen: Rc<RefCell<Vec<Handle>>> = Rc::new(RefCell::new(Vec::new()));
             let recorder = Rc::clone(&seen);
             let registration = service
-                .register_install_notify(guid, Tpl::Callback, Box::new(move |h| recorder.borrow_mut().push(h)))
+                .register_install_notify(guid, Tpl::Callback, Box::new(move |h, _| recorder.borrow_mut().push(h)))
                 .unwrap();
 
             // Note: A marker protocol works the same way as a regular protocol for install notifications.
@@ -1207,7 +1207,7 @@ mod tests {
             let seen: Rc<RefCell<Vec<Handle>>> = Rc::new(RefCell::new(Vec::new()));
             let recorder = Rc::clone(&seen);
             let registration = service
-                .register_install_notify(guid, Tpl::Callback, Box::new(move |h| recorder.borrow_mut().push(h)))
+                .register_install_notify(guid, Tpl::Callback, Box::new(move |h, _| recorder.borrow_mut().push(h)))
                 .unwrap();
 
             assert!(seen.borrow().is_empty());
@@ -1227,7 +1227,7 @@ mod tests {
             let service = CoreProtocolServices;
             let guid = test_guid("16161616-1616-1616-1616-161616161616");
 
-            let result = service.register_install_notify(guid, Tpl::HighLevel, Box::new(|_h| {}));
+            let result = service.register_install_notify(guid, Tpl::HighLevel, Box::new(|_h, _| {}));
 
             assert_eq!(result.err(), Some(ProtocolError::InvalidParameter));
         });
@@ -1242,7 +1242,7 @@ mod tests {
             let count = Rc::new(RefCell::new(0usize));
             let counter = Rc::clone(&count);
             let registration = service
-                .register_install_notify(guid, Tpl::Callback, Box::new(move |_h| *counter.borrow_mut() += 1))
+                .register_install_notify(guid, Tpl::Callback, Box::new(move |_h, _| *counter.borrow_mut() += 1))
                 .unwrap();
 
             service.cancel_install_notify(registration).unwrap();
@@ -1266,7 +1266,7 @@ mod tests {
                 .register_install_notify(
                     guid,
                     Tpl::Callback,
-                    Box::new(move |_h| {
+                    Box::new(move |_h, _| {
                         let _ = &captured;
                     }),
                 )
@@ -1298,11 +1298,6 @@ mod tests {
             let service = CoreProtocolServices;
             let guid = test_guid("13131313-1313-1313-1313-131313131313");
 
-            // The callback needs its own `NotifyRegistration` to cancel itself, but that value is
-            // only known after `register_install_notify` returns, so it is threaded through after.
-            let self_registration: Rc<RefCell<Option<NotifyRegistration>>> = Rc::new(RefCell::new(None));
-            let self_registration_in_callback = Rc::clone(&self_registration);
-
             // The closure's capture is the only thing that can prove the boxed `NotifyHolder` (and
             // this `Rc`) was actually dropped, and only after the callback finished running.
             let marker = Rc::new(());
@@ -1310,29 +1305,62 @@ mod tests {
             let ran_after_self_cancel = Rc::new(RefCell::new(0usize));
             let ran_after_self_cancel_in_callback = Rc::clone(&ran_after_self_cancel);
 
-            let registration = service
+            service
                 .register_install_notify(
                     guid,
                     Tpl::Callback,
-                    Box::new(move |_handle| {
+                    Box::new(move |_handle, registration| {
                         let _ = &captured;
-                        if let Some(reg) = self_registration_in_callback.borrow_mut().take() {
-                            assert_eq!(CoreProtocolServices.cancel_install_notify(reg), Ok(()));
-                        }
+                        assert_eq!(CoreProtocolServices.cancel_install_notify(registration), Ok(()));
                         // If the closure's own captured state had been freed by the call above,
                         // touching captured state here would be a use-after-free.
                         *ran_after_self_cancel_in_callback.borrow_mut() += 1;
                     }),
                 )
                 .unwrap();
-            self_registration.replace(Some(registration));
-
             // Nothing was installed for this protocol at registration time, so the callback (and
             // its nested self-cancel) only runs once this install signals the registration's event.
             service.install_interface(None, guid, fake_interface(0x9000)).unwrap();
 
             assert_eq!(*ran_after_self_cancel.borrow(), 1);
             assert_eq!(Rc::strong_count(&marker), 1);
+        });
+    }
+
+    #[test]
+    fn test_protocol_services_self_managed_notify_cancels_during_registration() {
+        struct TestNotifyMarker;
+
+        // SAFETY: This test marker protocol has no interface and uses a unique GUID.
+        unsafe impl ProtocolInterface for TestNotifyMarker {
+            const PROTOCOL_GUID: BinaryGuid = BinaryGuid::from_string("17171717-1717-1717-1717-171717171717");
+        }
+
+        impl patina::protocol::MarkerProtocol for TestNotifyMarker {}
+
+        with_locked_state(|| {
+            let service = CoreProtocolServices;
+            let guid = TestNotifyMarker::PROTOCOL_GUID;
+            service.install_marker(None, guid).unwrap();
+            service.install_marker(None, guid).unwrap();
+
+            let count = Rc::new(Cell::new(0));
+            let callback_count = count.clone();
+            let marker = Rc::new(());
+            let captured = marker.clone();
+            service
+                .on_protocol_installed_self_managed::<TestNotifyMarker>(Tpl::Callback, move |_, registration| {
+                    let _ = &captured;
+                    callback_count.set(callback_count.get() + 1);
+                    assert_eq!(CoreProtocolServices.cancel_install_notify(registration), Ok(()));
+                    assert_eq!(Rc::strong_count(&captured), 2);
+                })
+                .unwrap();
+
+            assert_eq!(count.get(), 1);
+            assert_eq!(Rc::strong_count(&marker), 1);
+            service.install_marker(None, guid).unwrap();
+            assert_eq!(count.get(), 1);
         });
     }
 
@@ -1351,7 +1379,7 @@ mod tests {
                 .register_install_notify(
                     guid_a,
                     Tpl::Notify,
-                    Box::new(move |_handle| {
+                    Box::new(move |_handle, _| {
                         let reg_b = registration_b_slot_for_a
                             .borrow_mut()
                             .take()
@@ -1372,7 +1400,7 @@ mod tests {
                 .register_install_notify(
                     guid_b,
                     Tpl::Callback,
-                    Box::new(move |_handle| {
+                    Box::new(move |_handle, _| {
                         let _ = &captured;
                         CoreProtocolServices.install_interface(None, guid_a, fake_interface(0xA000)).unwrap();
                         // Registration B was cancelled above, nested inside this call, while this

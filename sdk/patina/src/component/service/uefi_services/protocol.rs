@@ -127,17 +127,19 @@ impl ProtocolPtr {
     }
 }
 
-/// A callback invoked with the handle of each interface installed for a watched protocol.
+/// A callback invoked with the handle of each interface installed for a watched protocol and
+/// its notification registration.
 ///
 /// Supplied to [`ProtocolServices::register_install_notify`] (usually using
 /// [`ProtocolServicesExt::on_protocol_installed`]). It runs for handles already present when the
 /// notification is registered and for every future install, until the registration is cancelled.
-pub type NotifyCallback = Box<dyn FnMut(Handle) + 'static>;
+pub type NotifyCallback = Box<dyn FnMut(Handle, NotifyRegistration) + 'static>;
 
 /// An opaque token for an active protocol-installation notification.
 ///
-/// Returned by [`ProtocolServicesExt::on_protocol_installed`]. Keep it for as long as the
-/// notification should stay active, then pass it to [`ProtocolServicesExt::cancel`] to stop it.
+/// Returned by caller-managed registration methods or passed to self-managed callbacks. Keep it
+/// for as long as the notification should stay active, then pass it to
+/// [`ProtocolServices::cancel_install_notify`] to stop it.
 /// Dropping the token does not cancel the notification. The registration is intentionally long-lived
 /// so it can outlive the component that created it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -602,14 +604,17 @@ pub trait ProtocolServices {
     /// Registers `callback` to run for each handle on which `protocol` is installed.
     ///
     /// The callback runs once for each handle that already has the protocol installed, and again
-    /// for every future install, until the returned [`NotifyRegistration`] is cancelled with
-    /// [`Self::cancel_install_notify`]. The callback runs at `notify_tpl`.
+    /// for every future install, until the registration is cancelled with
+    /// [`Self::cancel_install_notify`]. The callback runs at `notify_tpl` and receives the
+    /// registration, which it may cancel even if invoked before this method returns. In that case
+    /// the returned registration is no longer active.
     ///
     /// # Errors
     ///
     /// Returns [`ProtocolError::OutOfResources`] if the notification could not be registered.
     /// Returns [`ProtocolError::InvalidParameter`] if `notify_tpl` is [`Tpl::HighLevel`], which this
     /// registration cannot support.
+    #[doc(hidden)]
     fn register_install_notify(
         &self,
         protocol: BinaryGuid,
@@ -998,6 +1003,7 @@ pub trait ProtocolServicesExt: ProtocolServices {
     /// Store the returned [`NotifyRegistration`] for as long as the notification should stay active
     /// (for example in a service), and cancel it with [`Self::cancel`] when done. Dropping the
     /// registration does not cancel it. The callback runs at `notify_tpl`.
+    /// Use [`Self::on_protocol_installed_self_managed`] when the callback needs to cancel itself.
     ///
     /// # Errors
     ///
@@ -1007,12 +1013,53 @@ pub trait ProtocolServicesExt: ProtocolServices {
     fn on_protocol_installed<P: ProtocolInterface>(
         &self,
         notify_tpl: Tpl,
-        callback: impl FnMut(Handle) + 'static,
+        mut callback: impl FnMut(Handle) + 'static,
     ) -> Result<NotifyRegistration, ProtocolError> {
-        self.register_install_notify(P::PROTOCOL_GUID, notify_tpl, Box::new(callback))
+        self.register_install_notify(
+            P::PROTOCOL_GUID,
+            notify_tpl,
+            Box::new(move |handle, _registration| callback(handle)),
+        )
     }
 
-    /// Cancels a notification returned by [`Self::on_protocol_installed`].
+    /// Registers a callback for each present and future install of protocol `P`, giving it its own
+    /// registration instead of returning it to the caller.
+    ///
+    /// The callback is responsible for cancelling the registration when it is no longer needed.
+    /// It may run and cancel itself before this method returns.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use patina::component::service::{Service, uefi_services::protocol::{ProtocolServices, ProtocolServicesExt, Tpl}};
+    /// use patina::error::Result;
+    /// use patina::standard::efi::protocols::rng::Protocol as RngProtocol;
+    ///
+    /// fn entry_point(protocols: Service<dyn ProtocolServices>) -> Result<()> {
+    ///     let cancel_service = protocols.clone();
+    ///     protocols.on_protocol_installed_self_managed::<RngProtocol>(Tpl::Callback, move |handle, registration| {
+    ///         log::info!("RNG protocol installed on {handle:?}");
+    ///         if let Err(error) = cancel_service.cancel(registration) {
+    ///             log::error!("Failed to cancel notification: {error:?}");
+    ///         }
+    ///     })?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns any error from [`ProtocolServices::register_install_notify`].
+    fn on_protocol_installed_self_managed<P: ProtocolInterface>(
+        &self,
+        notify_tpl: Tpl,
+        callback: impl FnMut(Handle, NotifyRegistration) + 'static,
+    ) -> Result<(), ProtocolError> {
+        self.register_install_notify(P::PROTOCOL_GUID, notify_tpl, Box::new(callback)).map(|_| ())
+    }
+
+    /// Cancels a notification created by [`Self::on_protocol_installed`] or
+    /// [`Self::on_protocol_installed_self_managed`].
     ///
     /// # Errors
     ///
@@ -1756,7 +1803,9 @@ mod tests {
     #[test]
     fn test_protocol_services_ext_notify() {
         let mut mock = MockProtocolServices::new();
-        mock.expect_register_install_notify().times(1).returning(|_, _, _| {
+        mock.expect_register_install_notify().times(1).returning(|guid, tpl, _| {
+            assert_eq!(guid, FakeProtocol::PROTOCOL_GUID);
+            assert_eq!(tpl, Tpl::Callback);
             Ok(NotifyRegistration::from_raw(core::ptr::dangling_mut::<c_void>(), 2 as *mut c_void, 3 as *mut c_void))
         });
         mock.expect_cancel_install_notify().times(1).returning(|reg| {
@@ -1768,6 +1817,69 @@ mod tests {
         assert_eq!(registration.registration(), 2 as *mut c_void);
         assert_eq!(registration.context(), 3 as *mut c_void);
         assert!(mock.cancel(registration).is_ok());
+    }
+
+    #[test]
+    fn test_protocol_services_ext_on_protocol_installed_callback() {
+        use alloc::rc::Rc;
+        use core::cell::Cell;
+
+        let registration = NotifyRegistration::from_raw(core::ptr::dangling_mut(), 2 as *mut c_void, 3 as *mut c_void);
+        let mut mock = MockProtocolServices::new();
+        mock.expect_register_install_notify().once().returning(move |guid, tpl, mut callback| {
+            assert_eq!(guid, FakeProtocol::PROTOCOL_GUID);
+            assert_eq!(tpl, Tpl::Callback);
+            callback(fake_handle(), registration);
+            Ok(registration)
+        });
+
+        let received = Rc::new(Cell::new(None));
+        let seen = received.clone();
+        assert_eq!(
+            mock.on_protocol_installed::<FakeProtocol>(Tpl::Callback, move |handle| seen.set(Some(handle))),
+            Ok(registration)
+        );
+        assert_eq!(received.get(), Some(fake_handle()));
+    }
+
+    #[test]
+    fn test_protocol_services_ext_on_protocol_installed_self_managed() {
+        use alloc::rc::Rc;
+        use core::cell::Cell;
+
+        let registration = NotifyRegistration::from_raw(core::ptr::dangling_mut(), 2 as *mut c_void, 3 as *mut c_void);
+        let mut mock = MockProtocolServices::new();
+        mock.expect_register_install_notify().once().returning(move |guid, tpl, mut callback| {
+            assert_eq!(guid, FakeMarker::PROTOCOL_GUID);
+            assert_eq!(tpl, Tpl::Notify);
+            callback(fake_handle(), registration);
+            Ok(registration)
+        });
+
+        let received = Rc::new(Cell::new(None));
+        let seen = received.clone();
+        assert_eq!(
+            mock.on_protocol_installed_self_managed::<FakeMarker>(Tpl::Notify, move |handle, token| {
+                seen.set(Some((handle, token)));
+            }),
+            Ok(())
+        );
+        assert_eq!(received.get(), Some((fake_handle(), registration)));
+    }
+
+    #[test]
+    fn test_protocol_services_ext_on_protocol_installed_propagates_errors() {
+        let mut mock = MockProtocolServices::new();
+        mock.expect_register_install_notify().times(2).returning(|_, _, _| Err(ProtocolError::OutOfResources));
+
+        assert_eq!(
+            mock.on_protocol_installed::<FakeProtocol>(Tpl::Callback, |_| {}),
+            Err(ProtocolError::OutOfResources)
+        );
+        assert_eq!(
+            mock.on_protocol_installed_self_managed::<FakeMarker>(Tpl::Callback, |_, _| {}),
+            Err(ProtocolError::OutOfResources)
+        );
     }
 
     #[test]
