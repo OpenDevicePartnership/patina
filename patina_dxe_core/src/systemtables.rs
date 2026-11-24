@@ -940,7 +940,7 @@ impl SystemTableChecksumInstaller {
             protocols.register_install_notify(
                 *guid,
                 Tpl::Callback,
-                Box::new(|_handle| {
+                Box::new(|_handle, _registration| {
                     let Ok(mut guard) = SYSTEM_TABLE.checked_lock() else {
                         log::error!("Cannot update system table checksums: system table is locked");
                         return;

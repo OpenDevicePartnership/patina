@@ -434,7 +434,14 @@ mod tests {
         let mut protocols = MockProtocolServices::new();
         protocols.expect_interface_on_handle().once().returning(|_, _| Err(ProtocolError::NotFound));
         protocols.expect_register_install_notify().once().returning(|_, _, mut callback| {
-            callback(Handle::from_raw(core::ptr::dangling_mut()).expect("dangling pointer is non-null"));
+            callback(
+                Handle::from_raw(core::ptr::dangling_mut()).expect("dangling pointer is non-null"),
+                NotifyRegistration::from_raw(
+                    core::ptr::dangling_mut(),
+                    core::ptr::dangling_mut(),
+                    core::ptr::dangling_mut(),
+                ),
+            );
             Ok(NotifyRegistration::from_raw(
                 core::ptr::dangling_mut(),
                 core::ptr::dangling_mut(),
@@ -494,8 +501,13 @@ mod tests {
         protocols.expect_register_install_notify().once().returning(|_, _, mut callback| {
             // Delivered twice to prove the report only happens once.
             let handle = Handle::from_raw(core::ptr::dangling_mut()).expect("dangling pointer is non-null");
-            callback(handle);
-            callback(handle);
+            let registration = NotifyRegistration::from_raw(
+                core::ptr::dangling_mut(),
+                core::ptr::dangling_mut(),
+                core::ptr::dangling_mut(),
+            );
+            callback(handle, registration);
+            callback(handle, registration);
             Ok(NotifyRegistration::from_raw(
                 core::ptr::dangling_mut(),
                 core::ptr::dangling_mut(),

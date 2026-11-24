@@ -368,7 +368,7 @@ mod tests {
             .withf(|guid, tpl, _| guid == &mm_comm_buffer_update::PROTOCOL_GUID && *tpl == Tpl::Callback)
             .returning(|_, _, mut callback| {
                 // The DXE Core delivers already-installed handles during registration.
-                callback(fake_handle());
+                callback(fake_handle(), fake_registration());
                 Ok(fake_registration())
             });
 
