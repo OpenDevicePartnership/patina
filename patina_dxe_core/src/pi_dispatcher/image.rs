@@ -92,22 +92,12 @@ impl PrivateImageData {
         let image_size = usize::try_from(image_info.image_size).map_err(|_| EfiError::LoadError)?;
         let section_alignment = usize::try_from(pe_info.section_alignment).map_err(|_| EfiError::LoadError)?;
 
-        // if we have a unique alignment requirement, we need to overallocate the buffer to ensure we can align the base
-        let page_count = if section_alignment > UEFI_PAGE_SIZE {
-            image_size
-                .checked_add(section_alignment)
-                .map(|size| uefi_size_to_pages!(size))
-                .ok_or(EfiError::LoadError)?
-        } else {
-            uefi_size_to_pages!(image_size)
-        };
+        // the memory manager aligns the base of the allocation, so no extra pages are needed for alignment
+        let page_count = uefi_size_to_pages!(image_size);
 
         let options = AllocationOptions::new()
             .with_memory_type(EfiMemoryType::from_efi(image_info.image_code_type)?)
-            // in order to support compatibility mode, we need to allow for section alignment that is less than the page
-            // size. We are allocating pages, the section alignment must be a power of two and if we are less than the
-            // page size it will be guaranteed that the alignment is valid for a page.
-            .with_alignment(section_alignment.max(UEFI_PAGE_SIZE));
+            .with_alignment(section_alignment);
 
         #[allow(deprecated)]
         let bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_uninitialized_boxed_slice::<u8>();
@@ -177,15 +167,10 @@ impl PrivateImageData {
         let alignment = usize::try_from(self.pe_info.section_alignment).map_err(|_| EfiError::LoadError)?;
         let memory_type = EfiMemoryType::from_efi(self.image_info.image_code_type)?;
 
-        // if we have a unique alignment requirement, we need to overallocate the buffer to ensure we can align the base
-        let page_count: usize =
-            if alignment > UEFI_PAGE_SIZE { uefi_size_to_pages!(size + alignment) } else { uefi_size_to_pages!(size) };
+        // the memory manager aligns the base of the allocation, so no extra pages are needed for alignment
+        let page_count = uefi_size_to_pages!(size);
 
-        // in order to handle compatibility mode, we need to account for section alignment less than the page size
-        // section alignment is a power of two and if we are less than the page size, the alignment will be valid to
-        // be at a page.
-        let options =
-            AllocationOptions::new().with_memory_type(memory_type).with_alignment(alignment.max(UEFI_PAGE_SIZE));
+        let options = AllocationOptions::new().with_memory_type(memory_type).with_alignment(alignment);
 
         #[allow(deprecated)]
         let mut bytes = CoreMemoryManager.allocate_pages(page_count, options)?.into_uninitialized_boxed_slice::<u8>();
@@ -1535,7 +1520,7 @@ fn core_load_pe_image(
         }
     };
 
-    let alignment = pe_info.section_alignment as usize; // Need to align the base address with section alignment via overallocation
+    let alignment = pe_info.section_alignment as usize;
     let size = pe_info.size_of_image as usize;
 
     let compat_mode_required = pe_info.image_type == pecoff::EFI_IMAGE_SUBSYSTEM_EFI_APPLICATION && !pe_info.nx_compat;
@@ -2199,6 +2184,47 @@ mod tests {
             );
             let status = PI_DISPATCHER.load_image(false, protocol_db::DXE_CORE_HANDLE, None, Some(image.as_slice()));
             assert!(matches!(status, Err(ImageStatus::LoadError(EfiError::LoadError))), "{status:?}");
+        });
+    }
+
+    #[test]
+    fn image_allocations_should_not_overallocate_for_section_alignment_above_page_size() {
+        const LARGE_ALIGNMENT: u32 = 0x10000;
+
+        with_locked_state(|| {
+            let image = std::fs::read(test_paths::RUST_IMAGE_HII_RESOURCE).expect("failed to read test image");
+            let load = |section_alignment: u32| {
+                let mut protocol = empty_image_info();
+                protocol.image_size = u64::from(UefiPeInfo::parse(&image).expect("valid PE image").size_of_image);
+                protocol.image_code_type = efi::BOOT_SERVICES_CODE;
+                protocol.image_data_type = efi::BOOT_SERVICES_DATA;
+
+                // Only the allocation alignment is changed. Loading and locating the resource section needs the real
+                // layout, so the real alignment is restored around them.
+                let pe_info = UefiPeInfo::parse(&image).expect("test image should contain a valid PE image");
+                let real_alignment = pe_info.section_alignment;
+                let mut altered_pe_info = pe_info.clone();
+                altered_pe_info.section_alignment = section_alignment;
+
+                let mut image_data =
+                    PrivateImageData::new(protocol, altered_pe_info).expect("image data should initialize");
+                let image_buffer_len = image_data.image_buffer.len();
+                let image_base = image_data.image_buffer.as_ptr() as usize;
+                image_data.pe_info.section_alignment = real_alignment;
+                image_data.load_image(&image).expect("image should load");
+                image_data.pe_info.section_alignment = section_alignment;
+                image_data.load_resource_section(&image).expect("resource section should load");
+                let hii = image_data.hii_resource_section.as_ref().expect("test image has an HII resource section");
+                (image_buffer_len, image_base, hii.len(), hii.as_ptr() as usize)
+            };
+
+            let (page_len, _, page_hii_len, _) = load(UEFI_PAGE_SIZE as u32);
+            let (large_len, large_base, large_hii_len, large_hii_base) = load(LARGE_ALIGNMENT);
+
+            assert_eq!(large_len, page_len, "image buffer must not grow to align the base");
+            assert_eq!(large_hii_len, page_hii_len, "HII resource buffer must not grow to align the base");
+            assert_eq!(large_base % LARGE_ALIGNMENT as usize, 0);
+            assert_eq!(large_hii_base % LARGE_ALIGNMENT as usize, 0);
         });
     }
 
