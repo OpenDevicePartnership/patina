@@ -193,6 +193,7 @@ mod isolated {
 
     /// A partially freed small-block page stays accessible until its last live block is freed.
     #[patina_test]
+    #[category(integration)]
     fn small_block_page_retires_only_after_last_free() -> patina_test::error::Result {
         with_fixture(|fixture| {
             let first = loop {
@@ -235,6 +236,7 @@ mod isolated {
 
     /// Every nonmetadata page is mapped exactly when independently tracked live blocks occupy it.
     #[patina_test]
+    #[category(integration)]
     fn whole_regions_match_live_block_occupancy() -> patina_test::error::Result {
         with_fixture(|fixture| {
             for _ in 0..20 {
@@ -259,6 +261,7 @@ mod isolated {
 
     /// Retired pages can change block class without keeping empty pages mapped or harming live neighbors.
     #[patina_test]
+    #[category(integration)]
     fn mixed_classes_reuse_and_retire_pages() -> patina_test::error::Result {
         with_fixture(|fixture| {
             let mut original_pages = Vec::new();
@@ -305,6 +308,7 @@ mod isolated {
 
     /// Multi-page pool allocations unmap every freed page while adjacent allocations remain accessible.
     #[patina_test]
+    #[category(integration)]
     fn medium_pool_runs_retire_independently() -> patina_test::error::Result {
         with_fixture(|fixture| {
             let first = fixture.allocate(2 * UEFI_PAGE_SIZE)?;
@@ -334,6 +338,7 @@ mod isolated {
 /// always serve new allocations in FIFO order. Interrupts are disabled in this test just to protect against the
 /// rare case where event handling in the middle of the allocation could cause the free list to wrap around.
 #[patina_test]
+#[category(integration)]
 fn pool_allocations_with_interrupts_disabled_are_unique() -> patina_test::error::Result {
     const ALLOCATION_SIZE: usize = 0x20;
 
@@ -367,6 +372,7 @@ fn pool_allocations_with_interrupts_disabled_are_unique() -> patina_test::error:
 
 /// Verifies that a pool page is unmapped once every block in it has been freed.
 #[patina_test]
+#[category(integration)]
 fn fully_freed_pool_page_is_unmapped() -> patina_test::error::Result {
     // A page sized block occupies an entire page on its own, so freeing it frees the whole page.
     let layout = Layout::from_size_align(UEFI_PAGE_SIZE, UEFI_PAGE_SIZE).map_err(|_| "Bad layout")?;
@@ -403,6 +409,7 @@ fn fully_freed_pool_page_is_unmapped() -> patina_test::error::Result {
 /// Verifies that the allocators do not have memory mapped that they have not handed out, and that the retirement
 /// state tracked by the GCD matches the page table.
 #[patina_test]
+#[category(integration)]
 #[on(event = BinaryGuid(efi::EVENT_GROUP_READY_TO_BOOT))]
 fn unused_pool_memory_is_unmapped() -> patina_test::error::Result {
     let ranges: Vec<_> = STATIC_ALLOCATORS

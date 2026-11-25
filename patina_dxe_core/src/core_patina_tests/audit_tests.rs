@@ -21,6 +21,7 @@ use patina::standard::efi;
 // Verify that all adjacent free memory descriptors in the GCD are merged together. This must run before EBS because
 // it allocates memory.
 #[patina_test]
+#[category(integration)]
 #[on(event = BinaryGuid(efi::EVENT_GROUP_READY_TO_BOOT))]
 #[on(event = BinaryGuid(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES))]
 fn gcd_free_memory_merged_test() -> patina_test::error::Result {
