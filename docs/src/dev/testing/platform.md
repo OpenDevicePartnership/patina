@@ -60,6 +60,51 @@ fn my_test1() -> Result { todo!() }
 fn my_test2() -> Result { todo!() }
 ```
 
+### Naming and Filtering Tests
+
+Patina provides standard test categories and modifiers with predefined filters. Platforms and component crates
+should use these standard names where applicable, but may also define custom category modules and function-name
+modifiers. The standard categories are:
+
+- `integration`: verifies interactions across interfaces or components on a platform.
+- `stress`: exercises a capability repeatedly or intensively.
+- `smoke`: performs a small, basic check of a critical capability.
+
+Name each function for the behavior it verifies. Append optional modifiers to describe execution requirements:
+
+- `_slow`: expected to take substantially longer than typical tests or run repeatedly during boot.
+- `_heavy`: requires substantially more resources than typical tests, such as memory or processor capacity.
+
+A test may have multiple standard or custom modifiers: for example, `stress::page_mapping_heavy_slow` uses two standard modifiers, while `security::key_rotation_slow_destructive` uses the standard `_slow` and custom
+`_destructive` modifiers in a custom `security` category. Renaming or moving a test changes its reported name; update
+external filters that depend on the old path. Tests in other repositories are not automatically classified.
+
+Category filters match complete module segments, including tests in nested modules. Modifier filters inspect the
+function name for an underscore-separated word, regardless of order. Consequently, a descriptive name containing
+the modifier word also matches; avoid using these words for unrelated purposes. Use `patina_test::category!(security)`,
+`patina_test::modifier!(destructive)`, and `patina_test::exclude_modifier!(destructive)` for custom names. These
+macros take compile-time identifiers; modifiers must be single words. Category filters are includes; modifier
+filters are predicates.
+
+For example, select integration **or** stress tests, then exclude slow and heavy tests:
+
+```rust,no_run
+# extern crate patina_test;
+use patina_test::component::{Filter, TestRunner};
+
+let runner = TestRunner::default()
+    .with_filter(Filter::CATEGORY_INTEGRATION)
+    .with_filter(Filter::CATEGORY_STRESS)
+    .with_filter(Filter::EXCLUDE_MODIFIER_SLOW)
+    .with_filter(Filter::EXCLUDE_MODIFIER_HEAVY);
+```
+
+`Filter::CATEGORY_SMOKE` selects smoke tests; `Filter::MODIFIER_SLOW` and `Filter::MODIFIER_HEAVY` select tests
+with those modifiers. Category filters and substring includes combine with OR. All modifier requirements and
+predicates must pass, so `MODIFIER_SLOW` and `MODIFIER_HEAVY` together select tests with **both** modifiers.
+To select either, use one custom predicate. With no category or substring include filters, tests from all
+categories, including unclassified tests, remain eligible.
+
 ### Test Triggers
 
 There are three supported trigger types for patina_test tests.
@@ -127,6 +172,8 @@ Due to this fact, we have some configuration options with the test component. Th
 the `with_filter` function, which allows you to filter down the tests to run. The logic behind this is similar to
 the filtering provided by `cargo test`. That is to say, if you pass it a filter of `X64`, it will only run tests
 with `X64` in their name. The function name is `<module_path>::<name>`. You can call `with_filter` multiple times.
+Include patterns are combined with OR, excludes take priority, and all predicates must return true. Predicates
+receive the fully qualified name and accept named functions or non-capturing closures.
 
 The next customization is `debug_mode` which enables logging during test execution (false by default). The final
 customization is `fail_fast` which will immediately exit the test harness as soon as a single test fails (false by
