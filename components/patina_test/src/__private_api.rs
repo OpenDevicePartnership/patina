@@ -63,6 +63,8 @@ pub enum TestTrigger {
 #[derive(Debug, Clone, Copy)]
 pub struct TestCase {
     pub name: &'static str,
+    pub category: Option<&'static str>,
+    pub modifiers: &'static [&'static str],
     pub triggers: &'static [TestTrigger],
     pub skip: bool,
     pub should_fail: bool,
@@ -82,10 +84,16 @@ impl TestCase {
         for filter in filters {
             match filter {
                 Filter::Exclude(p) if self.name.contains(p) => return false,
-                Filter::Exclude(_) => {}
+                Filter::Modifier(modifier) if !self.modifiers.contains(modifier) => return false,
+                Filter::ExcludeModifier(modifier) if self.modifiers.contains(modifier) => return false,
+                Filter::Exclude(_) | Filter::Modifier(_) | Filter::ExcludeModifier(_) => {}
                 Filter::Include(p) => {
                     has_includes = true;
                     included |= self.name.contains(p);
+                }
+                Filter::Category(category) => {
+                    has_includes = true;
+                    included |= self.category == Some(*category);
                 }
             }
         }
@@ -173,9 +181,29 @@ mod tests {
     extern crate std;
 
     #[test]
+    fn test_standard_filters_match_test_case() {
+        let test = TestCase {
+            name: "test_crate::stress::exercises_mapping_slow_heavy",
+            category: Some("stress"),
+            modifiers: &["slow", "heavy"],
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+        assert!(test.should_run(&[Filter::CATEGORY_STRESS, Filter::MODIFIER_SLOW, Filter::MODIFIER_HEAVY]));
+        assert!(!test.should_run(&[Filter::CATEGORY_INTEGRATION]));
+        assert!(!test.should_run(&[Filter::CATEGORY_STRESS, Filter::EXCLUDE_MODIFIER_SLOW]));
+        assert!(!test.should_run(&[Filter::CATEGORY_STRESS, Filter::EXCLUDE_MODIFIER_HEAVY]));
+    }
+
+    #[test]
     fn test_should_run() {
         let test_case = TestCase {
             name: "test",
+            category: None,
+            modifiers: &[],
             triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: false,
@@ -193,6 +221,8 @@ mod tests {
     fn test_should_run_with_no_filters() {
         let test_case = TestCase {
             name: "test",
+            category: None,
+            modifiers: &[],
             triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: false,
@@ -207,6 +237,8 @@ mod tests {
     fn test_should_run_with_exclude_filters() {
         let test_case = TestCase {
             name: "my_crate::tests::test_case",
+            category: None,
+            modifiers: &[],
             triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: false,
@@ -225,11 +257,121 @@ mod tests {
     }
 
     #[test]
+    fn test_should_run_with_standard_filters() {
+        for (category, modifiers, expected) in [
+            (Some("smoke"), &[][..], [true, false, false, false, false]),
+            (Some("integration"), &["slow"][..], [false, true, false, true, false]),
+            (Some("stress"), &["heavy", "slow"][..], [false, false, true, true, true]),
+            (Some("stress"), &["heavy"][..], [false, false, true, false, true]),
+            (Some("Stress"), &["Slow"][..], [false, false, false, false, false]),
+            (None, &[][..], [false, false, false, false, false]),
+        ] {
+            let test_case = TestCase {
+                name: "crate::integration::slow_heavy",
+                category,
+                modifiers,
+                triggers: &[TestTrigger::Manual],
+                skip: false,
+                should_fail: false,
+                fail_msg: None,
+                func: |_| Ok(true),
+            };
+            for (filter, expected) in [
+                Filter::CATEGORY_SMOKE,
+                Filter::CATEGORY_INTEGRATION,
+                Filter::CATEGORY_STRESS,
+                Filter::MODIFIER_SLOW,
+                Filter::MODIFIER_HEAVY,
+            ]
+            .iter()
+            .zip(expected)
+            {
+                assert_eq!(test_case.should_run(core::slice::from_ref(filter)), expected);
+            }
+            assert_eq!(test_case.should_run(&[Filter::EXCLUDE_MODIFIER_SLOW]), !expected[3]);
+            assert_eq!(test_case.should_run(&[Filter::EXCLUDE_MODIFIER_HEAVY]), !expected[4]);
+        }
+
+        let test_case = TestCase {
+            name: "crate::stress::mapping_heavy",
+            category: Some("stress"),
+            modifiers: &["heavy"],
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+        assert!(test_case.should_run(&[
+            Filter::CATEGORY_INTEGRATION,
+            Filter::CATEGORY_STRESS,
+            Filter::EXCLUDE_MODIFIER_SLOW,
+        ]));
+        assert!(!test_case.should_run(&[Filter::CATEGORY_STRESS, Filter::EXCLUDE_MODIFIER_HEAVY]));
+        assert!(!test_case.should_run(&[Filter::MODIFIER_SLOW, Filter::MODIFIER_HEAVY]));
+    }
+
+    #[test]
+    fn test_should_run_with_custom_categories_and_modifiers() {
+        const SECURITY: Filter = Filter::Category("security");
+        const DESTRUCTIVE: Filter = Filter::Modifier("destructive");
+        const NOT_SLOW: Filter = Filter::ExcludeModifier("slow");
+        let filters = [SECURITY.clone(), DESTRUCTIVE.clone(), NOT_SLOW.clone()];
+        for (category, modifiers, expected) in [
+            (Some("security"), &["destructive"][..], true),
+            (Some("security"), &["destructive", "heavy"][..], true),
+            (Some("security"), &["slow", "destructive"][..], false),
+            (Some("security"), &[][..], false),
+            (Some("security_extra"), &["destructive"][..], false),
+            (None, &["destructive"][..], false),
+            (Some("security"), &["nondestructive"][..], false),
+        ] {
+            let test_case = TestCase {
+                name: "crate::security::key_rotation_destructive",
+                category,
+                modifiers,
+                triggers: &[TestTrigger::Manual],
+                skip: false,
+                should_fail: false,
+                fail_msg: None,
+                func: |_| Ok(true),
+            };
+            assert_eq!(test_case.should_run(&filters), expected);
+            assert!(!TestCase { skip: true, ..test_case }.should_run(&filters));
+        }
+
+        let test_case = TestCase {
+            name: "crate::security::key_rotation_destructive",
+            category: Some("security"),
+            modifiers: &["destructive", "needs_reboot"],
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+        assert!(test_case.should_run(&[Filter::CATEGORY_SMOKE, Filter::include("::security::")]));
+        assert!(test_case.should_run(&[Filter::include("missing"), Filter::include("::security::")]));
+        assert!(test_case.should_run(&[Filter::include("::missing::"), Filter::include("key_rotation")]));
+        assert!(!test_case.should_run(&[Filter::include("::security::"), Filter::exclude("key_rotation")]));
+        assert!(!test_case.should_run(&[SECURITY, Filter::ExcludeModifier("destructive")]));
+        assert!(!test_case.should_run(&[DESTRUCTIVE.clone(), Filter::MODIFIER_SLOW]));
+        assert!(!test_case.should_run(&[DESTRUCTIVE, Filter::exclude("key_rotation")]));
+        assert!(test_case.should_run(&[Filter::EXCLUDE_MODIFIER_SLOW]));
+        assert!(test_case.should_run(&[Filter::Modifier("needs_reboot")]));
+        assert!(!test_case.should_run(&[Filter::Modifier("needs")]));
+        assert!(test_case.should_run(&[Filter::Category("security"), Filter::include("missing")]));
+        assert!(!test_case.should_run(&[Filter::Category("missing"), Filter::include("missing")]));
+    }
+
+    #[test]
     fn test_run_with_default_settings() {
         let mut storage = Storage::new();
 
         let test_case_pass = TestCase {
             name: "test",
+            category: None,
+            modifiers: &[],
             triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: false,
@@ -239,6 +381,8 @@ mod tests {
 
         let test_case_fail = TestCase {
             name: "test",
+            category: None,
+            modifiers: &[],
             triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: false,
@@ -261,6 +405,8 @@ mod tests {
 
         let test_case_pass = TestCase {
             name: "test",
+            category: None,
+            modifiers: &[],
             triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: true,
@@ -269,6 +415,8 @@ mod tests {
         };
         let test_case_fail = TestCase {
             name: "test",
+            category: None,
+            modifiers: &[],
             triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: true,
@@ -292,6 +440,8 @@ mod tests {
         // Test that a test that fails with the expected message, should pass
         let test_case = TestCase {
             name: "test",
+            category: None,
+            modifiers: &[],
             triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: true,
@@ -305,6 +455,8 @@ mod tests {
         // Test that a test that fails with an unexpected message, should fail
         let test_case = TestCase {
             name: "test",
+            category: None,
+            modifiers: &[],
             triggers: &[TestTrigger::Manual],
             skip: false,
             should_fail: true,

@@ -492,6 +492,8 @@ mod tests {
             Box::leak(Box::new([TestTrigger::Timer(1_000_000), TestTrigger::Event(BinaryGuid::from_bytes(&[0; 16]))]));
         let test_case = Box::leak(Box::new(TestCase {
             name: "timer_creation_failure",
+            category: None,
+            modifiers: &[],
             triggers,
             skip: false,
             should_fail: false,

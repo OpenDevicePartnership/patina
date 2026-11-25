@@ -33,11 +33,169 @@ called for each `TestRunner` that discovers the test case. `debug_mode=true` tak
 that discovers a test case has `debug_mode=true`, then debug messages will be enabled for that test case regardless
 of the other `TestRunner`'s `debug_mode` configuration for that test case.
 
+For example, configure a runner:
+
+```rust,no_run
+# #[cfg(feature = "test-runner")]
+# {
+use patina_test::component::TestRunner;
+
+let runner = TestRunner::default()
+    .debug_mode(true)
+    .with_callback(|name, message| log::error!("Test {name} failed: {message}"));
+
+# let _ = runner;
+# }
+```
+
+In a platform's `ComponentInfo::components` implementation, register the runner with
+`add.component(runner)` before component dispatch starts. The Core performs the conversion automatically.
+
 > [!IMPORTANT]
 > `TestRunner` depends on `Service<dyn TimerEventServices>`. The DXE Core does not produce that service until the
 > `EFI_TIMER_ARCH_PROTOCOL` is available. As a result, `TestRunner` and all registered `patina_test` tests wait to run
 > until the platform installs the Timer Architectural Protocol. Tests will not run on a platform that never installs
 > it.
+
+## Test Organization and Filtering
+
+Patina provides standard test categories and modifiers with predefined filters. Platforms and component crates
+should use the standard names where applicable, but they are not an exhaustive list: either may define custom
+categories and modifiers for their own needs. Add metadata after `#[patina_test]`: an optional `#[category(name)]`
+and any number of modifiers using `#[modifier(name, ...)]`. Names must be unquoted identifiers, stored as
+case-sensitive strings; hyphens and spaces are not supported. Raw identifiers are stored without the `r#` prefix.
+The modifier attribute may be repeated; specifying more than one category is an error.
+
+The standard categories are:
+
+- `integration`: verifies interactions across interfaces or components on a platform (`Filter::CATEGORY_INTEGRATION`).
+- `stress`: exercises a capability repeatedly or intensively (`Filter::CATEGORY_STRESS`).
+- `smoke`: performs a small, basic check of a critical capability (`Filter::CATEGORY_SMOKE`).
+
+Use these standardized modifiers when applicable:
+
+- `slow`: expected to take substantially longer than typical tests or run repeatedly during boot
+  (`Filter::MODIFIER_SLOW` and `Filter::EXCLUDE_MODIFIER_SLOW`).
+- `heavy`: requires substantially more resources than typical tests, such as memory or processor capacity
+  (`Filter::MODIFIER_HEAVY` and `Filter::EXCLUDE_MODIFIER_HEAVY`).
+
+These modifiers are relative guidelines, not fixed time or resource limits. A test can have multiple standard
+or custom modifiers:
+
+```rust,no_run
+mod integration {
+    #[patina_test::patina_test]
+    #[category(integration)]
+    fn protocol_installation() -> patina_test::error::Result {
+        Ok(())
+    }
+
+    #[patina_test::patina_test]
+    #[category(integration)]
+    #[modifier(slow)]
+    fn protocol_timeout_slow() -> patina_test::error::Result {
+        Ok(())
+    }
+}
+
+mod stress {
+    #[patina_test::patina_test]
+    #[category(stress)]
+    #[modifier(heavy, slow)]
+    fn page_mapping_heavy_slow() -> patina_test::error::Result {
+        Ok(())
+    }
+}
+
+mod smoke {
+    #[patina_test::patina_test]
+    #[category(smoke)]
+    fn processor_startup() -> patina_test::error::Result {
+        Ok(())
+    }
+}
+
+mod security {
+    #[patina_test::patina_test]
+    #[category(security)]
+    #[modifier(slow, destructive)]
+    fn key_rotation_slow_destructive() -> patina_test::error::Result {
+        Ok(())
+    }
+}
+```
+
+Here, `security` is a custom category and `destructive` is a custom modifier. The
+[platform testing guide](../../docs/src/dev/testing/platform.md) describes the convention in more detail.
+
+Name filters match fully qualified test names, including their module paths. Category filters and substring include
+filters combine with **OR**; exclusions take priority; and **all** modifier requirements must
+match. With no category or substring include filters, tests from all categories, including unclassified tests,
+remain eligible. Categories and modifiers match the explicit metadata exactly; names and module paths do not
+implicitly assign metadata. Existing tests must be annotated to match metadata filters.
+
+For a quick run, select smoke tests and exclude slow or heavy tests:
+
+```rust,no_run
+# #[cfg(feature = "test-runner")]
+# {
+use patina_test::component::{Filter, TestRunner};
+
+let runner = TestRunner::default()
+    .with_filter(Filter::CATEGORY_SMOKE)
+    .with_filter(Filter::EXCLUDE_MODIFIER_SLOW)
+    .with_filter(Filter::EXCLUDE_MODIFIER_HEAVY);
+# let _ = runner;
+# }
+```
+
+To select integration **or** stress tests, use multiple category includes:
+
+```rust,no_run
+# #[cfg(feature = "test-runner")]
+# {
+use patina_test::component::{Filter, TestRunner};
+
+let runner = TestRunner::default()
+    .with_filter(Filter::CATEGORY_INTEGRATION)
+    .with_filter(Filter::CATEGORY_STRESS);
+# let _ = runner;
+# }
+```
+
+For a specialized run, select only heavy stress tests. Modifiers narrow the selected category, so combining
+`Filter::MODIFIER_HEAVY` and `Filter::MODIFIER_SLOW` would select tests with both modifiers:
+
+```rust,no_run
+# #[cfg(feature = "test-runner")]
+# {
+use patina_test::component::{Filter, TestRunner};
+
+let runner = TestRunner::default()
+    .with_filter(Filter::CATEGORY_STRESS)
+    .with_filter(Filter::MODIFIER_HEAVY);
+# let _ = runner;
+# }
+```
+
+Use `Filter::Category`, `Filter::Modifier`, and `Filter::ExcludeModifier` to filter custom categories and
+modifiers. For example, select slow tests in the `security` category, except those with the `destructive` modifier:
+
+```rust,no_run
+# #[cfg(feature = "test-runner")]
+# {
+use patina_test::component::{Filter, TestRunner};
+
+let runner = TestRunner::default()
+    .with_filter(Filter::Category("security"))
+    .with_filter(Filter::MODIFIER_SLOW)
+    .with_filter(Filter::ExcludeModifier("destructive"));
+# let _ = runner;
+# }
+```
+
+Register whichever runner configuration is appropriate for the platform. Multiple runners can be registered,
+but a test selected by more than one runner is scheduled only once, as described above.
 
 ## Feature Flags
 

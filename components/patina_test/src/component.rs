@@ -25,7 +25,7 @@ use patina::component::{
     },
 };
 
-/// A filter to include or exclude test cases whose name contains the pattern.
+/// A case-sensitive filter applied to test names or explicit metadata.
 ///
 /// # Example
 ///
@@ -38,7 +38,8 @@ use patina::component::{
 ///
 /// let runner = TestRunner::default()
 ///     .with_filter(Filter::include("x64"))
-///     .with_filter(Filter::exclude("aarch64"));
+///     .with_filter(Filter::exclude("aarch64"))
+///     .with_filter(Filter::EXCLUDE_MODIFIER_SLOW);
 /// ```
 #[derive(Debug, Clone)]
 pub enum Filter {
@@ -46,9 +47,30 @@ pub enum Filter {
     Include(&'static str),
     /// Do not run tests whose name contains the pattern.
     Exclude(&'static str),
+    /// Include tests with this exact category.
+    Category(&'static str),
+    /// Only run tests with this exact modifier.
+    Modifier(&'static str),
+    /// Do not run tests with this exact modifier.
+    ExcludeModifier(&'static str),
 }
 
 impl Filter {
+    /// Includes tests in the `integration` category.
+    pub const CATEGORY_INTEGRATION: Self = Self::Category("integration");
+    /// Includes tests in the `stress` category.
+    pub const CATEGORY_STRESS: Self = Self::Category("stress");
+    /// Includes tests in the `smoke` category.
+    pub const CATEGORY_SMOKE: Self = Self::Category("smoke");
+    /// Keeps tests with the `slow` modifier.
+    pub const MODIFIER_SLOW: Self = Self::Modifier("slow");
+    /// Keeps tests with the `heavy` modifier.
+    pub const MODIFIER_HEAVY: Self = Self::Modifier("heavy");
+    /// Excludes tests with the `slow` modifier.
+    pub const EXCLUDE_MODIFIER_SLOW: Self = Self::ExcludeModifier("slow");
+    /// Excludes tests with the `heavy` modifier.
+    pub const EXCLUDE_MODIFIER_HEAVY: Self = Self::ExcludeModifier("heavy");
+
     /// Creates an include filter. Tests whose name contains `pattern` will be included.
     pub fn include(pattern: &'static str) -> Self {
         Self::Include(pattern)
@@ -72,7 +94,7 @@ pub struct TestRunner {
 impl TestRunner {
     /// Adds a filter to control which tests are executed.
     ///
-    /// The filter pattern is matched against the full test name, which includes the module path.
+    /// Name filter patterns are matched against the full test name, which includes the module path.
     /// For example, if a test is defined in `my_crate::tests`, the name would be
     /// `my_crate::tests::test_case`.
     ///
@@ -80,6 +102,9 @@ impl TestRunner {
     ///   filters are specified, a test runs if it matches **any** of them.
     /// - [`Filter::Exclude`]: Prevents tests whose name contains the pattern from running. Exclude
     ///   filters take priority over include filters.
+    /// - [`Filter::Category`]: Includes tests with the exact category. Categories and name includes combine with OR.
+    /// - [`Filter::Modifier`]: Requires the exact modifier. All modifier filters must match.
+    /// - [`Filter::ExcludeModifier`]: Excludes tests with the exact modifier.
     ///
     /// This filter is case-sensitive. It can be called multiple times to add multiple filters.
     #[must_use]
@@ -192,6 +217,8 @@ pub(crate) mod tests {
     #[linkme::distributed_slice(TEST_TESTS)]
     pub static TEST_CASE1: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
+        category: None,
+        modifiers: &[],
         triggers: &[super::__private_api::TestTrigger::Manual],
         skip: false,
         should_fail: false,
@@ -202,6 +229,8 @@ pub(crate) mod tests {
     #[linkme::distributed_slice(TEST_TESTS)]
     pub static TEST_CASE2: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test",
+        category: None,
+        modifiers: &[],
         triggers: &[super::__private_api::TestTrigger::Manual],
         skip: true,
         should_fail: false,
@@ -211,6 +240,8 @@ pub(crate) mod tests {
 
     pub static TEST_CASE3: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "test_that_fails",
+        category: None,
+        modifiers: &[],
         triggers: &[super::__private_api::TestTrigger::Manual],
         skip: false,
         should_fail: false,
@@ -220,6 +251,8 @@ pub(crate) mod tests {
 
     pub static TEST_CASE4: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "event_triggered_test",
+        category: None,
+        modifiers: &[],
         triggers: &[super::__private_api::TestTrigger::Event(BinaryGuid::from_bytes(&[0; 16]))],
         skip: false,
         should_fail: false,
@@ -229,6 +262,8 @@ pub(crate) mod tests {
 
     pub static TEST_CASE5: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "timer_triggered_test",
+        category: None,
+        modifiers: &[],
         triggers: &[super::__private_api::TestTrigger::Timer(1_000_000)],
         skip: false,
         should_fail: false,
@@ -238,6 +273,8 @@ pub(crate) mod tests {
 
     pub static TEST_CASE_INVALID: super::__private_api::TestCase = super::__private_api::TestCase {
         name: "invalid_test",
+        category: None,
+        modifiers: &[],
         triggers: &[super::__private_api::TestTrigger::Event(BinaryGuid::from_bytes(&[0; 16]))],
         skip: false,
         should_fail: false,
@@ -405,6 +442,31 @@ pub(crate) mod tests {
         assert!(!skip_recorder.is_test_scheduled("test"));
         skip_recorder.run_manual_tests(&mut storage);
         assert!(format!("{}", *skip_recorder).contains("  test ... skipped"));
+    }
+
+    #[test]
+    fn test_modifier_filter_selects_tests_for_registration() {
+        use patina::component::service::uefi_services::{
+            event::MockEventServices, timer_event::MockTimerEventServices,
+        };
+
+        let mut storage = Storage::new();
+        storage.add_config(1i32);
+        let recorder = Service::mock(Box::new(Recorder::default()));
+        let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
+        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
+
+        let tagged = __private_api::TestCase { modifiers: &["slow"], ..TEST_CASE1 };
+        TestRunner::default()
+            .with_filter(Filter::MODIFIER_SLOW)
+            .register_tests(Box::leak(Box::new([tagged, TEST_CASE3])), &events, &timer, &recorder, &mut storage)
+            .expect("test registration should succeed");
+        assert!(recorder.is_test_scheduled("test"));
+        assert!(!recorder.is_test_scheduled("test_that_fails"));
+        recorder.run_manual_tests(&mut storage);
+        let output = format!("{}", *recorder);
+        assert!(output.contains("  test ... ok (1 passes)"));
+        assert!(output.contains("test_that_fails ... skipped"));
     }
 
     #[test]
