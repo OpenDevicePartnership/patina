@@ -35,15 +35,19 @@ impl CompatMemoryManager for CoreCompatMemoryManager {
     }
 }
 
-#[patina_test]
-#[cfg_attr(coverage, coverage(off))]
-fn compat_memory_manager_frees_pool_allocation_test(
-    cm: Service<dyn CompatMemoryManager>,
-) -> patina_test::error::Result {
-    let ptr = core_allocate_pool(efi::BOOT_SERVICES_DATA, 8).expect("pool allocation should succeed for test");
-    // SAFETY: ptr was just allocated by core_allocate_pool above.
-    let result = unsafe { cm.free_pool(ptr as usize) };
-    u_assert!(result.is_ok(), "Failed to free a valid pool allocation.");
+mod integration {
+    use super::{CompatMemoryManager, Service, core_allocate_pool, efi, patina_test, u_assert};
 
-    Ok(())
+    #[patina_test]
+    #[cfg_attr(coverage, coverage(off))]
+    fn compat_memory_manager_frees_pool_allocation_test(
+        cm: Service<dyn CompatMemoryManager>,
+    ) -> patina_test::error::Result {
+        let ptr = core_allocate_pool(efi::BOOT_SERVICES_DATA, 8).expect("pool allocation should succeed for test");
+        // SAFETY: ptr was just allocated by core_allocate_pool above.
+        let result = unsafe { cm.free_pool(ptr as usize) };
+        u_assert!(result.is_ok(), "Failed to free a valid pool allocation.");
+
+        Ok(())
+    }
 }

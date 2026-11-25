@@ -70,8 +70,11 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina_test::error::Re
     // Install an invalid ACPI table (too small).
     let invalid_table =
         AcpiTableHeader { signature: signature::MADT, length: (signature::MADT_SIZE - 2) as u32, ..Default::default() };
-    // SAFETY: invalid_table has a valid layout, but an invalid length value, so this should return an error.
-    u_assert!(unsafe { table_manager.install_acpi_table(invalid_table) }.is_err(), "Should not install invalid table.");
+    u_assert!(
+        // SAFETY: invalid_table has a valid layout but an invalid length.
+        unsafe { table_manager.install_acpi_table(invalid_table) }.is_err(),
+        "Should not install invalid table."
+    );
 
     // Verify only valid tables are in the iterator.
     let tables = table_manager.iter_tables().expect("Should collect installed tables.");

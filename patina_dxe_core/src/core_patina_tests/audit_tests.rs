@@ -12,35 +12,38 @@
 use crate::GCD;
 use alloc::vec::Vec;
 use patina_test::{patina_test, u_assert};
-// used in the macro, but not directly referenced; causes a warning if patina tests not enabled.
-#[allow(unused)]
-use patina::BinaryGuid;
-#[allow(unused)]
-use patina::standard::efi;
+mod integration {
+    use super::{GCD, Vec, patina_test, u_assert};
+    #[allow(unused)]
+    use patina::{BinaryGuid, standard::efi};
 
-// Verify that all adjacent free memory descriptors in the GCD are merged together. This must run before EBS because
-// it allocates memory.
-#[patina_test]
-#[on(event = BinaryGuid(efi::EVENT_GROUP_READY_TO_BOOT))]
-#[on(event = BinaryGuid(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES))]
-fn gcd_free_memory_merged_test() -> patina_test::error::Result {
-    let mut last_desc: Option<patina::pi::dxe_services::MemorySpaceDescriptor> = None;
-    let mut descs = Vec::with_capacity(GCD.memory_descriptor_count().expect("GCD descriptor count available") * 2);
-    GCD.get_memory_descriptors(&mut descs, |d, allocated| {
-        !allocated && d.memory_type == patina::pi::dxe_services::GcdMemoryType::SystemMemory
-    })
-    .map_err(|_| "Can't get descriptors")?;
-    for desc in descs {
-        // check if the last descriptor and the current descriptor are both free memory descriptors and not part of
-        // a memory bin (image_handle != null)
-        if let Some(last) = last_desc
-            && last.image_handle.is_null()
-            && desc.image_handle.is_null()
-        {
-            u_assert!(last.base_address + last.length != desc.base_address, "Found adjacent free memory descriptors");
+    // Verify that all adjacent free memory descriptors in the GCD are merged together. This must run before EBS because
+    // it allocates memory.
+    #[patina_test]
+    #[on(event = BinaryGuid(efi::EVENT_GROUP_READY_TO_BOOT))]
+    #[on(event = BinaryGuid(efi::EVENT_GROUP_BEFORE_EXIT_BOOT_SERVICES))]
+    fn gcd_free_memory_merged_test() -> patina_test::error::Result {
+        let mut last_desc: Option<patina::pi::dxe_services::MemorySpaceDescriptor> = None;
+        let mut descs = Vec::with_capacity(GCD.memory_descriptor_count().expect("GCD descriptor count available") * 2);
+        GCD.get_memory_descriptors(&mut descs, |d, allocated| {
+            !allocated && d.memory_type == patina::pi::dxe_services::GcdMemoryType::SystemMemory
+        })
+        .map_err(|_| "Can't get descriptors")?;
+        for desc in descs {
+            // check if the last descriptor and the current descriptor are both free memory descriptors and not part of
+            // a memory bin (image_handle != null)
+            if let Some(last) = last_desc
+                && last.image_handle.is_null()
+                && desc.image_handle.is_null()
+            {
+                u_assert!(
+                    last.base_address + last.length != desc.base_address,
+                    "Found adjacent free memory descriptors"
+                );
+            }
+            last_desc = Some(desc);
         }
-        last_desc = Some(desc);
-    }
 
-    Ok(())
+        Ok(())
+    }
 }

@@ -22,7 +22,7 @@ pub mod reader;
 #[cfg(any(doc, feature = "component"))]
 pub mod component;
 #[cfg(feature = "component")]
-mod integration_test;
+mod integration;
 #[cfg(any(doc, feature = "component"))]
 pub mod protocol;
 

@@ -55,5 +55,5 @@ pub mod service;
 mod acpi;
 mod acpi_protocol;
 mod acpi_table;
-mod integration_test;
+mod integration;
 mod signature;

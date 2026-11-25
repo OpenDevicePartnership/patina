@@ -218,111 +218,121 @@ fn allow_allocations_for_type(memory_type: EfiMemoryType) -> Result<(), MemoryEr
     }
 }
 
-#[patina_test]
-#[cfg_attr(coverage, coverage(off))]
-#[allow(clippy::indexing_slicing)]
-fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_test::error::Result {
-    // Allocate a page, and make sure it is accessible.
-    let result = mm.allocate_pages(1, AllocationOptions::new());
-    u_assert!(result.is_ok(), "Failed to allocate single page.");
-    let allocation = result.unwrap();
-    let mut data = allocation.into_boxed_slice::<u8>();
-    u_assert_eq!(data.len(), UEFI_PAGE_SIZE, "Failed to free page.");
-    data[0] = 42;
-    drop(data);
+mod integration {
+    use super::{
+        AccessType, AllocationOptions, Box, EfiMemoryType, MemoryManager, PageAllocationStrategy, Service,
+        UEFI_PAGE_SIZE, patina_test, u_assert, u_assert_eq,
+    };
 
-    // Allocate a page, free it then allocate the address.
-    let result = mm.allocate_pages(1, AllocationOptions::new());
-    u_assert!(result.is_ok(), "Failed to allocate single page.");
-    let allocation = result.unwrap();
-    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
-    // SAFETY: address was returned by allocate_pages for this manager.
-    let result = unsafe { mm.free_pages(address, 1) };
-    u_assert!(result.is_ok(), "Failed to free page.");
-    let options = AllocationOptions::new().with_strategy(PageAllocationStrategy::Address(address));
-    let result = mm.allocate_pages(1, options);
-    u_assert!(result.is_ok(), "Failed to allocate page by address");
-    u_assert_eq!(result.unwrap().into_raw_ptr::<u8>().unwrap() as usize, address, "Failed to allocate correct address");
+    #[patina_test]
+    #[cfg_attr(coverage, coverage(off))]
+    #[allow(clippy::indexing_slicing)]
+    fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_test::error::Result {
+        // Allocate a page, and make sure it is accessible.
+        let result = mm.allocate_pages(1, AllocationOptions::new());
+        u_assert!(result.is_ok(), "Failed to allocate single page.");
+        let allocation = result.unwrap();
+        let mut data = allocation.into_boxed_slice::<u8>();
+        u_assert_eq!(data.len(), UEFI_PAGE_SIZE, "Failed to free page.");
+        data[0] = 42;
+        drop(data);
 
-    // Allocate an aligned address.
-    const TEST_ALIGNMENT: usize = 0x400000;
-    let result = mm.allocate_pages(8, AllocationOptions::new().with_alignment(TEST_ALIGNMENT));
-    u_assert!(result.is_ok(), "Failed to allocate single aligned pages.");
-    let allocation = result.unwrap();
-    u_assert_eq!(allocation.page_count(), 8);
-    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
-    u_assert_eq!(address % TEST_ALIGNMENT, 0, "Allocated page not correctly aligned.");
-    // SAFETY: address was returned by allocate_pages for this manager.
-    let result = unsafe { mm.free_pages(address, 8) };
-    u_assert!(result.is_ok(), "Failed to free page.");
+        // Allocate a page, free it then allocate the address.
+        let result = mm.allocate_pages(1, AllocationOptions::new());
+        u_assert!(result.is_ok(), "Failed to allocate single page.");
+        let allocation = result.unwrap();
+        let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
+        // SAFETY: address was returned by allocate_pages for this manager.
+        let result = unsafe { mm.free_pages(address, 1) };
+        u_assert!(result.is_ok(), "Failed to free page.");
+        let options = AllocationOptions::new().with_strategy(PageAllocationStrategy::Address(address));
+        let result = mm.allocate_pages(1, options);
+        u_assert!(result.is_ok(), "Failed to allocate page by address");
+        u_assert_eq!(
+            result.unwrap().into_raw_ptr::<u8>().unwrap() as usize,
+            address,
+            "Failed to allocate correct address"
+        );
 
-    // Allocate an aligned address smaller than the page size.
-    let result = mm.allocate_pages(1, AllocationOptions::new().with_alignment(0x40));
-    u_assert!(result.is_ok(), "Failed to allocate with sub-page alignment.");
-    let address = result.unwrap().into_raw_ptr::<u8>().unwrap() as usize;
-    u_assert_eq!(address % UEFI_PAGE_SIZE, 0, "Sub-page aligned allocation is not page aligned.");
-    // SAFETY: address was returned by allocate_pages for this manager.
-    let result = unsafe { mm.free_pages(address, 1) };
-    u_assert!(result.is_ok(), "Failed to free page.");
+        // Allocate an aligned address.
+        const TEST_ALIGNMENT: usize = 0x400000;
+        let result = mm.allocate_pages(8, AllocationOptions::new().with_alignment(TEST_ALIGNMENT));
+        u_assert!(result.is_ok(), "Failed to allocate single aligned pages.");
+        let allocation = result.unwrap();
+        u_assert_eq!(allocation.page_count(), 8);
+        let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
+        u_assert_eq!(address % TEST_ALIGNMENT, 0, "Allocated page not correctly aligned.");
+        // SAFETY: address was returned by allocate_pages for this manager.
+        let result = unsafe { mm.free_pages(address, 8) };
+        u_assert!(result.is_ok(), "Failed to free page.");
 
-    // Allocate with a max address limit.
-    let max_address = 0x100_8000_0000;
-    let options = AllocationOptions::new().with_strategy(PageAllocationStrategy::MaxAddress(max_address));
-    let result = mm.allocate_pages(1, options);
-    u_assert!(result.is_ok(), "Failed to allocate with max address limit.");
-    let allocation = result.unwrap();
-    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
-    u_assert!((address + UEFI_PAGE_SIZE - 1) <= max_address, "Allocated address exceeds max address limit.");
+        // Allocate an aligned address smaller than the page size.
+        let result = mm.allocate_pages(1, AllocationOptions::new().with_alignment(0x40));
+        u_assert!(result.is_ok(), "Failed to allocate with sub-page alignment.");
+        let address = result.unwrap().into_raw_ptr::<u8>().unwrap() as usize;
+        u_assert_eq!(address % UEFI_PAGE_SIZE, 0, "Sub-page aligned allocation is not page aligned.");
+        // SAFETY: address was returned by allocate_pages for this manager.
+        let result = unsafe { mm.free_pages(address, 1) };
+        u_assert!(result.is_ok(), "Failed to free page.");
 
-    // Get an allocator.
-    let result = mm.get_allocator(EfiMemoryType::BootServicesData);
-    u_assert!(result.is_ok(), "Failed to get allocator.");
-    let allocator = result.unwrap();
+        // Allocate with a max address limit.
+        let max_address = 0x100_8000_0000;
+        let options = AllocationOptions::new().with_strategy(PageAllocationStrategy::MaxAddress(max_address));
+        let result = mm.allocate_pages(1, options);
+        u_assert!(result.is_ok(), "Failed to allocate with max address limit.");
+        let allocation = result.unwrap();
+        let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
+        u_assert!((address + UEFI_PAGE_SIZE - 1) <= max_address, "Allocated address exceeds max address limit.");
 
-    // Allocate and free a simple structure using the allocator.
-    let boxed_struct = Box::new_in(42, allocator);
-    u_assert_eq!(*boxed_struct, 42, "Failed to allocate boxed struct from allocator.");
-    drop(boxed_struct);
+        // Get an allocator.
+        let result = mm.get_allocator(EfiMemoryType::BootServicesData);
+        u_assert!(result.is_ok(), "Failed to get allocator.");
+        let allocator = result.unwrap();
 
-    // Get a dynamic allocator.
-    let result = mm.get_allocator(EfiMemoryType::ACPIReclaimMemory);
-    u_assert!(result.is_ok(), "Failed to get dynamic allocator.");
-    let allocator = result.unwrap();
+        // Allocate and free a simple structure using the allocator.
+        let boxed_struct = Box::new_in(42, allocator);
+        u_assert_eq!(*boxed_struct, 42, "Failed to allocate boxed struct from allocator.");
+        drop(boxed_struct);
 
-    // Allocate and free a simple structure using the allocator.
-    let boxed_struct = Box::new_in(42, allocator);
-    u_assert_eq!(*boxed_struct, 42, "Failed to allocate boxed struct from dynamic allocator.");
-    drop(boxed_struct);
+        // Get a dynamic allocator.
+        let result = mm.get_allocator(EfiMemoryType::ACPIReclaimMemory);
+        u_assert!(result.is_ok(), "Failed to get dynamic allocator.");
+        let allocator = result.unwrap();
 
-    Ok(())
-}
+        // Allocate and free a simple structure using the allocator.
+        let boxed_struct = Box::new_in(42, allocator);
+        u_assert_eq!(*boxed_struct, 42, "Failed to allocate boxed struct from dynamic allocator.");
+        drop(boxed_struct);
 
-#[patina_test]
-fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina_test::error::Result {
-    // The default attributes for memory should be read/write.
-    let result = mm.allocate_pages(1, AllocationOptions::new());
-    u_assert!(result.is_ok(), "Failed to allocate single page.");
-    let allocation = result.unwrap();
-    let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
-    let result = mm.get_page_attributes(address, 1);
-    u_assert!(result.is_ok(), "Failed to get original page attributes.");
-    let (access, caching) = result.unwrap();
-    u_assert_eq!(access, AccessType::ReadWrite, "Allocation did not return Read/Write access.");
+        Ok(())
+    }
+    #[patina_test]
+    fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina_test::error::Result {
+        // The default attributes for memory should be read/write.
+        let result = mm.allocate_pages(1, AllocationOptions::new());
+        u_assert!(result.is_ok(), "Failed to allocate single page.");
+        let allocation = result.unwrap();
+        let address = allocation.into_raw_ptr::<u8>().unwrap() as usize;
+        let result = mm.get_page_attributes(address, 1);
+        u_assert!(result.is_ok(), "Failed to get original page attributes.");
+        let (access, caching) = result.unwrap();
+        u_assert_eq!(access, AccessType::ReadWrite, "Allocation did not return Read/Write access.");
 
-    // Test changing the attributes to read only.
-    // SAFETY: address was returned by allocate_pages for this manager.
-    let result = unsafe { mm.set_page_attributes(address, 1, AccessType::ReadOnly, None) };
-    u_assert!(result.is_ok(), "Failed to set page attributes.");
-    let result = mm.get_page_attributes(address, 1);
-    u_assert!(result.is_ok(), "Failed to get altered page attributes.");
-    let (access, new_caching) = result.unwrap();
-    u_assert_eq!(access, AccessType::ReadOnly, "Allocation did not return ReadOnly access.");
-    u_assert_eq!(new_caching, caching, "Caching type changes unexpectedly.");
+        // Test changing the attributes to read only.
+        // SAFETY: address was returned by allocate_pages for this manager.
+        let result = unsafe { mm.set_page_attributes(address, 1, AccessType::ReadOnly, None) };
+        u_assert!(result.is_ok(), "Failed to set page attributes.");
+        let result = mm.get_page_attributes(address, 1);
+        u_assert!(result.is_ok(), "Failed to get altered page attributes.");
+        let (access, new_caching) = result.unwrap();
+        u_assert_eq!(access, AccessType::ReadOnly, "Allocation did not return ReadOnly access.");
+        u_assert_eq!(new_caching, caching, "Caching type changes unexpectedly.");
 
-    // Free the page
-    // SAFETY: address was returned by allocate_pages for this manager.
-    let result = unsafe { mm.free_pages(address, 1) };
-    u_assert!(result.is_ok(), "Failed to free page.");
+        // Free the page
+        // SAFETY: address was returned by allocate_pages for this manager.
+        let result = unsafe { mm.free_pages(address, 1) };
+        u_assert!(result.is_ok(), "Failed to free page.");
 
-    Ok(())
+        Ok(())
+    }
 }
