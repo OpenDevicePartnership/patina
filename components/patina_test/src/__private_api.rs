@@ -1,26 +1,27 @@
-//! Internal API for the test module.
-//!
-//! This module must be public so that the macros can access it, but it is not intended for use by consumers of the
-//! crate.
-//!
-//! ## License
+//! Implementation details used by the `patina_test` macro.
 //!
 //! Copyright (c) Microsoft Corporation.
-//!
 //! SPDX-License-Identifier: Apache-2.0
-//!
 
-use core::marker::PhantomData;
-
+use crate::{
+    alloc::{boxed::Box, rc::Rc},
+    component::Filter,
+};
+use core::{marker::PhantomData, ptr::NonNull, time::Duration};
 use patina::{
     BinaryGuid,
     component::{
-        MetaData, Storage, UnsafeStorageCell,
+        Component, MetaData, Storage, UnsafeStorageCell,
         params::{Param, ParamFunction},
+        service::{
+            Service,
+            uefi_services::{
+                event::{Event, EventError, EventServices, EventServicesExt, Tpl},
+                timer_event::{TimerEventServices, TimerEventServicesExt, TimerType},
+            },
+        },
     },
 };
-
-use crate::component::Filter;
 
 /// Where all the test cases marked with `#[patina_test]` are collated to.
 #[cfg(feature = "test-runner")]
@@ -51,8 +52,8 @@ pub fn test_cases() -> &'static [TestCase] {
 /// An enum to describe how / when a unit test should be executed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestTrigger {
-    /// The test case should be executed manually.
-    Manual,
+    /// Run once when dependencies are available.
+    Immediate,
     /// The test case should be executed when the specified event triggers.
     Event(BinaryGuid),
     /// The test case should be executed after the specified units of 100ns have elapsed.
@@ -67,260 +68,265 @@ pub struct TestCase {
     pub skip: bool,
     pub should_fail: bool,
     pub fail_msg: Option<&'static str>,
-    pub func: fn(&mut Storage) -> Result<bool, &'static str>,
+    pub component: fn(&'static TestCase) -> Box<dyn Component>,
 }
 
 impl TestCase {
-    pub fn should_run(&self, filters: &[Filter]) -> bool {
+    pub(crate) fn should_run(&self, filters: &[Filter]) -> bool {
         if self.skip {
             return false;
         }
-
-        let mut has_includes = false;
-        let mut included = false;
+        let mut includes = false;
+        let mut matched = false;
 
         for filter in filters {
             match filter {
-                Filter::Exclude(p) if self.name.contains(p) => return false,
-                Filter::Exclude(_) => {}
-                Filter::Include(p) => {
-                    has_includes = true;
-                    included |= self.name.contains(p);
+                Filter::Exclude(pattern) if self.name.contains(pattern) => return false,
+                Filter::Predicate(predicate) if !predicate(self.name) => return false,
+                Filter::Exclude(_) | Filter::Predicate(_) => {}
+                Filter::Include(pattern) => {
+                    includes = true;
+                    matched |= self.name.contains(pattern);
                 }
             }
         }
 
-        included || !has_includes
+        !includes || matched
     }
 
-    pub fn run(&self, storage: &mut Storage, debug_mode: bool) -> crate::error::Result {
-        let ret = if debug_mode {
-            log::debug!("#### {} Test Output Start ####", self.name);
-            let ret = (self.func)(storage);
-            log::debug!("####  {} Test Output End  ####", self.name);
-            ret
+    pub(crate) fn evaluate(&self, result: crate::error::Result) -> crate::error::Result {
+        match (self.should_fail, result) {
+            (true, Ok(())) => Err("Test passed when it should have failed"),
+            (true, Err(msg)) if self.fail_msg.is_none() || self.fail_msg == Some(msg) => Ok(()),
+            (_, result) => result,
+        }
+    }
+}
+
+/// Creates the typed component used to execute a test, copying the callable into each deferred callback.
+pub fn test_component<Marker, Func>(test: &'static TestCase, func: Func) -> Box<dyn Component>
+where
+    Marker: 'static,
+    Func: ParamFunction<Marker, In = (), Out = crate::error::Result> + Copy,
+{
+    Box::new(TestComponent { test, func, state: None, metadata: MetaData::new::<Func>(), marker: PhantomData })
+}
+
+struct TestComponent<Marker, Func: ParamFunction<Marker>> {
+    test: &'static TestCase,
+    func: Func,
+    state: Option<Rc<TestState<Func::Param>>>,
+    metadata: MetaData,
+    marker: PhantomData<fn() -> Marker>,
+}
+
+type InfrastructureServices =
+    (Service<crate::service::Recorder>, Service<dyn EventServices>, Service<dyn TimerEventServices>);
+type TestState<P> = <(InfrastructureServices, P) as Param>::State;
+
+impl<Marker, Func> TestComponent<Marker, Func>
+where
+    Marker: 'static,
+    Func: ParamFunction<Marker, In = (), Out = crate::error::Result> + Copy,
+{
+    /// Runs an immediate trigger with registered and validated parameter accesses.
+    unsafe fn handle_immediate(
+        &mut self,
+        state: &TestState<Func::Param>,
+        storage: UnsafeStorageCell,
+    ) -> patina::error::Result<()> {
+        // SAFETY: The caller guarantees registered, validated, non-conflicting access.
+        let recorder = unsafe { Service::<crate::service::Recorder>::get_param(&state.0.0, storage) };
+        // SAFETY: The caller guarantees registered, validated, non-conflicting access.
+        unsafe { Self::execute(self.test, &mut self.func, &state.1, &recorder, storage) }
+    }
+
+    /// Registers an event trigger with registered and validated parameter accesses.
+    unsafe fn handle_event(
+        &self,
+        guid: BinaryGuid,
+        state: &Rc<TestState<Func::Param>>,
+        storage: UnsafeStorageCell,
+    ) -> patina::error::Result<()> {
+        // SAFETY: The caller guarantees registered, validated, non-conflicting access.
+        let (recorder, events, _) = unsafe { InfrastructureServices::get_param(&state.0, storage) };
+        // SAFETY: The caller guarantees registered, non-conflicting access.
+        let storage = NonNull::from(unsafe { storage.storage() });
+        events
+            .on_event_group(guid, Tpl::Callback, self.create_test_callback(state, recorder, storage))
+            .map(|_| ())
+            .map_err(|error| {
+                log::error!("Failed to register event trigger for patina_test {}: {error:?}", self.test.name);
+                error.into()
+            })
+    }
+
+    /// Registers a periodic timer and a Ready to Boot cleanup event.
+    unsafe fn handle_timer(
+        &self,
+        interval: u64,
+        state: &Rc<TestState<Func::Param>>,
+        storage: UnsafeStorageCell,
+    ) -> patina::error::Result<()> {
+        // SAFETY: The caller guarantees registered, validated, non-conflicting access.
+        let (recorder, events, timer) = unsafe { InfrastructureServices::get_param(&state.0, storage) };
+        // SAFETY: The caller guarantees registered, non-conflicting access.
+        let storage = NonNull::from(unsafe { storage.storage() });
+        let name = self.test.name;
+        let timer_event = timer
+            .on_timer_event(Tpl::Callback, self.create_test_callback(state, recorder, storage))
+            .map_err(|error| {
+                log::error!("Failed to create timer trigger for patina_test {name}: {error:?}");
+                patina::error::EfiError::from(error)
+            })?;
+        let cleanup_event = match self.register_timer_cleanup(&events, &timer, timer_event) {
+            Ok(event) => event,
+            Err(error) => {
+                log::error!("Failed to register timer cleanup for patina_test {name}: {error:?}");
+                Self::close_timer_events(name, &*events, &[timer_event]);
+                return Err(error.into());
+            }
+        };
+        let duration = Duration::from_nanos(interval.saturating_mul(100));
+        if let Err(error) = timer.set_timer(timer_event, TimerType::Periodic(duration)) {
+            log::error!("Failed to arm timer trigger for patina_test {name}: {error:?}");
+            Self::close_timer_events(name, &*events, &[timer_event, cleanup_event]);
+            return Err(error.into());
+        }
+        Ok(())
+    }
+
+    /// Registers a Ready to Boot callback that cancels and closes the timer and its cleanup event.
+    fn register_timer_cleanup(
+        &self,
+        events: &Service<dyn EventServices>,
+        timer: &Service<dyn TimerEventServices>,
+        timer_event: Event,
+    ) -> Result<Event, EventError> {
+        let name = self.test.name;
+        let cleanup_timer = timer.clone();
+        let cleanup_events = events.clone();
+        events.create_event_for_group(
+            patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID,
+            Tpl::Callback,
+            Box::new(move |event| {
+                if let Err(error) = cleanup_timer.set_timer(timer_event, TimerType::Cancel) {
+                    log::error!("Failed to cancel timer trigger for patina_test {name}: {error:?}");
+                }
+                Self::close_timer_events(name, &*cleanup_events, &[timer_event, event]);
+            }),
+        )
+    }
+
+    /// Closes each event, logging failures without preventing the remaining events from being closed.
+    fn close_timer_events(name: &str, events: &dyn EventServices, handles: &[Event]) {
+        for &event in handles {
+            if let Err(error) = events.close_event(event) {
+                log::error!("Failed to close timer event {event:?} for patina_test {name}: {error:?}");
+            }
+        }
+    }
+
+    /// Creates a callback that revalidates the test parameters and executes the test when available.
+    ///
+    /// Deferred triggers remain disabled until storage lifetime and access requirements are enforced.
+    fn create_test_callback(
+        &self,
+        state: &Rc<TestState<Func::Param>>,
+        recorder: Service<crate::service::Recorder>,
+        storage: NonNull<Storage>,
+    ) -> impl FnMut() + 'static {
+        let test = self.test;
+        let mut func = self.func;
+        let state = state.clone();
+        move || {
+            // SAFETY: Deferred tests remain filtered out by TestRegistration::build_components.
+            // Before enabling them, storage must remain at a stable address and outlive the
+            // callback, with no conflicting accesses during callback execution.
+            let storage = UnsafeStorageCell::from(unsafe { storage.as_ref() });
+            if !Func::Param::validate(&state.1, storage) {
+                return;
+            }
+            // SAFETY: Parameters are registered and validated. This path remains disabled
+            // until the storage lifetime and non-conflicting access requirements above hold.
+            if let Err(error) = unsafe { Self::execute(test, &mut func, &state.1, &recorder, storage) } {
+                log::error!("Failed to execute patina_test {}: {error:?}", test.name);
+            }
+        }
+    }
+
+    /// Executes with registered, validated, non-conflicting parameter access.
+    unsafe fn execute(
+        test: &TestCase,
+        func: &mut Func,
+        state: &<Func::Param as Param>::State,
+        recorder: &crate::service::Recorder,
+        storage: UnsafeStorageCell,
+    ) -> patina::error::Result<()> {
+        let Some(record) = recorder.get_unskipped(test.name)? else {
+            return Ok(());
+        };
+        // SAFETY: The caller guarantees parameter registration, validation, and non-conflicting access.
+        let params = unsafe { Func::Param::get_param(state, storage) };
+        let result = if record.debug_mode() {
+            log::debug!("#### {} Test Output Start ####", test.name);
+            let result = func.run(&mut Some(()), params);
+            log::debug!("####  {} Test Output End  ####", test.name);
+            result
         } else {
             let level = log::max_level();
             log::set_max_level(log::LevelFilter::Off);
-            let ret = (self.func)(storage);
+            let result = func.run(&mut Some(()), params);
             log::set_max_level(level);
-            ret
+            result
         };
-
-        match (self.should_fail, ret) {
-            (_, Ok(false)) => Err("Test failed to run due to un-retrievable parameters."),
-            (true, Ok(true)) => Err("Test passed when it should have failed"),
-            (true, Err(msg)) if self.fail_msg.is_some() && Some(msg) != self.fail_msg => Err(msg),
-            (true, Err(msg)) if self.fail_msg.is_some() && Some(msg) == self.fail_msg => Ok(()),
-            (true, Err(_)) if self.fail_msg.is_none() => Ok(()),
-            _ => ret.map(|_| ()),
+        let result = test.evaluate(result);
+        recorder.record_result(test.name, result)?;
+        if let (Err(message), Some(callback)) = (result, record.callback()) {
+            callback(test.name, message);
         }
+        Ok(())
     }
 }
 
-/// A [`ParamFunction`] implementation for an on-system unit test.
-///
-/// note: Once we can unwind a panic, we can remove the `Result` return type in favor of () and wrap the function in a
-/// `catch_unwind` that maps the panic message to a Err(&'static str).
-pub struct FunctionTest<Marker, Func>
-where
-    Func: ParamFunction<Marker, In = (), Out = Result<(), &'static str>>,
-{
-    func: Func,
-    _marker: PhantomData<fn() -> Marker>,
-}
-
-impl<Marker, Func> FunctionTest<Marker, Func>
+impl<Marker, Func> Component for TestComponent<Marker, Func>
 where
     Marker: 'static,
-    Func: ParamFunction<Marker, In = (), Out = Result<(), &'static str>>,
+    Func: ParamFunction<Marker, In = (), Out = crate::error::Result> + Copy,
 {
-    pub const fn new(func: Func) -> Self {
-        Self { func, _marker: PhantomData }
+    fn initialize(&mut self, storage: &mut Storage) -> bool {
+        match <(InfrastructureServices, Func::Param) as Param>::init_state(storage, &mut self.metadata) {
+            Ok(state) => {
+                self.state = Some(Rc::new(state));
+                true
+            }
+            Err(error) => {
+                self.metadata.set_error_message(error);
+                false
+            }
+        }
     }
 
-    pub fn run(&mut self, storage: UnsafeStorageCell) -> Result<bool, &'static str> {
-        let mut metadata = MetaData::default();
+    fn metadata(&self) -> &MetaData {
+        &self.metadata
+    }
 
-        // SAFETY: init_state requires mutable access to storage. UnsafeStorageCell provides controlled access.
-        // This is the initialization phase before parameter validation.
-        let param_state = match Func::Param::init_state(unsafe { storage.storage_mut() }, &mut metadata) {
-            Ok(param_state) => param_state,
-            Err(error) => {
-                log::warn!("Failed to initialize test state: {error:?}");
-                return Ok(false);
-            }
-        };
-
-        if let Err(bad_param) = Func::Param::try_validate(&param_state, storage) {
-            log::warn!("Failed to retreive parameter: {bad_param:?}");
+    unsafe fn run_unsafe(&mut self, storage: UnsafeStorageCell) -> patina::error::Result<bool> {
+        let state = self.state.as_ref().expect("test component initialized").clone();
+        if let Err(error) = <(InfrastructureServices, Func::Param)>::try_validate(&state, storage) {
+            self.metadata.set_error_message(error);
             return Ok(false);
         }
-
-        // SAFETY: Parameter was successfully validated by try_validate. get_param extracts the validated parameter
-        // from storage using the param_state that was initialized above.
-        let param_value = unsafe { Func::Param::get_param(&param_state, storage) };
-
-        self.func.run(&mut Some(()), param_value).map(|()| true)
-    }
-}
-
-#[cfg(test)]
-#[cfg_attr(coverage, coverage(off))]
-mod tests {
-    use super::*;
-
-    extern crate std;
-
-    #[test]
-    fn test_should_run() {
-        let test_case = TestCase {
-            name: "test",
-            triggers: &[TestTrigger::Manual],
-            skip: false,
-            should_fail: false,
-            fail_msg: None,
-            func: |_| Ok(true),
-        };
-
-        std::assert!(test_case.should_run(&[Filter::include("test")]));
-        std::assert!(test_case.should_run(&[Filter::include("t")]));
-        std::assert!(test_case.should_run(&[]));
-        std::assert!(!test_case.should_run(&[Filter::include("not")]));
-    }
-
-    #[test]
-    fn test_should_run_with_no_filters() {
-        let test_case = TestCase {
-            name: "test",
-            triggers: &[TestTrigger::Manual],
-            skip: false,
-            should_fail: false,
-            fail_msg: None,
-            func: |_| Ok(true),
-        };
-
-        std::assert!(test_case.should_run(&[]));
-    }
-
-    #[test]
-    fn test_should_run_with_exclude_filters() {
-        let test_case = TestCase {
-            name: "my_crate::tests::test_case",
-            triggers: &[TestTrigger::Manual],
-            skip: false,
-            should_fail: false,
-            fail_msg: None,
-            func: |_| Ok(true),
-        };
-
-        // Exclude filter matches - should not run
-        std::assert!(!test_case.should_run(&[Filter::exclude("test_case")]));
-        // Exclude filter does not match - should run
-        std::assert!(test_case.should_run(&[Filter::exclude("other")]));
-        // Include filter matches but exclude filter also matches - should not run
-        std::assert!(!test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("test_case")]));
-        // Include filter matches and exclude filter does not match - should run
-        std::assert!(test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("other")]));
-    }
-
-    #[test]
-    fn test_run_with_default_settings() {
-        let mut storage = Storage::new();
-
-        let test_case_pass = TestCase {
-            name: "test",
-            triggers: &[TestTrigger::Manual],
-            skip: false,
-            should_fail: false,
-            fail_msg: None,
-            func: |_| Ok(true),
-        };
-
-        let test_case_fail = TestCase {
-            name: "test",
-            triggers: &[TestTrigger::Manual],
-            skip: false,
-            should_fail: false,
-            fail_msg: None,
-            func: |_| Err("Failed to install protocol interface"),
-        };
-
-        // Test that a passing test passes
-        let result = test_case_pass.run(&mut storage, true);
-        std::assert_eq!(result, Ok(()));
-
-        // Test that a failing test fails
-        let result = test_case_fail.run(&mut storage, true);
-        std::assert_eq!(result, Err("Failed to install protocol interface"));
-    }
-
-    #[test]
-    fn test_run_with_should_fail() {
-        let mut storage = Storage::new();
-
-        let test_case_pass = TestCase {
-            name: "test",
-            triggers: &[TestTrigger::Manual],
-            skip: false,
-            should_fail: true,
-            fail_msg: None,
-            func: |_| Ok(true),
-        };
-        let test_case_fail = TestCase {
-            name: "test",
-            triggers: &[TestTrigger::Manual],
-            skip: false,
-            should_fail: true,
-            fail_msg: None,
-            func: |_| Err("Failed to install protocol interface"),
-        };
-
-        // Test that a test that passes, should fail because its expected to fail
-        let result = test_case_pass.run(&mut storage, true);
-        std::assert_eq!(result, Err("Test passed when it should have failed"));
-
-        // Test that a test that fails, should pass because its expected to fail
-        let result = test_case_fail.run(&mut storage, true);
-        std::assert_eq!(result, Ok(()));
-    }
-
-    #[test]
-    fn test_run_with_should_fail_and_fail_msg_matches() {
-        let mut storage = Storage::new();
-
-        // Test that a test that fails with the expected message, should pass
-        let test_case = TestCase {
-            name: "test",
-            triggers: &[TestTrigger::Manual],
-            skip: false,
-            should_fail: true,
-            fail_msg: Some("Failed to install protocol interface"),
-            func: |_| Err("Failed to install protocol interface"),
-        };
-
-        let result = test_case.run(&mut storage, false);
-        std::assert_eq!(result, Ok(()));
-
-        // Test that a test that fails with an unexpected message, should fail
-        let test_case = TestCase {
-            name: "test",
-            triggers: &[TestTrigger::Manual],
-            skip: false,
-            should_fail: true,
-            fail_msg: Some("Other failure"),
-            func: |_| Err("Failed to install protocol interface"),
-        };
-
-        let result = test_case.run(&mut storage, false);
-        std::assert_eq!(result, Err("Failed to install protocol interface"));
-    }
-
-    #[test]
-    fn test_test_with_invalid_param_combination_is_caught() {
-        assert_eq!(
-            crate::component::tests::TEST_CASE_INVALID.run(&mut Storage::new(), false),
-            Err("Test failed to run due to un-retrievable parameters.")
-        );
+        for trigger in self.test.triggers {
+            match trigger {
+                // SAFETY: All parameter accesses were registered and validated above.
+                TestTrigger::Immediate => unsafe { self.handle_immediate(&state, storage) },
+                // SAFETY: All parameter accesses were registered and validated above.
+                TestTrigger::Event(guid) => unsafe { self.handle_event(*guid, &state, storage) },
+                // SAFETY: All parameter accesses were registered and validated above.
+                TestTrigger::Timer(interval) => unsafe { self.handle_timer(*interval, &state, storage) },
+            }?;
+        }
+        Ok(true)
     }
 }

@@ -1,31 +1,29 @@
-//! Patina Test Test Runner Component
+//! Registration of dependency-aware on-platform test components.
 //!
-//! This module provides the [`TestRunner`] component, which is responsible for discovering and registering tests marked
-//! with the `#[patina_test]` attribute for execution. See the [`TestRunner`] documentation for details on how to
-//! configure and use the test runner. Multiple test runners can be registered to run different sets of tests with
-//! different configurations.
+//! This module provides [`TestRegistration`], which discovers tests marked with the `#[patina_test]` attribute
+//! and registers them as individual components for execution. See [`TestRegistration`] for configuration details.
+//! Only one registration may be added to a platform's component storage.
 //!
 //! ## License
 //!
 //! Copyright (c) Microsoft Corporation.
-//!
 //! SPDX-License-Identifier: Apache-2.0
 //!
 use crate::{
-    __private_api,
-    alloc::vec::Vec,
-    service::{Recorder, TestRecord},
+    __private_api::{self, TestCase, TestTrigger},
+    alloc::{boxed::Box, collections::BTreeMap, vec::Vec},
+    service::{Callback, Recorder, TestRecord},
 };
 
 use patina::component::{
-    Storage, component,
+    Component, IntoComponent, component,
     service::{
         Service,
-        uefi_services::{event::EventServices, timer_event::TimerEventServices},
+        uefi_services::event::{EventServices, Tpl},
     },
 };
 
-/// A filter to include or exclude test cases whose name contains the pattern.
+/// A case-sensitive filter applied to fully qualified test names.
 ///
 /// # Example
 ///
@@ -34,18 +32,21 @@ use patina::component::{
 /// and runs when the feature is on, and is silently skipped otherwise.
 #[cfg_attr(feature = "test-runner", doc = "```rust")]
 #[cfg_attr(not(feature = "test-runner"), doc = "```ignore")]
-/// use patina_test::component::{TestRunner, Filter};
+/// use patina_test::component::{Filter, TestRegistration};
 ///
-/// let runner = TestRunner::default()
+/// let registration = TestRegistration::default()
 ///     .with_filter(Filter::include("x64"))
-///     .with_filter(Filter::exclude("aarch64"));
+///     .with_filter(Filter::exclude("aarch64"))
+///     .with_filter(Filter::predicate(|name| !name.contains("slow")));
 /// ```
 #[derive(Debug, Clone)]
 pub enum Filter {
-    /// Only run tests whose name contains the pattern.
+    /// Include tests with names containing this pattern.
     Include(&'static str),
-    /// Do not run tests whose name contains the pattern.
+    /// Exclude tests with names containing this pattern, even if an include matches.
     Exclude(&'static str),
+    /// Keep tests only if this predicate returns true for their fully qualified name.
+    Predicate(fn(&str) -> bool),
 }
 
 impl Filter {
@@ -58,18 +59,24 @@ impl Filter {
     pub fn exclude(pattern: &'static str) -> Self {
         Self::Exclude(pattern)
     }
+
+    /// Keeps tests whose fully qualified name satisfies `predicate`.
+    pub fn predicate(predicate: fn(&str) -> bool) -> Self {
+        Self::Predicate(predicate)
+    }
 }
 
-/// A component that runs all test cases marked with the `#[patina_test]` attribute when loaded by the DXE core.
+/// Configures tests and adds them as individual components.
+///
+/// Only one registration may be added to a platform's component storage.
 #[derive(Default, Clone)]
-pub struct TestRunner {
+pub struct TestRegistration {
     filters: Vec<Filter>,
     debug_mode: bool,
-    fail_callback: Option<fn(&'static str, &'static str)>,
+    fail_callback: Option<Callback>,
 }
 
-#[component]
-impl TestRunner {
+impl TestRegistration {
     /// Adds a filter to control which tests are executed.
     ///
     /// The filter pattern is matched against the full test name, which includes the module path.
@@ -80,8 +87,9 @@ impl TestRunner {
     ///   filters are specified, a test runs if it matches **any** of them.
     /// - [`Filter::Exclude`]: Prevents tests whose name contains the pattern from running. Exclude
     ///   filters take priority over include filters.
+    /// - [`Filter::Predicate`]: Only run tests for which the predicate returns true. All predicates must pass.
     ///
-    /// This filter is case-sensitive. It can be called multiple times to add multiple filters.
+    /// Pattern matching is case-sensitive. This method can be called multiple times to add multiple filters.
     #[must_use]
     pub fn with_filter(mut self, filter: Filter) -> Self {
         self.filters.push(filter);
@@ -106,331 +114,414 @@ impl TestRunner {
         self
     }
 
-    /// The entry point for the test runner component.
-    #[cfg_attr(coverage, coverage(off))]
-    fn entry_point(
-        self,
-        events: Service<dyn EventServices>,
-        timer: Service<dyn TimerEventServices>,
-        recorder: Option<Service<Recorder>>,
-        storage: &mut Storage,
-    ) -> patina::error::Result<()> {
-        let test_list: &'static [__private_api::TestCase] = __private_api::test_cases();
-
-        let recorder = if let Some(recorder) = recorder {
-            recorder
-        } else {
-            storage.add_service(Recorder::default());
-            let recorder = storage.get_service::<Recorder>().ok_or(patina::error::EfiError::NotFound)?;
-            Recorder::initialize(recorder.clone(), &events, storage)?;
-            recorder
-        };
-
-        self.register_tests(test_list, &events, &timer, &recorder, storage)
+    /// Returns an iterator over all components needed to execute the selected Patina tests.
+    ///
+    /// Note: each returned component must be added to the component storage.
+    pub fn into_components(self) -> impl Iterator<Item = Box<dyn Component>> {
+        self.build_components(__private_api::test_cases()).into_iter()
     }
 
-    /// Registers the tests to be executed by the test runner.
-    fn register_tests(
-        &self,
-        test_list: &'static [__private_api::TestCase],
-        events: &Service<dyn EventServices>,
-        timer: &Service<dyn TimerEventServices>,
-        recorder: &Service<Recorder>,
-        storage: &mut Storage,
-    ) -> patina::error::Result<()> {
-        for test_case in test_list {
-            // Tests that are skipped or filtered out are still recorded, so they are reported as skipped.
-            if !test_case.should_run(self.filters.as_slice()) {
-                recorder.update_record(TestRecord::skipped(test_case));
-                continue;
+    fn build_components(&self, test_cases: &'static [TestCase]) -> Vec<Box<dyn Component>> {
+        let mut records = BTreeMap::new();
+        let mut tests = Vec::new();
+        for test_case in test_cases {
+            let selected = test_case.should_run(&self.filters);
+            let supported = test_case
+                .triggers
+                .iter()
+                .all(|t| matches!(t, TestTrigger::Immediate | TestTrigger::Event(_) | TestTrigger::Timer(_)));
+            // let supported = test_case.triggers == [TestTrigger::Immediate];
+            if selected && !supported {
+                log::warn!("Test {} has an unsupported event or timer trigger; skipping", test_case.name);
             }
-
-            let record = TestRecord::new(self.debug_mode, test_case, self.fail_callback);
-            // Only schedule a run if we have not already scheduled for this test.
-            if !recorder.is_test_scheduled(record.name()) {
-                record.schedule_run(events, timer, recorder, storage)?;
+            let selected = selected && supported;
+            records.insert(
+                test_case.name,
+                if selected {
+                    TestRecord::new(self.debug_mode, test_case, self.fail_callback)
+                } else {
+                    TestRecord::skipped(test_case)
+                },
+            );
+            if selected {
+                tests.push((test_case.component)(test_case));
             }
-
-            recorder.update_record(record);
         }
-
-        Ok(())
+        let mut components = Vec::with_capacity(tests.len() + 2);
+        components.push(Recorder::new(records).into_component());
+        components.push(Reporter.into_component());
+        components.extend(tests);
+        components
     }
 }
 
+/// Reports recorded test results at Ready to Boot and Exit Boot Services.
+struct Reporter;
+
+#[component]
+impl Reporter {
+    /// Registers callbacks that report results and close their events when signaled.
+    ///
+    /// If registration fails, closes any events already created and returns the registration error.
+    fn entry_point(self, events: Service<dyn EventServices>, recorder: Service<Recorder>) -> patina::error::Result<()> {
+        let mut registered = Vec::new();
+        for group in [
+            patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID,
+            patina::uefi::event::EXIT_BOOT_SERVICES_EVENT_GROUP_GUID,
+        ] {
+            let recorder = recorder.clone();
+            let events_for_callback = events.clone();
+            let result = events.create_event_for_group(
+                group,
+                Tpl::Callback,
+                Box::new(move |event| {
+                    if let Err(error) = recorder.report() {
+                        log::error!("Failed to report Patina tests: {error:?}");
+                    }
+                    if let Err(error) = events_for_callback.close_event(event) {
+                        log::error!("Failed to close Patina test report event: {error:?}");
+                    }
+                }),
+            );
+            match result {
+                Ok(event) => registered.push(event),
+                Err(error) => {
+                    for event in registered {
+                        if let Err(cleanup_error) = events.close_event(event) {
+                            log::error!("Failed to clean up Patina test report event: {cleanup_error:?}");
+                        }
+                    }
+                    return Err(error.into());
+                }
+            }
+        }
+        Ok(())
+    }
+}
 #[cfg(test)]
 #[cfg_attr(coverage, coverage(off))]
-pub(crate) mod tests {
+mod tests {
     extern crate std;
 
     use super::*;
-
-    use crate::alloc::{boxed::Box, format};
-    use patina::{
-        BinaryGuid,
-        component::{IntoComponent, Storage, params::Config},
+    use crate::__private_api::test_component;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use patina::component::{
+        Storage,
+        params::{Config, ConfigMut},
+        service::{
+            IntoService,
+            uefi_services::tpl::{PreviousTpl, Tpl as ServiceTpl, TplServices},
+        },
     };
 
-    // A test function where we mock DxeComponentInterface to return what we want for the test.
-    fn test_function(config: Config<i32>) -> crate::error::Result {
-        assert_eq!(*config, 1);
+    static RUNS: AtomicUsize = AtomicUsize::new(0);
+    static CALLBACKS: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(feature = "test-runner")]
+    extern crate self as patina_test;
+
+    #[cfg(feature = "test-runner")]
+    #[crate::patina_test]
+    fn generated_test(_: Service<dyn TestDependency>) -> crate::error::Result {
         Ok(())
     }
 
-    fn test_function_fail() -> crate::error::Result {
-        Err("Intentional Failure")
+    #[derive(IntoService)]
+    #[service(dyn TplServices)]
+    struct TestTpl;
+
+    trait TestDependency {}
+    #[derive(IntoService)]
+    #[service(dyn TestDependency)]
+    struct LateDependency;
+    impl TestDependency for LateDependency {}
+
+    impl TplServices for TestTpl {
+        fn raise_tpl(&self, _: ServiceTpl) -> PreviousTpl {
+            PreviousTpl::from_raw(patina::standard::efi::TPL_APPLICATION)
+        }
+        fn restore_tpl(&self, _: PreviousTpl) {}
     }
 
-    fn test_function_invalid(_: &mut Storage, _: &mut Storage) -> crate::error::Result {
-        Ok(())
-    }
-
-    // This is mirroring the logic in __private_api.rs to ensure we do properly register test cases.
-    #[linkme::distributed_slice]
-    pub static TEST_TESTS: [super::__private_api::TestCase];
-
-    #[linkme::distributed_slice(TEST_TESTS)]
-    pub static TEST_CASE1: super::__private_api::TestCase = super::__private_api::TestCase {
-        name: "test",
-        triggers: &[super::__private_api::TestTrigger::Manual],
-        skip: false,
-        should_fail: false,
-        fail_msg: None,
-        func: |storage| crate::__private_api::FunctionTest::new(test_function).run(storage.into()),
-    };
-
-    #[linkme::distributed_slice(TEST_TESTS)]
-    pub static TEST_CASE2: super::__private_api::TestCase = super::__private_api::TestCase {
-        name: "test",
-        triggers: &[super::__private_api::TestTrigger::Manual],
-        skip: true,
-        should_fail: false,
-        fail_msg: None,
-        func: |storage| crate::__private_api::FunctionTest::new(test_function).run(storage.into()),
-    };
-
-    pub static TEST_CASE3: super::__private_api::TestCase = super::__private_api::TestCase {
-        name: "test_that_fails",
-        triggers: &[super::__private_api::TestTrigger::Manual],
-        skip: false,
-        should_fail: false,
-        fail_msg: None,
-        func: |storage| crate::__private_api::FunctionTest::new(test_function_fail).run(storage.into()),
-    };
-
-    pub static TEST_CASE4: super::__private_api::TestCase = super::__private_api::TestCase {
-        name: "event_triggered_test",
-        triggers: &[super::__private_api::TestTrigger::Event(BinaryGuid::from_bytes(&[0; 16]))],
-        skip: false,
-        should_fail: false,
-        fail_msg: None,
-        func: |storage| crate::__private_api::FunctionTest::new(test_function_fail).run(storage.into()),
-    };
-
-    pub static TEST_CASE5: super::__private_api::TestCase = super::__private_api::TestCase {
-        name: "timer_triggered_test",
-        triggers: &[super::__private_api::TestTrigger::Timer(1_000_000)],
-        skip: false,
-        should_fail: false,
-        fail_msg: None,
-        func: |storage| crate::__private_api::FunctionTest::new(test_function_fail).run(storage.into()),
-    };
-
-    pub static TEST_CASE_INVALID: super::__private_api::TestCase = super::__private_api::TestCase {
-        name: "invalid_test",
-        triggers: &[super::__private_api::TestTrigger::Event(BinaryGuid::from_bytes(&[0; 16]))],
-        skip: false,
-        should_fail: false,
-        fail_msg: None,
-        func: |storage| crate::__private_api::FunctionTest::new(test_function_invalid).run(storage.into()),
-    };
-
-    #[test]
-    fn test_func_implements_into_component() {
-        let _ = TestRunner::default().into_component();
-    }
-
-    #[test]
-    fn verify_default_values() {
-        let config = TestRunner::default();
-        assert_eq!(config.filters.len(), 0);
-        assert!(!config.debug_mode);
-    }
-
-    #[test]
-    fn verify_config_sets_properly() {
-        let config = TestRunner::default()
-            .with_filter(Filter::include("aarch64"))
-            .with_filter(Filter::include("test"))
-            .with_filter(Filter::exclude("skip_me"))
-            .debug_mode(true);
-        assert_eq!(config.filters.len(), 3);
-        assert!(config.debug_mode);
-    }
-
-    #[test]
-    #[should_panic(expected = "Callback called")]
-    fn test_test_failure_callback_handler() {
-        use patina::component::service::uefi_services::{
-            event::MockEventServices, timer_event::MockTimerEventServices,
-        };
-
-        let test_runner = crate::component::TestRunner::default().with_callback(|_, _| {
-            panic!("Callback called");
-        });
-
+    fn ready_recorder() -> Service<Recorder> {
         let mut storage = Storage::new();
-        let recorder = Service::mock(Box::new(Recorder::default()));
-        let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
-        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
-
-        // TEST_CASE3 is designed to fail.
-        test_runner
-            .register_tests(Box::leak(Box::new([TEST_CASE3])), &events, &timer, &recorder, &mut storage)
-            .expect("test registration should succeed");
-        recorder.run_manual_tests(&mut storage);
+        storage.add_service(TestTpl);
+        let mut component = Recorder::new(BTreeMap::new()).into_component();
+        assert!(component.initialize(&mut storage));
+        assert!(component.run(&mut storage).unwrap());
+        storage.get_service::<Recorder>().unwrap()
     }
 
-    #[test]
-    fn test_filter_should_work() {
-        use core::sync::atomic::{AtomicUsize, Ordering};
+    fn add_scheduling_services(storage: &mut Storage) {
+        use crate::alloc::sync::Arc;
         use patina::component::service::uefi_services::{
-            event::{Event, MockEventServices},
-            timer_event::MockTimerEventServices,
+            event::MockEventServices,
+            timer_event::{MockTimerEventServices, TimerEventServices},
         };
-        use std::sync::Arc;
 
-        fn dummy_event() -> Event {
-            Event::from_raw(core::ptr::NonNull::<core::ffi::c_void>::dangling().as_ptr())
-                .expect("a dangling non-null pointer should produce a test event")
+        struct SchedulingServices;
+        impl IntoService for SchedulingServices {
+            fn register_shared(self: Arc<Self>, storage: &mut Storage) {
+                Self::register_service::<dyn EventServices>(storage, Arc::new(MockEventServices::new()));
+                Self::register_service::<dyn TimerEventServices>(storage, Arc::new(MockTimerEventServices::new()));
+            }
+        }
+        storage.add_service(SchedulingServices);
+    }
+
+    fn failing_test(config: Config<u32>, _: Service<dyn TestDependency>) -> crate::error::Result {
+        assert_eq!(*config, 42);
+        RUNS.fetch_add(1, Ordering::SeqCst);
+        Err("failure")
+    }
+
+    fn mutable_config_test(mut config: ConfigMut<u8>) -> crate::error::Result {
+        *config += 1;
+        Ok(())
+    }
+
+    fn callback(_: &'static str, message: &'static str) {
+        assert_eq!(message, "failure");
+        CALLBACKS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    static TESTS: [TestCase; 3] = [
+        TestCase {
+            name: "immediate",
+            triggers: &[TestTrigger::Immediate],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            component: |test| test_component(test, failing_test),
+        },
+        TestCase {
+            name: "event",
+            triggers: &[TestTrigger::Event(patina::uefi::event::READY_TO_BOOT_EVENT_GROUP_GUID)],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            component: |test| test_component(test, failing_test),
+        },
+        TestCase {
+            name: "timer",
+            triggers: &[TestTrigger::Timer(1)],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            component: |test| test_component(test, failing_test),
+        },
+    ];
+
+    static MUTABLE_TEST: [TestCase; 1] = [TestCase {
+        name: "mutable_config",
+        triggers: &[TestTrigger::Immediate],
+        skip: false,
+        should_fail: false,
+        fail_msg: None,
+        component: |test| test_component(test, mutable_config_test),
+    }];
+
+    #[test]
+    fn test_registration_dispatches_after_dependencies() {
+        RUNS.store(0, Ordering::SeqCst);
+        CALLBACKS.store(0, Ordering::SeqCst);
+        let mut storage = Storage::new();
+        storage.add_config(42_u32);
+        let mut components =
+            TestRegistration::default().debug_mode(true).with_callback(callback).build_components(&TESTS);
+        for component in &mut components {
+            assert!(component.initialize(&mut storage));
         }
 
-        let event_group_calls = Arc::new(AtomicUsize::new(0));
-        let event_group_calls_for_mock = Arc::clone(&event_group_calls);
+        assert_eq!(components.len(), 3);
+        assert!(!components[2].run(&mut storage).unwrap());
+        storage.add_service(TestTpl);
+        assert!(components[0].run(&mut storage).unwrap());
+        assert!(!components[1].run(&mut storage).unwrap());
+        assert!(!components[2].run(&mut storage).unwrap());
+        let recorder = storage.get_service::<Recorder>().unwrap();
+        let record = recorder.get_unskipped("immediate").unwrap().unwrap();
+        assert!(record.debug_mode());
+        assert!(record.callback().is_some());
+        assert!(recorder.get_unskipped("event").unwrap().is_none());
+        assert!(recorder.get_unskipped("timer").unwrap().is_none());
+        assert!(!components[2].run(&mut storage).unwrap());
+        assert_eq!(RUNS.load(Ordering::SeqCst), 0);
+
+        storage.add_service(LateDependency);
+        assert!(!components[2].run(&mut storage).unwrap());
+        assert_eq!(RUNS.load(Ordering::SeqCst), 0);
+        add_scheduling_services(&mut storage);
+        assert!(components[2].run(&mut storage).unwrap());
+        assert_eq!(RUNS.load(Ordering::SeqCst), 1);
+        assert_eq!(CALLBACKS.load(Ordering::SeqCst), 1);
+        assert!(recorder.get_unskipped("immediate").unwrap().is_some());
+        assert!(recorder.report().is_ok());
+    }
+
+    #[test]
+    fn test_registration_records_failure_before_callback() {
+        fn fail() -> crate::error::Result {
+            Err("failure")
+        }
+        fn fail_callback(_: &'static str, _: &'static str) {
+            panic!("callback invoked");
+        }
+        static CASES: [TestCase; 1] = [TestCase {
+            name: "callback_order",
+            triggers: &[TestTrigger::Immediate],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            component: |test| test_component(test, fail),
+        }];
+
+        let mut storage = Storage::new();
+        let mut components =
+            TestRegistration::default().debug_mode(true).with_callback(fail_callback).build_components(&CASES);
+        for component in &mut components {
+            assert!(component.initialize(&mut storage));
+        }
+        storage.add_service(TestTpl);
+        assert!(components[0].run(&mut storage).unwrap());
+        add_scheduling_services(&mut storage);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| components[2].run(&mut storage)));
+        assert!(result.is_err());
+        let recorder = storage.get_service::<Recorder>().unwrap();
+        assert!(std::format!("{}", *recorder).contains("callback_order ... fail (1 fails, 0 passes): failure"));
+    }
+
+    #[test]
+    fn test_registration_filters_and_expected_failures() {
+        assert!(TESTS[0].should_run(&[Filter::include("immed")]));
+        assert!(!TESTS[0].should_run(&[Filter::include("immed"), Filter::exclude("immediate")]));
+        assert!(!TESTS[0].should_run(&[Filter::include("other")]));
+        let expected = TestCase { should_fail: true, fail_msg: Some("failure"), ..TESTS[0] };
+        assert_eq!(expected.evaluate(Err("failure")), Ok(()));
+        assert_eq!(expected.evaluate(Err("other")), Err("other"));
+        assert_eq!(expected.evaluate(Ok(())), Err("Test passed when it should have failed"));
+        let any_failure = TestCase { fail_msg: None, ..expected };
+        assert_eq!(any_failure.evaluate(Err("other")), Ok(()));
+    }
+
+    #[test]
+    fn test_registration_predicate_filters() {
+        let test = &TESTS[0];
+        assert!(test.should_run(&[Filter::predicate(|name| name == "immediate")]));
+        assert!(!test.should_run(&[Filter::predicate(|name| name == "other")]));
+        assert!(test.should_run(&[
+            Filter::include("immed"),
+            Filter::predicate(|name| name.starts_with("imm")),
+            Filter::predicate(|name| name.ends_with("ate")),
+        ]));
+        assert!(!test.should_run(&[Filter::include("immed"), Filter::predicate(|_| false)]));
+        assert!(!test.should_run(&[Filter::include("other"), Filter::predicate(|_| true)]));
+        assert!(!test.should_run(&[Filter::predicate(|_| true), Filter::exclude("immediate")]));
+        assert!(!test.should_run(&[Filter::predicate(|_| true), Filter::predicate(|_| false)]));
+        let skipped = TestCase { skip: true, ..*test };
+        assert!(!skipped.should_run(&[Filter::predicate(|_| true)]));
+    }
+
+    #[test]
+    fn test_registration_dispatches_mutable_config_test_before_global_lock() {
+        let mut storage = Storage::new();
+        let mut components = TestRegistration::default().build_components(&MUTABLE_TEST);
+        for component in &mut components {
+            assert!(component.initialize(&mut storage));
+        }
+        storage.add_service(TestTpl);
+        assert!(components[0].run(&mut storage).unwrap());
+        add_scheduling_services(&mut storage);
+        assert!(components[2].run(&mut storage).unwrap());
+        assert_eq!(*storage.get_config_mut::<u8>().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_registration_rejects_second_runner_without_replacing_recorder() {
+        let mut storage = Storage::new();
+        let mut components =
+            TestRegistration::default().with_filter(Filter::exclude("immediate")).build_components(&TESTS);
+        components.extend(TestRegistration::default().debug_mode(true).build_components(&TESTS));
+        for component in &mut components {
+            assert!(component.initialize(&mut storage));
+        }
+        assert_eq!(components.len(), 5);
+        storage.add_service(TestTpl);
+        assert!(components[0].run(&mut storage).unwrap());
+        assert!(!components[1].run(&mut storage).unwrap());
+        assert_eq!(components[2].run(&mut storage), Err(patina::error::EfiError::InvalidParameter));
+        let recorder = storage.get_service::<Recorder>().unwrap();
+        assert!(recorder.get_unskipped("immediate").unwrap().is_none());
+    }
+
+    #[cfg(feature = "test-runner")]
+    #[test]
+    fn test_registration_discovers_macro_generated_component() {
+        let mut storage = Storage::new();
+        let mut components: Vec<_> =
+            TestRegistration::default().with_filter(Filter::include("generated_test")).into_components().collect();
+        for component in &mut components {
+            assert!(component.initialize(&mut storage));
+        }
+        storage.add_service(TestTpl);
+        assert!(components[0].run(&mut storage).unwrap());
+        assert!(!components[1].run(&mut storage).unwrap());
+        let index = 2;
+        assert!(!components[index].run(&mut storage).unwrap());
+        storage.add_service(LateDependency);
+        add_scheduling_services(&mut storage);
+        assert!(components[index].run(&mut storage).unwrap());
+        let recorder = storage.get_service::<Recorder>().unwrap();
+        let name = __private_api::test_cases().iter().find(|test| test.name.ends_with("generated_test")).unwrap().name;
+        assert!(recorder.get_unskipped(name).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_registration_reporter_caches_service_and_closes_events() {
+        use patina::component::service::uefi_services::event::{Event, EventNotifyCallback, MockEventServices};
+        use std::{cell::RefCell, rc::Rc};
+
+        let callbacks = Rc::new(RefCell::new(Vec::<EventNotifyCallback>::new()));
+        let captured = callbacks.clone();
         let mut events = MockEventServices::new();
-        events.expect_create_event_for_group().times(2).returning(move |_, _, _| {
-            event_group_calls_for_mock.fetch_add(1, Ordering::Relaxed);
-            Ok(dummy_event())
+        events.expect_create_event_for_group().times(2).returning_st(move |_, tpl, callback| {
+            assert_eq!(tpl, Tpl::Callback);
+            captured.borrow_mut().push(callback);
+            Ok(Event::from_raw(core::ptr::NonNull::<u8>::dangling().as_ptr().cast()).unwrap())
         });
-
-        let timer_event_calls = Arc::new(AtomicUsize::new(0));
-        let timer_event_calls_for_mock = Arc::clone(&timer_event_calls);
-        let mut timer = MockTimerEventServices::new();
-        timer.expect_create_timer_event().once().returning(move |_, _| {
-            timer_event_calls_for_mock.fetch_add(1, Ordering::Relaxed);
-            Ok(dummy_event())
-        });
-
-        let set_timer_calls = Arc::new(AtomicUsize::new(0));
-        let set_timer_calls_for_mock = Arc::clone(&set_timer_calls);
-        timer.expect_set_timer().once().returning(move |_, _| {
-            set_timer_calls_for_mock.fetch_add(1, Ordering::Relaxed);
-            Ok(())
-        });
-
-        let test_runner = TestRunner::default().with_filter(Filter::include("triggered_test"));
-
-        let mut storage = Storage::new();
-        let recorder = Service::mock(Box::new(Recorder::default()));
+        events.expect_close_event().times(2).returning(|_| Ok(()));
         let events: Service<dyn EventServices> = Service::mock(Box::new(events));
-        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(timer));
-
-        // Failure tests
-        assert!(
-            test_runner
-                .register_tests(
-                    Box::leak(Box::new([TEST_CASE3, TEST_CASE4, TEST_CASE5])),
-                    &events,
-                    &timer,
-                    &recorder,
-                    &mut storage,
-                )
-                .is_ok()
-        );
-        assert_eq!(event_group_calls.load(Ordering::Relaxed), 2);
-        assert_eq!(timer_event_calls.load(Ordering::Relaxed), 1);
-        assert_eq!(set_timer_calls.load(Ordering::Relaxed), 1);
-        recorder.run_manual_tests(&mut storage);
-
-        let output = format!("{}", *recorder);
-
-        // This test is filtered out, so it is never run and is reported as skipped.
-        assert!(output.contains("test_that_fails ... skipped"));
-        // This test is not filtered out, but never triggered, so it is reported as not triggered.
-        assert!(output.contains("event_triggered_test ... not triggered"));
-        assert!(output.contains("totals: 0 passes, 0 fails"));
+        let recorder = ready_recorder();
+        assert!(Reporter.entry_point(events, recorder).is_ok());
+        let event = Event::from_raw(core::ptr::NonNull::<u8>::dangling().as_ptr().cast()).unwrap();
+        let mut captured = core::mem::take(&mut *callbacks.borrow_mut());
+        assert_eq!(captured.len(), 2);
+        for callback in &mut captured {
+            callback(event);
+        }
     }
 
     #[test]
-    fn test_skipped_and_filtered_tests_are_reported_as_skipped_and_never_run() {
-        use patina::component::service::uefi_services::{
-            event::MockEventServices, timer_event::MockTimerEventServices,
-        };
+    fn test_registration_reporter_cleans_up_after_creation_failure() {
+        use patina::component::service::uefi_services::event::{Event, EventError, MockEventServices};
+        use std::{cell::Cell, rc::Rc};
 
-        let mut storage = Storage::new();
-        storage.add_config(1i32);
-        let recorder = Service::mock(Box::new(Recorder::default()));
-        let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
-        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
-
-        // Both tests are manual, so they would run if scheduled, but neither matches the include filter.
-        TestRunner::default()
-            .with_filter(Filter::include("event"))
-            .register_tests(Box::leak(Box::new([TEST_CASE1, TEST_CASE3])), &events, &timer, &recorder, &mut storage)
-            .expect("test registration should succeed");
-        assert!(!recorder.is_test_scheduled("test"));
-        assert!(!recorder.is_test_scheduled("test_that_fails"));
-        recorder.run_manual_tests(&mut storage);
-
-        let output = format!("{}", *recorder);
-        assert!(output.contains("  test ... skipped"));
-        assert!(output.contains("test_that_fails ... skipped"));
-        assert!(output.contains("totals: 0 passes, 0 fails"));
-
-        // A later runner that does not filter the test out still schedules and runs it.
-        TestRunner::default()
-            .register_tests(Box::leak(Box::new([TEST_CASE1])), &events, &timer, &recorder, &mut storage)
-            .expect("test registration should succeed");
-        assert!(recorder.is_test_scheduled("test"));
-        recorder.run_manual_tests(&mut storage);
-        let output = format!("{}", *recorder);
-        assert!(output.contains("  test ... ok (1 passes)"));
-        assert!(output.contains("test_that_fails ... skipped"));
-
-        // A test marked `#[skip]` is skipped even without filters.
-        let skip_recorder = Service::mock(Box::new(Recorder::default()));
-        TestRunner::default()
-            .register_tests(Box::leak(Box::new([TEST_CASE2])), &events, &timer, &skip_recorder, &mut storage)
-            .expect("test registration should succeed");
-        assert!(!skip_recorder.is_test_scheduled("test"));
-        skip_recorder.run_manual_tests(&mut storage);
-        assert!(format!("{}", *skip_recorder).contains("  test ... skipped"));
-    }
-
-    #[test]
-    fn test_filtered_test_still_runs_if_scheduled_by_an_earlier_runner() {
-        use patina::component::service::uefi_services::{
-            event::MockEventServices, timer_event::MockTimerEventServices,
-        };
-
-        let mut storage = Storage::new();
-        let recorder = Service::mock(Box::new(Recorder::default()));
-        let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
-        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
-
-        TestRunner::default()
-            .register_tests(Box::leak(Box::new([TEST_CASE3])), &events, &timer, &recorder, &mut storage)
-            .expect("test registration should succeed");
-        // A later runner filtering the test out must not unschedule it.
-        TestRunner::default()
-            .with_filter(Filter::exclude("test_that_fails"))
-            .register_tests(Box::leak(Box::new([TEST_CASE3])), &events, &timer, &recorder, &mut storage)
-            .expect("test registration should succeed");
-        assert!(recorder.is_test_scheduled("test_that_fails"));
-
-        recorder.run_manual_tests(&mut storage);
-        let output = format!("{}", *recorder);
-        assert!(output.contains("test_that_fails ... fail (1 fails, 0 passes)"), "{output}");
-        assert!(output.contains("totals: 0 passes, 1 fails"), "{output}");
+        let calls = Rc::new(Cell::new(0));
+        let captured = calls.clone();
+        let mut events = MockEventServices::new();
+        events.expect_create_event_for_group().times(2).returning_st(move |_, _, _| {
+            let current = captured.get();
+            captured.set(current + 1);
+            if current == 0 {
+                Ok(Event::from_raw(core::ptr::NonNull::<u8>::dangling().as_ptr().cast()).unwrap())
+            } else {
+                Err(EventError::Internal)
+            }
+        });
+        events.expect_close_event().times(1).returning(|_| Ok(()));
+        let events: Service<dyn EventServices> = Service::mock(Box::new(events));
+        let recorder = ready_recorder();
+        assert!(Reporter.entry_point(events, recorder.clone()).is_err());
     }
 }

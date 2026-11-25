@@ -199,6 +199,12 @@ pub trait IntoComponent<Input> {
     fn into_component(self) -> alloc::boxed::Box<dyn Component>;
 }
 
+impl IntoComponent<()> for alloc::boxed::Box<dyn Component> {
+    fn into_component(self) -> alloc::boxed::Box<dyn Component> {
+        self
+    }
+}
+
 /// A prelude module that re-exports commonly used items from the `component` module.
 pub mod prelude {
     pub use crate::{
@@ -237,6 +243,17 @@ mod tests {
         fn entry_point(self) -> Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn test_boxed_component_into_component_preserves_allocation() {
+        let component = ComponentSuccess.into_component();
+        let original = &*component as *const dyn Component;
+        let mut component = component.into_component();
+        assert!(core::ptr::eq(original, &*component));
+        let mut storage = Storage::new();
+        assert!(component.initialize(&mut storage));
+        assert_eq!(component.run(&mut storage), Ok(true));
     }
 
     struct ComponentNotDispatchedConfig;

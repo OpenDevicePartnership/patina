@@ -56,7 +56,7 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
     map.insert(KEY_SHOULD_FAIL, quote! {false});
     map.insert(KEY_FAIL_MSG, quote! {None});
     map.insert(KEY_SKIP, quote! {false});
-    map.insert(KEY_TRIGGER, quote! { &[patina_test::__private_api::TestTrigger::Manual] });
+    map.insert(KEY_TRIGGER, quote! { &[patina_test::__private_api::TestTrigger::Immediate] });
 
     let mut triggers = Vec::new();
 
@@ -194,7 +194,7 @@ fn generate_expanded_test_case(
             skip: #skip,
             should_fail: #should_fail,
             fail_msg: #fail_msg,
-            func: |storage| patina_test::__private_api::FunctionTest::new(#fn_name).run(storage.into()),
+            component: |test| patina_test::__private_api::test_component(test, #fn_name),
         };
         #item
     };
@@ -237,11 +237,11 @@ mod tests {
                 #[allow(non_upper_case_globals)]
                 static __my_test_case_TestCase: patina_test::__private_api::TestCase = patina_test::__private_api::TestCase {
                     name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                    triggers: &[patina_test::__private_api::TestTrigger::Manual],
+                    triggers: &[patina_test::__private_api::TestTrigger::Immediate],
                     skip: false,
                     should_fail: false,
                     fail_msg: None,
-                    func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                    component: |test| patina_test::__private_api::test_component(test, my_test_case),
                 };
                 fn my_test_case() -> Result {
                     assert!(true);
@@ -270,11 +270,11 @@ mod tests {
             static __my_test_case_TestCase: patina_test::__private_api::TestCase =
             patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: &[patina_test::__private_api::TestTrigger::Manual],
+                triggers: &[patina_test::__private_api::TestTrigger::Immediate],
                 skip: true,
                 should_fail: false,
                 fail_msg: None,
-                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                component: |test| patina_test::__private_api::test_component(test, my_test_case),
             };
             fn my_test_case() -> Result {
                 assert!(true);
@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(tc_cfg.get(KEY_SKIP).unwrap().to_string(), "true");
         assert_eq!(
             tc_cfg.get(KEY_TRIGGER).unwrap().to_string(),
-            "& [patina_test :: __private_api :: TestTrigger :: Manual]"
+            "& [patina_test :: __private_api :: TestTrigger :: Immediate]"
         );
     }
 
@@ -465,7 +465,7 @@ mod tests {
                 skip: true,
                 should_fail: true,
                 fail_msg: Some("Expected Error"),
-                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                component: |test| patina_test::__private_api::test_component(test, my_test_case),
             };
             fn my_test_case() -> Result {
                 assert!(true);
@@ -505,7 +505,7 @@ mod tests {
                 skip: true,
                 should_fail: true,
                 fail_msg: Some("Expected Error"),
-                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                component: |test| patina_test::__private_api::test_component(test, my_test_case),
             };
             fn my_test_case() -> Result {
                 assert!(true);
@@ -529,7 +529,7 @@ mod tests {
         config.insert(KEY_SHOULD_FAIL, quote! {true});
         config.insert(KEY_FAIL_MSG, quote! {Some("Expected Error")});
         config.insert(KEY_SKIP, quote! {false});
-        config.insert(KEY_TRIGGER, quote! { patina_test::__private_api::TestTrigger::Manual });
+        config.insert(KEY_TRIGGER, quote! { patina_test::__private_api::TestTrigger::Immediate });
 
         let expanded = generate_expanded_test_case(&item, &config);
 
@@ -540,11 +540,11 @@ mod tests {
             static __my_test_case_TestCase: patina_test::__private_api::TestCase =
             patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
-                triggers: patina_test::__private_api::TestTrigger::Manual,
+                triggers: patina_test::__private_api::TestTrigger::Immediate,
                 skip: false,
                 should_fail: true,
                 fail_msg: Some("Expected Error"),
-                func: |storage| patina_test::__private_api::FunctionTest::new(my_test_case).run(storage.into()),
+                component: |test| patina_test::__private_api::test_component(test, my_test_case),
             };
             fn my_test_case() -> Result {
                 assert!(true);

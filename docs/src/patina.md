@@ -278,9 +278,9 @@ Three main types of testing are currently supported.
   [cargo book entry](https://doc.rust-lang.org/rust-by-example/testing/integration_testing.html).
 - **On-platform tests** are supported with code in a crate called `patina_test` that provides a testing framework
   similar to the typical rust testing framework. The key difference is that instead of tests being collected and
-  executed on the host system, they are instead collected and executed via a component
-  (`patina_test::component::TestRunner`) provided by the same crate. The platform must register this component with the
-  `DXE core`. The DXE core will then dispatch this component, which will run all registered tests.
+  executed on the host system, they are registered as individual components with
+  `patina_test::component::TestRegistration`. The DXE core dispatches each immediate test when its dependencies
+  are available.
 
 #### Compatibility
 

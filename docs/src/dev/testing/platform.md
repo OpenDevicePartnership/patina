@@ -2,9 +2,9 @@
 
 Platform testing is supported through the `patina_test` crate, which provides a testing framework similar to
 the typical Rust testing framework. The key difference is that instead of tests being collected and executed on the
-host system, they are collected and executed via a component (`patina_test::component::TestRunner`) provided by the
-same crate. The platform must register this component with the Patina DXE Core, which will then dispatch the component
-to run all registered tests.
+host system, they are collected and registered as individual components using
+`patina_test::component::TestRegistration`. The Patina DXE Core dispatches each immediate test when its own
+dependencies, the test recorder, `EventServices`, and `TimerEventServices` are available.
 
 > **Note:** The most up-to-date documentation on the `patina_test` crate can be found on
 > [crates.io](https://crates.io/crates/patina_test). For convenience, some high-level concepts are summarized below.
@@ -66,8 +66,7 @@ There are three supported trigger types for patina_test tests.
 
 #### Immediate
 
-These tests are executed immediately on the `TestRunner` component being dispatched. They are only executed once. This
-is the default trigger.
+These tests execute once, when the test component's dependencies are available. This is the default trigger.
 
 #### Event
 
@@ -104,47 +103,80 @@ These tests will continue to execute after the specified time interval for the l
 
 ## Running On-Platform Tests
 
-Running all these tests on a platform is as easy as instantiating the test runner component and registering it with
-the Patina DXE Core:
+Add every component returned by `TestRegistration::into_components` to the Patina DXE Core before component
+dispatch starts. The iterator includes the test infrastructure as well as the selected tests:
 
 ```rust,no_run
 # extern crate patina_test;
 # extern crate patina_dxe_core;
-use patina_test::component::TestRunner;
+use patina_test::component::TestRegistration;
 use patina_dxe_core::*;
 
 struct ExamplePlatform;
 
 impl ComponentInfo for ExamplePlatform {
     fn components(mut add: Add<Component>) {
-        add.component(TestRunner::default());
+        for component in TestRegistration::default().into_components() {
+            add.component(component);
+        }
     }
 }
 ```
 
-This will execute all tests marked with the `patina_test` attribute across all crates used to compile this binary.
-Due to this fact, we have some configuration options with the test component. The most important customization is
+This registers tests marked with the `patina_test` attribute across all crates used to compile this binary.
+Due to this fact, we have some configuration options with the registration builder. The most important customization is
 the `with_filter` function, which allows you to filter down the tests to run. The logic behind this is similar to
 the filtering provided by `cargo test`. That is to say, if you pass it a filter of `X64`, it will only run tests
 with `X64` in their name. The function name is `<module_path>::<name>`. You can call `with_filter` multiple times.
 
-The next customization is `debug_mode` which enables logging during test execution (false by default). The final
-customization is `fail_fast` which will immediately exit the test harness as soon as a single test fails (false by
-default). These two customizations can only be called once. Subsequent calls will overwrite the previous value.
+Use `Filter::predicate` with a named function or non-capturing closure for custom name selection:
 
 ```rust,no_run
 # extern crate patina_test;
 # extern crate patina_dxe_core;
-use patina_test::component::TestRunner;
+use patina_test::component::{Filter, TestRegistration};
 use patina_dxe_core::*;
 
 struct ExamplePlatform;
 
 impl ComponentInfo for ExamplePlatform {
     fn components(mut add: Add<Component>) {
-        add.component(TestRunner::default()
+        for component in TestRegistration::default()
+            .with_filter(Filter::predicate(|name| {
+                !name.contains("slow") || name.contains("module_b")
+            }))
+            .into_components()
+        {
+            add.component(component);
+        }
+    }
+}
+```
+
+All predicates must return true. Include filters match any specified include pattern, while exclude filters take
+priority over both includes and predicates.
+
+The `debug_mode` customization enables logging during test execution (false by default), and `with_callback` installs
+a failure callback. Add the components from exactly one `TestRegistration` to the platform; a second registration
+fails when its recorder component is dispatched. Combine include, exclude, and predicate filters for custom selection.
+A selected immediate test runs only once.
+
+```rust,no_run
+# extern crate patina_test;
+# extern crate patina_dxe_core;
+use patina_test::component::TestRegistration;
+use patina_dxe_core::*;
+
+struct ExamplePlatform;
+
+impl ComponentInfo for ExamplePlatform {
+    fn components(mut add: Add<Component>) {
+        for component in TestRegistration::default()
             .debug_mode(true)
-        );
+            .into_components()
+        {
+            add.component(component);
+        }
     }
 }
 ```
@@ -156,7 +188,7 @@ config:
   look: handDrawn
 ---
 graph TD
-    A[Register TestRunner Component] --> B[DXE Core Dispatches TestRunner]
-    B --> C[Collect and Run Tests]
-    C --> D[Report Results]
+    A[Register Test Components] --> B[Dependencies Become Available]
+    B --> C[Dispatch Each Immediate Test]
+    C --> D[Report Results at Boot Events]
 ```

@@ -1,7 +1,7 @@
 # A Patina testing framework for on-platform unit testing
 
 This crate provides a macro (`patina_test`) to register dependency injectable functions as on-platform unit tests
-that can be discovered and executed by the `TestRunner` component.
+that can be discovered and registered as individual components using `TestRegistration`.
 
 ## Writing Tests
 
@@ -23,25 +23,31 @@ should feel very similar to writing normal Rust unit tests with some additional 
 ## Running Tests
 
 Tests marked with `#[patina_test]` are not automatically executed by a platform. Instead, the platform must opt-in
-to running tests by registering one or more `TestRunner` components with the Core. This is done by enabling the
-`test-runner` feature of this crate, which does two things: (1) provides access to the component module, which contains
-the component and (2) Globally registers any function marked with `#[patina_test]`. Once registered, it will
-discover all test cases that match it's configuration and schedule them according to the component's configurations
-and the test case's triggers. An overlap in test cases discovered by multiple `TestRunner` components is allowed,
-but the test case will only be scheduled to run once based on it's triggers. The Test failure callbacks will be
-called for each `TestRunner` that discovers the test case. `debug_mode=true` takes priority, so if any `TestRunner`
-that discovers a test case has `debug_mode=true`, then debug messages will be enabled for that test case regardless
-of the other `TestRunner`'s `debug_mode` configuration for that test case.
+to running tests by enabling the `test-runner` feature and adding every component returned by
+`TestRegistration::into_components` to the Core. These include the test infrastructure and selected tests.
+Every test is dispatched separately when its own dependencies, the recorder, `EventServices`,
+and `TimerEventServices` are available. The recorder depends on `TplServices`.
+Results are reported at Ready to Boot and Exit Boot Services.
 
-> [!IMPORTANT]
-> `TestRunner` depends on `Service<dyn TimerEventServices>`. The DXE Core does not produce that service until the
-> `EFI_TIMER_ARCH_PROTOCOL` is available. As a result, `TestRunner` and all registered `patina_test` tests wait to run
-> until the platform installs the Timer Architectural Protocol. Tests will not run on a platform that never installs
-> it.
+Filters match fully qualified test names. Include filters are combined with OR, exclude filters always take
+priority, and every `Filter::predicate` must return true. Predicates accept named functions or non-capturing
+closures, for example `Filter::predicate(|name| !name.contains("slow") || name.contains("module_b"))`.
+
+```rust,ignore
+fn components(mut add: Add<Component>) {
+    for component in TestRegistration::default()
+        .with_filter(Filter::include("my_tests"))
+        .debug_mode(true)
+        .into_components()
+    {
+        add.component(component);
+    }
+}
+```
 
 ## Feature Flags
 
-- `test-runner`: Will make the `component` module public, providing access to the `TestRunner` component and actually
+- `test-runner`: Will make the `component` module public, providing access to `TestRegistration` and
   register patina tests globally.
 
 ## Example
