@@ -79,6 +79,7 @@ fn locate_protocol(
 // Verify that every logical processor reported by the MP Services Protocol has
 // started (enabled count equals the total processor count).
 #[patina_test]
+#[category(smoke)]
 fn mp_services_all_cores_started(
     protocols: Service<dyn ProtocolServices>,
     enabled: Config<MpServicesEnabled>,
@@ -101,6 +102,7 @@ fn mp_services_all_cores_started(
 
 // Verify that the test (running on the BSP) is reported as processor index 0.
 #[patina_test]
+#[category(smoke)]
 fn mp_services_bsp_who_am_i(
     protocols: Service<dyn ProtocolServices>,
     enabled: Config<MpServicesEnabled>,
@@ -118,6 +120,7 @@ fn mp_services_bsp_who_am_i(
 }
 
 #[patina_test]
+#[category(integration)]
 fn mp_services_bsp_only_queries_reject_ap_callers(
     protocols: Service<dyn ProtocolServices>,
     enabled: Config<MpServicesEnabled>,
@@ -152,6 +155,7 @@ fn mp_services_bsp_only_queries_reject_ap_callers(
 
 // Verify startup_all_aps dispatches the procedure to every started AP exactly once.
 #[patina_test]
+#[category(integration)]
 fn mp_services_startup_all_aps_runs_on_every_ap(
     protocols: Service<dyn ProtocolServices>,
     enabled: Config<MpServicesEnabled>,
@@ -188,6 +192,7 @@ fn mp_services_startup_all_aps_runs_on_every_ap(
 
 // Verify startup_this_ap dispatches to a single AP and ignores Finished in blocking mode.
 #[patina_test]
+#[category(integration)]
 fn mp_services_startup_this_ap_runs_on_one_ap(
     protocols: Service<dyn ProtocolServices>,
     enabled: Config<MpServicesEnabled>,
@@ -219,7 +224,9 @@ fn mp_services_startup_this_ap_runs_on_one_ap(
 // Verify that timing out an executing AP terminates the procedure through the
 // INIT-SIPI-SIPI recovery entry and leaves the same processor available for later work.
 #[patina_test]
-fn mp_services_timeout_recovers_ap(
+#[category(integration)]
+#[modifier(slow)]
+fn mp_services_timeout_recovers_ap_slow(
     protocols: Service<dyn ProtocolServices>,
     enabled: Config<MpServicesEnabled>,
 ) -> patina_test::error::Result {
@@ -272,6 +279,7 @@ fn mp_services_timeout_recovers_ap(
 
 // Verify every AP can complete the PI disable/enable lifecycle and accept work afterward.
 #[patina_test]
+#[category(integration)]
 fn mp_services_enable_disable_all_aps(
     protocols: Service<dyn ProtocolServices>,
     enabled: Config<MpServicesEnabled>,
@@ -336,6 +344,7 @@ fn mp_services_enable_disable_all_aps(
 // This exercises the dxe_core event-based notification path driven by the
 // component's periodic timer callback.
 #[patina_test]
+#[category(integration)]
 fn mp_services_startup_all_aps_nonblocking_signals_event(
     services: (Service<dyn ProtocolServices>, Service<dyn EventServices>, Service<dyn TimerEventServices>),
     enabled: Config<MpServicesEnabled>,
@@ -480,6 +489,7 @@ mod x64 {
     // attribute changes). Reads the MSRs directly, independent of the MTRR library
     // that performs the synchronization.
     #[patina_test]
+    #[category(integration)]
     fn mp_services_mtrrs_synchronized_with_bsp(
         protocols: Service<dyn ProtocolServices>,
         enabled: Config<MpServicesEnabled>,

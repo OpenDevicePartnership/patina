@@ -183,6 +183,13 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// - `#[skip]`: Indicates that the test should be skipped.
 /// - `#[on(timer = N)]`: Indicates that the test should be triggered periodically every N units of 100 nanoseconds.
 /// - `#[on(event = GUID)]`: Indicates that the test should be triggered by the specified event.
+/// - `#[category(name)]`: Assigns one optional category to the test. A second category is an error.
+/// - `#[modifier(name, ...)]`: Adds one or more modifiers. This attribute can be repeated.
+///
+/// Names must be unquoted identifiers and are stored as case-sensitive strings. Hyphens and spaces are not
+/// supported. Raw identifiers are stored without the `r#` prefix. Metadata is explicit; module and
+/// function names do not determine it.
+/// Tests without these attributes have no category or modifiers.
 ///
 /// ## Example
 ///
@@ -218,6 +225,13 @@ pub fn hob_config(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// #[cfg_attr(not(target_arch = "x86_64"), skip)]
 /// fn x86_64_only_test_case() -> Result {
 ///   todo!()
+/// }
+///
+/// #[patina_test]
+/// #[category(stress)]
+/// #[modifier(slow, needs_reboot)]
+/// fn tagged_test_case() -> Result {
+///   Ok(())
 /// }
 ///
 /// #[patina_test]

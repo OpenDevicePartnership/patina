@@ -219,6 +219,7 @@ fn allow_allocations_for_type(memory_type: EfiMemoryType) -> Result<(), MemoryEr
 }
 
 #[patina_test]
+#[category(integration)]
 #[cfg_attr(coverage, coverage(off))]
 #[allow(clippy::indexing_slicing)]
 fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_test::error::Result {
@@ -298,6 +299,7 @@ fn memory_manager_allocations_test(mm: Service<dyn MemoryManager>) -> patina_tes
 }
 
 #[patina_test]
+#[category(integration)]
 fn memory_manager_attributes_test(mm: Service<dyn MemoryManager>) -> patina_test::error::Result {
     // The default attributes for memory should be read/write.
     let result = mm.allocate_pages(1, AllocationOptions::new());

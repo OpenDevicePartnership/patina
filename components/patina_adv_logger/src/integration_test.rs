@@ -22,6 +22,7 @@ use crate::{protocol::AdvancedLoggerProtocol, reader::AdvancedLogReader};
 
 #[cfg_attr(coverage, coverage(off))]
 #[patina_test]
+#[category(integration)]
 fn adv_logger_test(protocols: Service<dyn ProtocolServices>) -> patina_test::error::Result {
     const DIRECT_STR: &str = "adv_logger_test: Direct log message!!!";
     const PROTOCOL_STR: &str = "adv_logger_test: Logged through the protocol!!!\n";

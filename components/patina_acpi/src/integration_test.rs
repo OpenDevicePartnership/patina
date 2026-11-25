@@ -39,6 +39,7 @@ struct MockLargeTable {
 
 #[cfg_attr(coverage, coverage(off))]
 #[patina_test]
+#[category(integration)]
 fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina_test::error::Result {
     let original_length = table_manager.iter_tables().expect("Should collect installed tables.").len();
 
@@ -97,6 +98,7 @@ fn acpi_test(table_manager: Service<AcpiTableManager>) -> patina_test::error::Re
 
 #[cfg_attr(coverage, coverage(off))]
 #[patina_test]
+#[category(integration)]
 fn acpi_protocol_test(protocols: Service<dyn ProtocolServices>) -> patina_test::error::Result {
     let table_protocol = protocols.locate_protocol::<AcpiTableProtocol>().expect("Locate protocol should succeed.");
     let acpi_get_protocol = protocols.locate_protocol::<AcpiGetProtocol>().expect("Locate protocol should succeed.");

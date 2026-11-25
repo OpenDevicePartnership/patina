@@ -36,6 +36,7 @@ impl CompatMemoryManager for CoreCompatMemoryManager {
 }
 
 #[patina_test]
+#[category(integration)]
 #[cfg_attr(coverage, coverage(off))]
 fn compat_memory_manager_frees_pool_allocation_test(
     cm: Service<dyn CompatMemoryManager>,

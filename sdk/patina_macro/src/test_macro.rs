@@ -12,12 +12,29 @@
 use std::collections::HashMap;
 
 use quote::{ToTokens, format_ident, quote};
-use syn::{Attribute, ItemFn, Meta, Token, parse::Parser, punctuated::Punctuated, spanned::Spanned};
+use syn::{
+    Attribute, ItemFn, Meta, Token,
+    ext::IdentExt,
+    parse::{Parse, ParseStream, Parser},
+    punctuated::Punctuated,
+    spanned::Spanned,
+};
 
 const KEY_SHOULD_FAIL: &str = "should_fail";
 const KEY_FAIL_MSG: &str = "fail_msg";
 const KEY_SKIP: &str = "skip";
 const KEY_TRIGGER: &str = "trigger";
+const KEY_CATEGORY: &str = "category";
+const KEY_MODIFIERS: &str = "modifiers";
+
+struct MetadataName(syn::LitStr);
+
+impl Parse for MetadataName {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let ident = input.call(syn::Ident::parse_any)?;
+        Ok(Self(syn::LitStr::new(&ident.unraw().to_string(), ident.span())))
+    }
+}
 
 pub fn patina_test2(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let mut item = match syn::parse2::<ItemFn>(stream) {
@@ -57,8 +74,12 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
     map.insert(KEY_FAIL_MSG, quote! {None});
     map.insert(KEY_SKIP, quote! {false});
     map.insert(KEY_TRIGGER, quote! { &[patina_test::__private_api::TestTrigger::Manual] });
+    map.insert(KEY_CATEGORY, quote! {None});
+    map.insert(KEY_MODIFIERS, quote! {&[]});
 
     let mut triggers = Vec::new();
+    let mut category = None;
+    let mut modifiers = Vec::new();
 
     let mut result = Ok(());
     item.attrs.retain(|attr| {
@@ -74,6 +95,27 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
         if attr.path().is_ident("skip") {
             let skip = parse_skip_attr(attr);
             map.insert(KEY_SKIP, skip);
+            return false;
+        }
+        if attr.path().is_ident("category") {
+            if category.is_some() {
+                result = Err(syn::Error::new(attr.span(), "Only one category is allowed"));
+            } else {
+                match attr.parse_args::<MetadataName>() {
+                    Ok(MetadataName(value)) => category = Some(value),
+                    Err(e) => result = Err(e),
+                }
+            }
+            return false;
+        }
+        if attr.path().is_ident("modifier") {
+            match attr.parse_args_with(Punctuated::<MetadataName, Token![,]>::parse_terminated) {
+                Ok(values) if !values.is_empty() => {
+                    modifiers.extend(values.into_iter().map(|value| value.0));
+                }
+                Ok(_) => result = Err(syn::Error::new(attr.span(), "Expected at least one modifier identifier")),
+                Err(e) => result = Err(e),
+            }
             return false;
         }
         if attr.path().is_ident("on") {
@@ -95,6 +137,12 @@ fn process_attributes(item: &mut ItemFn) -> syn::Result<HashMap<&'static str, pr
     if !triggers.is_empty() {
         let trigger_tokens = quote! { &[#(#triggers),*] };
         map.insert(KEY_TRIGGER, trigger_tokens);
+    }
+    if let Some(category) = category {
+        map.insert(KEY_CATEGORY, quote! {Some(#category)});
+    }
+    if !modifiers.is_empty() {
+        map.insert(KEY_MODIFIERS, quote! {&[#(#modifiers),*]});
     }
 
     result.map(|()| map)
@@ -182,6 +230,8 @@ fn generate_expanded_test_case(
     let fail_msg = test_case_config.get(KEY_FAIL_MSG).expect("All configuration should have a default value set.");
     let skip = test_case_config.get(KEY_SKIP).expect("All configuration should have a default value set.");
     let trigger = test_case_config.get(KEY_TRIGGER).expect("All configuration should have a default value set.");
+    let category = test_case_config.get(KEY_CATEGORY).expect("All configuration should have a default value set.");
+    let modifiers = test_case_config.get(KEY_MODIFIERS).expect("All configuration should have a default value set.");
 
     let expanded = quote! {
         #[patina_test::linkme::distributed_slice(patina_test::__private_api::TEST_CASES)]
@@ -190,6 +240,8 @@ fn generate_expanded_test_case(
         static #struct_name: patina_test::__private_api::TestCase =
         patina_test::__private_api::TestCase {
             name: concat!(module_path!(), "::", stringify!(#fn_name)),
+            category: #category,
+            modifiers: #modifiers,
             triggers: #trigger,
             skip: #skip,
             should_fail: #should_fail,
@@ -237,6 +289,8 @@ mod tests {
                 #[allow(non_upper_case_globals)]
                 static __my_test_case_TestCase: patina_test::__private_api::TestCase = patina_test::__private_api::TestCase {
                     name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                    category: None,
+                    modifiers: &[],
                     triggers: &[patina_test::__private_api::TestTrigger::Manual],
                     skip: false,
                     should_fail: false,
@@ -270,6 +324,8 @@ mod tests {
             static __my_test_case_TestCase: patina_test::__private_api::TestCase =
             patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                category: None,
+                modifiers: &[],
                 triggers: &[patina_test::__private_api::TestTrigger::Manual],
                 skip: true,
                 should_fail: false,
@@ -393,7 +449,7 @@ mod tests {
         assert_eq!(test_fn.attrs.len(), 1);
 
         // Test proper configuration
-        assert_eq!(tc_cfg.len(), 4); // If we add more attributes, this breaks, and we know to add more to the test.
+        assert_eq!(tc_cfg.len(), 6); // If we add more attributes, this breaks, and we know to add more to the test.
 
         assert_eq!(tc_cfg.get(KEY_SHOULD_FAIL).unwrap().to_string(), "true");
         assert_eq!(tc_cfg.get(KEY_FAIL_MSG).unwrap().to_string(), "Some (\"Expected Error\")");
@@ -402,6 +458,85 @@ mod tests {
             tc_cfg.get(KEY_TRIGGER).unwrap().to_string(),
             "& [patina_test :: __private_api :: TestTrigger :: Manual]"
         );
+        assert_eq!(tc_cfg.get(KEY_CATEGORY).unwrap().to_string(), "None");
+        assert_eq!(tc_cfg.get(KEY_MODIFIERS).unwrap().to_string(), "& []");
+    }
+
+    #[test]
+    fn test_metadata_attributes() {
+        let input = quote! {
+            #[category(custom_category)]
+            #[modifier(slow, needs_reboot)]
+            #[modifier(other)]
+            fn my_test_case() -> Result { Ok(()) }
+        };
+        let mut item: ItemFn = syn::parse2(input.clone()).unwrap();
+        let config = process_attributes(&mut item).unwrap();
+        assert!(item.attrs.is_empty());
+        assert_eq!(config[KEY_CATEGORY].to_string(), quote! {Some("custom_category")}.to_string());
+        assert_eq!(config[KEY_MODIFIERS].to_string(), quote! {&["slow", "needs_reboot", "other"]}.to_string());
+
+        let expanded = patina_test2(input.clone()).to_string();
+        assert!(expanded.contains(&quote! {category: Some("custom_category")}.to_string()));
+        assert!(expanded.contains(&quote! {modifiers: &["slow", "needs_reboot", "other"]}.to_string()));
+        let disabled = patina_test_feature_off(input).to_string();
+        assert!(!disabled.contains("category"));
+        assert!(!disabled.contains("modifier"));
+        assert!(disabled.contains("fn my_test_case"));
+    }
+
+    #[test]
+    fn test_metadata_identifier_attributes() {
+        let input = quote! {
+            #[category(r#integration)]
+            #[modifier(slow, heavy, type, r#type, match, r#match)]
+            fn my_test_case() -> Result { Ok(()) }
+        };
+        let mut item: ItemFn = syn::parse2(input.clone()).unwrap();
+        let config = process_attributes(&mut item).unwrap();
+        assert_eq!(config[KEY_CATEGORY].to_string(), quote! {Some("integration")}.to_string());
+        assert_eq!(
+            config[KEY_MODIFIERS].to_string(),
+            quote! {&["slow", "heavy", "type", "type", "match", "match"]}.to_string()
+        );
+        let expanded = patina_test2(input.clone()).to_string();
+        assert!(expanded.contains(&quote! {category: Some("integration")}.to_string()));
+        assert!(
+            expanded.contains(&quote! {modifiers: &["slow", "heavy", "type", "type", "match", "match"]}.to_string())
+        );
+        let disabled = patina_test_feature_off(input).to_string();
+        assert!(!disabled.contains("category"));
+        assert!(!disabled.contains("modifier"));
+    }
+
+    #[test]
+    fn test_invalid_metadata_attributes() {
+        let invalid = [
+            quote! { #[category(first)] #[category(second)] },
+            quote! { #[category(first, second)] },
+            quote! { #[category()] },
+            quote! { #[category("")] },
+            quote! { #[category("integration")] },
+            quote! { #[category("custom category")] },
+            quote! { #[category(needs-reboot)] },
+            quote! { #[category(foo::bar)] },
+            quote! { #[category(123)] },
+            quote! { #[category] },
+            quote! { #[modifier()] },
+            quote! { #[modifier("")] },
+            quote! { #[modifier(valid, "")] },
+            quote! { #[modifier("slow")] },
+            quote! { #[modifier("needs reboot")] },
+            quote! { #[modifier("needs-reboot")] },
+            quote! { #[modifier(needs-reboot)] },
+            quote! { #[modifier(123)] },
+            quote! { #[modifier] },
+        ];
+        for attributes in invalid {
+            let input = quote! { #attributes fn my_test_case() -> Result { Ok(()) } };
+            assert!(patina_test2(input.clone()).to_string().contains("compile_error"));
+            assert!(patina_test_feature_off(input).to_string().contains("compile_error"));
+        }
     }
 
     #[test]
@@ -461,6 +596,8 @@ mod tests {
             static __my_test_case_TestCase: patina_test::__private_api::TestCase =
             patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                category: None,
+                modifiers: &[],
                 triggers: &[patina_test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE)],
                 skip: true,
                 should_fail: true,
@@ -497,6 +634,8 @@ mod tests {
             static __my_test_case_TestCase: patina_test::__private_api::TestCase =
             patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                category: None,
+                modifiers: &[],
                 triggers: &[
                     patina_test::__private_api::TestTrigger::Event(patina::guids::EVENT_GROUP_END_OF_DXE),
                     patina_test::__private_api::TestTrigger::Timer(1000000),
@@ -530,6 +669,8 @@ mod tests {
         config.insert(KEY_FAIL_MSG, quote! {Some("Expected Error")});
         config.insert(KEY_SKIP, quote! {false});
         config.insert(KEY_TRIGGER, quote! { patina_test::__private_api::TestTrigger::Manual });
+        config.insert(KEY_CATEGORY, quote! {None});
+        config.insert(KEY_MODIFIERS, quote! {&[]});
 
         let expanded = generate_expanded_test_case(&item, &config);
 
@@ -540,6 +681,8 @@ mod tests {
             static __my_test_case_TestCase: patina_test::__private_api::TestCase =
             patina_test::__private_api::TestCase {
                 name: concat!(module_path!(), "::", stringify!(my_test_case)),
+                category: None,
+                modifiers: &[],
                 triggers: patina_test::__private_api::TestTrigger::Manual,
                 skip: false,
                 should_fail: true,

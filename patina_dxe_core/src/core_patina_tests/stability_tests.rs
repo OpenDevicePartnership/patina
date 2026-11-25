@@ -22,8 +22,10 @@ use patina_test::{patina_test, u_assert, u_assert_eq};
 
 /// Stability Test: Split a 2MB page into 4KB pages and verify correctness
 #[patina_test]
+#[category(stress)]
+#[modifier(slow)]
 #[on(timer = 3_000_000)] // 300ms interval
-fn page_table_tests_2mb_split() -> patina_test::error::Result {
+fn page_table_tests_2mb_split_slow() -> patina_test::error::Result {
     let mut addr_vec = Vec::new();
     for _ in 0..19 {
         addr_vec.push(
@@ -155,8 +157,10 @@ fn page_table_tests_2mb_split() -> patina_test::error::Result {
 
 /// Stability Test: Split a 1GB page into 4KB pages and verify correctness
 #[patina_test]
+#[category(stress)]
+#[modifier(slow)]
 #[on(timer = 3_000_000)] // 300ms interval
-fn page_table_tests_1gb_split() -> patina_test::error::Result {
+fn page_table_tests_1gb_split_slow() -> patina_test::error::Result {
     let addr = GCD.allocate_memory_space(
         AllocateType::TopDown(None),
         GcdMemoryType::SystemMemory,
@@ -240,8 +244,10 @@ fn page_table_tests_1gb_split() -> patina_test::error::Result {
 
 /// Stability Test: Map a 2MB page, unmap it, map a 4KB region in it, pattern it, flush tlbs, and verify pattern
 #[patina_test]
+#[category(stress)]
+#[modifier(slow)]
 #[on(timer = 3_000_000)] // 300ms interval
-fn page_table_tests_2mb_unmap() -> patina_test::error::Result {
+fn page_table_tests_2mb_unmap_slow() -> patina_test::error::Result {
     let mut addr_vec = Vec::new();
     for _ in 0..19 {
         addr_vec.push(
@@ -334,8 +340,10 @@ fn page_table_tests_2mb_unmap() -> patina_test::error::Result {
 
 /// Stability Test: Map a 1GB page, unmap it, map a 2MB region in it, pattern it, flush tlbs, and verify pattern
 #[patina_test]
+#[category(stress)]
+#[modifier(slow)]
 #[on(timer = 3_000_000)] // 300ms interval
-fn page_table_tests_1gb_unmap_2mb_remap() -> patina_test::error::Result {
+fn page_table_tests_1gb_unmap_2mb_remap_slow() -> patina_test::error::Result {
     let addr = GCD.allocate_memory_space(
         AllocateType::TopDown(None),
         GcdMemoryType::SystemMemory,
@@ -427,11 +435,12 @@ fn page_table_tests_1gb_unmap_2mb_remap() -> patina_test::error::Result {
     }
     Ok(())
 }
-
 /// Stability Test: Map a 1GB page, unmap it, map a 4KB region in it, pattern it, flush tlbs, and verify pattern
 #[patina_test]
+#[category(stress)]
+#[modifier(slow)]
 #[on(timer = 3_000_000)] // 300ms interval
-fn page_table_tests_1gb_unmap_4kb_remap() -> patina_test::error::Result {
+fn page_table_tests_1gb_unmap_4kb_remap_slow() -> patina_test::error::Result {
     let addr = GCD.allocate_memory_space(
         AllocateType::TopDown(None),
         GcdMemoryType::SystemMemory,
