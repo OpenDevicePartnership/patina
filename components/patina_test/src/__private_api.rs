@@ -82,7 +82,8 @@ impl TestCase {
         for filter in filters {
             match filter {
                 Filter::Exclude(p) if self.name.contains(p) => return false,
-                Filter::Exclude(_) => {}
+                Filter::Predicate(predicate) if !predicate(self.name) => return false,
+                Filter::Exclude(_) | Filter::Predicate(_) => {}
                 Filter::Include(p) => {
                     has_includes = true;
                     included |= self.name.contains(p);
@@ -173,6 +174,22 @@ mod tests {
     extern crate std;
 
     #[test]
+    fn test_standard_filters_match_test_case() {
+        let test = TestCase {
+            name: "test_crate::stress::exercises_mapping_slow_heavy",
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+        assert!(test.should_run(&[Filter::CATEGORY_STRESS, Filter::MODIFIER_SLOW, Filter::MODIFIER_HEAVY]));
+        assert!(!test.should_run(&[Filter::CATEGORY_INTEGRATION]));
+        assert!(!test.should_run(&[Filter::CATEGORY_STRESS, Filter::EXCLUDE_MODIFIER_SLOW]));
+        assert!(!test.should_run(&[Filter::CATEGORY_STRESS, Filter::EXCLUDE_MODIFIER_HEAVY]));
+    }
+
+    #[test]
     fn test_should_run() {
         let test_case = TestCase {
             name: "test",
@@ -222,6 +239,139 @@ mod tests {
         std::assert!(!test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("test_case")]));
         // Include filter matches and exclude filter does not match - should run
         std::assert!(test_case.should_run(&[Filter::include("my_crate"), Filter::exclude("other")]));
+    }
+
+    #[test]
+    fn test_should_run_with_predicates() {
+        let test_case = TestCase {
+            name: "my_crate::integration::memory_slow",
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+        let functional = Filter::predicate(|name| name.contains("::integration::"));
+        let not_slow = Filter::predicate(|name| !name.ends_with("_slow"));
+
+        assert!(test_case.should_run(core::slice::from_ref(&functional)));
+        assert!(!test_case.should_run(core::slice::from_ref(&not_slow)));
+        assert!(!test_case.should_run(&[functional.clone(), not_slow.clone()]));
+        assert!(!test_case.should_run(&[not_slow, functional.clone()]));
+        assert!(test_case.should_run(&[Filter::include("missing"), functional.clone(), Filter::include("memory")]));
+        assert!(!test_case.should_run(&[Filter::include("missing"), functional.clone()]));
+        assert!(!test_case.should_run(&[functional.clone(), Filter::exclude("memory")]));
+        assert!(!test_case.should_run(&[Filter::exclude("memory"), functional.clone()]));
+        assert!(!TestCase { skip: true, ..test_case }.should_run(&[functional]));
+        fn is_slow(name: &str) -> bool {
+            name.ends_with("_slow")
+        }
+        let named = Filter::predicate(is_slow);
+        assert!(test_case.should_run(core::slice::from_ref(&named.clone())));
+        assert!(!TestCase { name: "crate::integration::memory_fast", ..test_case }.should_run(&[named]));
+    }
+
+    #[test]
+    fn test_should_run_with_standard_filters() {
+        const SLOW: Filter = Filter::MODIFIER_SLOW;
+        const NOT_SLOW: Filter = Filter::EXCLUDE_MODIFIER_SLOW;
+        for (name, expected) in [
+            ("crate::smoke::startup", [true, false, false, false, false]),
+            ("crate::integration::memory_slow", [false, true, false, true, false]),
+            ("crate::stress::mapping_heavy_slow", [false, false, true, true, true]),
+            ("crate::stress::nested::mapping_slow_heavy", [false, false, true, true, true]),
+            ("crate::stress::mapping_heavy_custom_slow", [false, false, true, true, true]),
+            ("crate::stress::slowest_mapping", [false, false, true, false, false]),
+            ("crate::slow::heavy::unclassified", [false, false, false, false, false]),
+            ("crate::integration_extra::unclassified", [false, false, false, false, false]),
+            ("crate::integration_test", [false, false, false, false, false]),
+        ] {
+            let test_case = TestCase {
+                name,
+                triggers: &[TestTrigger::Manual],
+                skip: false,
+                should_fail: false,
+                fail_msg: None,
+                func: |_| Ok(true),
+            };
+            for (filter, expected) in [
+                Filter::CATEGORY_SMOKE,
+                Filter::CATEGORY_INTEGRATION,
+                Filter::CATEGORY_STRESS,
+                SLOW.clone(),
+                Filter::MODIFIER_HEAVY,
+            ]
+            .iter()
+            .zip(expected)
+            {
+                assert_eq!(test_case.should_run(core::slice::from_ref(filter)), expected, "{name}");
+            }
+            assert_eq!(test_case.should_run(core::slice::from_ref(&NOT_SLOW)), !expected[3], "{name}");
+            assert_eq!(test_case.should_run(&[Filter::EXCLUDE_MODIFIER_HEAVY]), !expected[4], "{name}");
+        }
+
+        let test_case = TestCase {
+            name: "crate::stress::mapping_heavy",
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+        assert!(test_case.should_run(&[
+            Filter::CATEGORY_INTEGRATION,
+            Filter::CATEGORY_STRESS,
+            Filter::EXCLUDE_MODIFIER_SLOW,
+        ]));
+        assert!(!test_case.should_run(&[Filter::CATEGORY_STRESS, Filter::EXCLUDE_MODIFIER_HEAVY]));
+        assert!(!test_case.should_run(&[Filter::MODIFIER_SLOW, Filter::MODIFIER_HEAVY]));
+    }
+
+    #[test]
+    fn test_should_run_with_custom_categories_and_modifiers() {
+        const SECURITY: Filter = crate::category!(security);
+        const DESTRUCTIVE: Filter = crate::modifier!(destructive);
+        const NOT_SLOW: Filter = crate::exclude_modifier!(slow);
+        let filters = [SECURITY.clone(), DESTRUCTIVE.clone(), NOT_SLOW.clone()];
+        for (name, expected) in [
+            ("crate::security::key_rotation_destructive", true),
+            ("crate::security::nested::key_rotation_destructive_heavy", true),
+            ("crate::security::key_rotation_slow_destructive", false),
+            ("crate::security::key_rotation", false),
+            ("crate::security_extra::key_rotation_destructive", false),
+            ("crate::other::security_destructive", false),
+            ("crate::security::key_rotation_nondestructive", false),
+            ("crate::security::destructive::key_rotation", false),
+            ("security::other::key_rotation_destructive", false),
+        ] {
+            let test_case = TestCase {
+                name,
+                triggers: &[TestTrigger::Manual],
+                skip: false,
+                should_fail: false,
+                fail_msg: None,
+                func: |_| Ok(true),
+            };
+            assert_eq!(test_case.should_run(&filters), expected, "{name}");
+            assert!(!TestCase { skip: true, ..test_case }.should_run(&filters), "{name}");
+        }
+
+        let test_case = TestCase {
+            name: "crate::security::key_rotation_destructive",
+            triggers: &[TestTrigger::Manual],
+            skip: false,
+            should_fail: false,
+            fail_msg: None,
+            func: |_| Ok(true),
+        };
+        assert!(test_case.should_run(&[Filter::CATEGORY_SMOKE, Filter::include("::security::")]));
+        assert!(test_case.should_run(&[Filter::include("missing"), Filter::include("::security::")]));
+        assert!(test_case.should_run(&[Filter::include("::missing::"), Filter::include("key_rotation")]));
+        assert!(!test_case.should_run(&[Filter::include("::security::"), Filter::exclude("key_rotation")]));
+        assert!(!test_case.should_run(&[SECURITY, crate::exclude_modifier!(destructive)]));
+        assert!(!test_case.should_run(&[DESTRUCTIVE.clone(), Filter::MODIFIER_SLOW]));
+        assert!(!test_case.should_run(&[DESTRUCTIVE, Filter::predicate(|_| false)]));
+        assert!(test_case.should_run(&[Filter::EXCLUDE_MODIFIER_SLOW]));
     }
 
     #[test]

@@ -25,7 +25,43 @@ use patina::component::{
     },
 };
 
-/// A filter to include or exclude test cases whose name contains the pattern.
+/// Includes tests in the module named by the given identifier.
+///
+/// The identifier is a compile-time category name, such as `category!(security)`.
+/// Category filters combine with other include filters using OR.
+#[macro_export]
+macro_rules! category {
+    ($category:ident) => {
+        $crate::component::Filter::Include(concat!("::", stringify!($category), "::"))
+    };
+}
+
+/// Requires the given identifier to appear as an underscore-separated word in the test function name.
+///
+/// The modifier is a single compile-time word, such as `modifier!(destructive)`.
+/// Modifier filters combine with other predicates using AND.
+#[macro_export]
+macro_rules! modifier {
+    ($modifier:ident) => {
+        $crate::component::Filter::Predicate(|name| {
+            name.rsplit("::").next().unwrap_or(name).split('_').any(|word| word == stringify!($modifier))
+        })
+    };
+}
+
+/// Rejects tests with the given identifier as an underscore-separated word in the test function name.
+///
+/// The modifier is a single compile-time word, such as `exclude_modifier!(destructive)`.
+#[macro_export]
+macro_rules! exclude_modifier {
+    ($modifier:ident) => {
+        $crate::component::Filter::Predicate(|name| {
+            !name.rsplit("::").next().unwrap_or(name).split('_').any(|word| word == stringify!($modifier))
+        })
+    };
+}
+
+/// A case-sensitive filter applied to fully qualified test names.
 ///
 /// # Example
 ///
@@ -38,7 +74,8 @@ use patina::component::{
 ///
 /// let runner = TestRunner::default()
 ///     .with_filter(Filter::include("x64"))
-///     .with_filter(Filter::exclude("aarch64"));
+///     .with_filter(Filter::exclude("aarch64"))
+///     .with_filter(Filter::predicate(|name| !name.ends_with("_slow")));
 /// ```
 #[derive(Debug, Clone)]
 pub enum Filter {
@@ -46,9 +83,26 @@ pub enum Filter {
     Include(&'static str),
     /// Do not run tests whose name contains the pattern.
     Exclude(&'static str),
+    /// Only run tests for which the predicate returns true.
+    Predicate(fn(&str) -> bool),
 }
 
 impl Filter {
+    /// Includes tests in an `integration` module.
+    pub const CATEGORY_INTEGRATION: Self = crate::category!(integration);
+    /// Includes tests in a `stress` module.
+    pub const CATEGORY_STRESS: Self = crate::category!(stress);
+    /// Includes tests in a `smoke` module.
+    pub const CATEGORY_SMOKE: Self = crate::category!(smoke);
+    /// Keeps tests whose function name contains `slow` as an underscore-separated word.
+    pub const MODIFIER_SLOW: Self = crate::modifier!(slow);
+    /// Keeps tests whose function name contains `heavy` as an underscore-separated word.
+    pub const MODIFIER_HEAVY: Self = crate::modifier!(heavy);
+    /// Excludes tests whose function name contains `slow` as an underscore-separated word.
+    pub const EXCLUDE_MODIFIER_SLOW: Self = crate::exclude_modifier!(slow);
+    /// Excludes tests whose function name contains `heavy` as an underscore-separated word.
+    pub const EXCLUDE_MODIFIER_HEAVY: Self = crate::exclude_modifier!(heavy);
+
     /// Creates an include filter. Tests whose name contains `pattern` will be included.
     pub fn include(pattern: &'static str) -> Self {
         Self::Include(pattern)
@@ -57,6 +111,13 @@ impl Filter {
     /// Creates an exclude filter. Tests whose name contains `pattern` will be excluded.
     pub fn exclude(pattern: &'static str) -> Self {
         Self::Exclude(pattern)
+    }
+
+    /// Keeps tests whose fully qualified name satisfies `predicate`.
+    ///
+    /// Accepts a function or a non-capturing closure.
+    pub const fn predicate(predicate: fn(&str) -> bool) -> Self {
+        Self::Predicate(predicate)
     }
 }
 
@@ -80,6 +141,7 @@ impl TestRunner {
     ///   filters are specified, a test runs if it matches **any** of them.
     /// - [`Filter::Exclude`]: Prevents tests whose name contains the pattern from running. Exclude
     ///   filters take priority over include filters.
+    /// - [`Filter::Predicate`]: Only run tests for which the predicate returns true. All predicates must pass.
     ///
     /// This filter is case-sensitive. It can be called multiple times to add multiple filters.
     #[must_use]
@@ -405,6 +467,30 @@ pub(crate) mod tests {
         assert!(!skip_recorder.is_test_scheduled("test"));
         skip_recorder.run_manual_tests(&mut storage);
         assert!(format!("{}", *skip_recorder).contains("  test ... skipped"));
+    }
+
+    #[test]
+    fn test_predicate_filter_selects_tests_for_registration() {
+        use patina::component::service::uefi_services::{
+            event::MockEventServices, timer_event::MockTimerEventServices,
+        };
+
+        let mut storage = Storage::new();
+        storage.add_config(1i32);
+        let recorder = Service::mock(Box::new(Recorder::default()));
+        let events: Service<dyn EventServices> = Service::mock(Box::new(MockEventServices::new()));
+        let timer: Service<dyn TimerEventServices> = Service::mock(Box::new(MockTimerEventServices::new()));
+
+        TestRunner::default()
+            .with_filter(Filter::predicate(|name| name == "test"))
+            .register_tests(Box::leak(Box::new([TEST_CASE1, TEST_CASE3])), &events, &timer, &recorder, &mut storage)
+            .expect("test registration should succeed");
+        assert!(recorder.is_test_scheduled("test"));
+        assert!(!recorder.is_test_scheduled("test_that_fails"));
+        recorder.run_manual_tests(&mut storage);
+        let output = format!("{}", *recorder);
+        assert!(output.contains("  test ... ok (1 passes)"));
+        assert!(output.contains("test_that_fails ... skipped"));
     }
 
     #[test]
