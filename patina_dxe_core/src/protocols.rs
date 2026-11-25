@@ -43,6 +43,14 @@ pub fn core_install_protocol_interface(
     interface: *mut c_void,
 ) -> Result<efi::Handle, EfiError> {
     log::info!("InstallProtocolInterface: {:?} @ {:#x?}", OwnedGuid::from(protocol), interface);
+
+    // Signal all protocol notify events at TPL_NOTIFY. This matches the EDK2 reference core, which signals them while
+    // holding the TPL_NOTIFY protocol database lock.
+    // Notifications are only dispatched when the guard is dropped, so the execution order is:
+    // highest notify TPL first, FIFO within a TPL.
+    let tpl_mutex = TplMutex::new(efi::TPL_NOTIFY, (), "protocol_install_notify");
+    let _tpl_guard = tpl_mutex.checked_lock().map_err(|_| EfiError::NotReady)?;
+
     let (handle, notifies) = PROTOCOL_DB.install_protocol_interface(handle, protocol, interface)?;
 
     let mut closed_events = Vec::new();
@@ -1327,6 +1335,40 @@ mod tests {
         )
         .unwrap();
         agent
+    }
+
+    static NOTIFY_ORDER: std::sync::Mutex<Vec<efi::Tpl>> = std::sync::Mutex::new(Vec::new());
+
+    extern "efiapi" fn record_notify_tpl(_event: efi::Event, context: *mut c_void) {
+        NOTIFY_ORDER.lock().unwrap().push(context as efi::Tpl);
+    }
+
+    #[test]
+    fn test_install_dispatches_protocol_notifies_in_tpl_order_not_registration_order() {
+        with_locked_state(|| {
+            crate::events::restore_tpl(efi::TPL_APPLICATION);
+            NOTIFY_ORDER.lock().unwrap().clear();
+
+            // Register the TPL_CALLBACK notify first and the TPL_NOTIFY notify later.
+            // The TPL_NOTIFY callback must still run first.
+            let mut events = Vec::new();
+            for tpl in [efi::TPL_CALLBACK, efi::TPL_NOTIFY] {
+                let event = EVENT_DB
+                    .create_event(efi::EVT_NOTIFY_SIGNAL, tpl, Some(record_notify_tpl), Some(tpl as *mut c_void), None)
+                    .unwrap();
+                PROTOCOL_DB.register_protocol_notify(TEST_GUID, event).unwrap();
+                events.push(event);
+            }
+
+            new_handle(TEST_GUID, TEST_INTERFACE);
+
+            assert_eq!(*NOTIFY_ORDER.lock().unwrap(), vec![efi::TPL_NOTIFY, efi::TPL_CALLBACK]);
+
+            PROTOCOL_DB.unregister_protocol_notify_events(events.clone()).unwrap();
+            for event in events {
+                EVENT_DB.close_event(event).unwrap();
+            }
+        });
     }
 
     #[test]
