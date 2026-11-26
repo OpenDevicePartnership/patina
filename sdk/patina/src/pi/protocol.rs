@@ -19,6 +19,7 @@ pub mod firmware_volume;
 #[cfg(any(test, feature = "alloc"))]
 pub mod firmware_volume_block;
 pub mod metronome;
+pub mod pcd;
 pub mod runtime;
 pub mod security;
 pub mod security2;
